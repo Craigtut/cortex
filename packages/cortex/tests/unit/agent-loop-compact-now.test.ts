@@ -295,6 +295,70 @@ describe('compactNow without observing', () => {
   });
 });
 
+describe('a stopped compactNow', () => {
+  /** The older exchange already observed, so the swap needs no memory call. */
+  function observedSeed(piAgent: PiAgent, loop: AgentLoop): AgentMessage[] {
+    const { older, recent } = seed(piAgent);
+    loop.restoreConversationHistory([...older, ...recent] as PiAgentMessage[]);
+    loop.restoreObservationalMemoryState({
+      observations: '',
+      continuationHint: null,
+      observationTokenCount: 0,
+      generationCount: 0,
+      bufferedChunks: [{ observations: '* (10:00) the older exchange', messageTokensObserved: 10_000, createdAt: new Date(), endIndex: 2 }],
+      bufferWatermark: 2,
+    });
+    return [...older, ...recent];
+  }
+
+  it.each([true, false])('changes nothing when stopped before its swap (observe: %s)', async (observe) => {
+    const piAgent = createPiAgent();
+    const loop = createLoop(piAgent);
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    const before = observedSeed(piAgent, loop);
+    // Precondition: unstopped, this call swaps (checked on a twin loop).
+    const twinPi = createPiAgent();
+    const twin = createLoop(twinPi);
+    observedSeed(twinPi, twin);
+    expect((await twin.compactNow({ observe })).status).toBe('compacted');
+
+    const stop = new AbortController();
+    stop.abort(new Error('cancelled with Esc'));
+    const result = await loop.compactNow({ observe, signal: stop.signal });
+
+    expect(result).toEqual({ status: 'failed', error: new Error('cancelled with Esc') });
+    expect(loop.getConversationHistory()).toEqual(before);
+    expect(loop.getObservationalMemoryState().observations).toBe('');
+  });
+
+  it('records nothing from observeNow stopped with nothing left to observe', async () => {
+    const piAgent = createPiAgent();
+    const loop = createLoop(piAgent);
+    const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
+    const { older, recent } = seed(piAgent);
+    loop.restoreConversationHistory([...older, ...recent] as PiAgentMessage[]);
+    loop.restoreObservationalMemoryState({
+      observations: '',
+      continuationHint: null,
+      observationTokenCount: 0,
+      generationCount: 0,
+      bufferedChunks: [{ observations: '* (10:00) everything', messageTokensObserved: 10_500, createdAt: new Date(), endIndex: 4 }],
+      bufferWatermark: 4,
+    });
+
+    const stop = new AbortController();
+    stop.abort(new Error('cancelled with Esc'));
+    const result = await loop.observeNow({ signal: stop.signal });
+
+    // Precondition: no memory call was needed.
+    expect(complete).not.toHaveBeenCalled();
+    expect(result).toEqual({ status: 'failed', error: new Error('cancelled with Esc') });
+    expect(loop.getObservationalMemoryState().observations).toBe('');
+    expect(loop.getObservationalMemoryState().bufferedChunks).toHaveLength(1);
+  });
+});
+
 describe('observeNow', () => {
   it('records everything once and removes nothing; a second call observes nothing', async () => {
     const piAgent = createPiAgent();

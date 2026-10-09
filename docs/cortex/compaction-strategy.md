@@ -245,7 +245,7 @@ The same reports reach the event bridge as the `memory` event, so they forward f
 
 Compaction is autonomous: every part of it runs inside `transformContext`, before every LLM call, so a consumer never has to trigger it. Three entry points exist for an owner that wants to choose the moment. All three hold the loop gate, so a call made during a turn waits for the turn to end.
 
-- `compactNow(options?)`: observe up to the verbatim tail, swap, then reflect if the log is due, whatever the utilization. A failed or stopped observer call changes nothing. With `observe: false` it swaps in only what is already observed and never waits on the memory model. On `CortexAgent` it compacts both resident loops and returns each loop's result (the talker always swaps without observing).
+- `compactNow(options?)`: observe up to the verbatim tail, swap, then reflect if the log is due, whatever the utilization. A failed or stopped observer call changes nothing, and so does a call whose `signal` is aborted before its swap, observing or not. With `observe: false` it swaps in only what is already observed and never waits on the memory model. On `CortexAgent` it compacts both resident loops and returns each loop's result (the talker always swaps without observing).
 - `observeNow(options?)`: record everything not yet in the log, removing nothing.
 - `digestIdle(options?)`: run pending observation and the threshold pass in a quiet moment, bounded by a timeout and preemptible. The duplex session schedules it after each run.
 

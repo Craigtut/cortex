@@ -36,7 +36,7 @@ import { OBSERVATIONAL_MEMORY_DEFAULTS } from './constants.js';
 import { Reflection } from './reflection.js';
 import { BufferingCoordinator } from './buffering.js';
 import { estimateTokens } from '../../token-estimator.js';
-import { RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
+import { RETRY_BACKOFF_MS, deadlineSignal, reasonOf } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
 import { InBandObserver } from './in-band.js';
@@ -488,6 +488,8 @@ export class ObservationalMemoryEngine {
       if (error) return { status: 'failed', error };
       if (!unchanged(history, getSource())) return { status: 'failed', error: new Error('History changed while compacting') };
     }
+    // Stopped with nothing left to observe: still a stopped call.
+    if (signal.aborted) return { status: 'failed', error: reasonOf(signal) };
     const swap = swapCut(history, tail, this.buffering.getWatermark());
     if (!removesAny(swap)) return { status: 'nothing-to-compact' };
 
@@ -532,6 +534,7 @@ export class ObservationalMemoryEngine {
     const { error } = await this.inBand.catchUp(history, history.length, 'observe-now', signal);
     if (error) return { status: 'failed', error };
     if (!unchanged(history, getSource())) return { status: 'failed', error: new Error('History changed while observing') };
+    if (signal.aborted) return { status: 'failed', error: reasonOf(signal) };
 
     const ledger = this.buffering.ledger;
     const priorPrefix = ledger.observedPrefix;
