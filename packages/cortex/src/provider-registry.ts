@@ -88,7 +88,7 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
     keyUrl: 'platform.openai.com/api-keys',
   },
   {
-    id: 'azure-openai-responses',
+    id: 'azure',
     name: 'Azure OpenAI',
     authMethods: ['api_key'],
     envVar: 'AZURE_OPENAI_API_KEY',

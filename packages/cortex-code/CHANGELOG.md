@@ -4,6 +4,7 @@ All notable changes to `@animus-labs/cortex-code` are documented here.
 
 ## Unreleased
 
+- Upgrade pi-ai and pi-tui to `1.1.0`, pinned exactly. pi-tui now asks the terminal at startup whether it supports program status reports (OSC 7501); `PI_PROGRAM_STATUS=0` turns that off.
 - Windows sandboxing runs on MXC BaseContainer through Cortex instead of the unsigned restricted-token helper. It stays opt-in (`/sandbox workspace`) until validated on a real Windows 11 host, and needs `@microsoft/mxc-sdk` installed alongside Cortex Code.
 - Upgrade pi-ai and pi-tui to `0.87.1`.
 - Start a provider with no chosen model on that provider's own default from Cortex. A provider missing from the old defaults table used to fall back to the Anthropic model id, which it does not serve; a provider with no catalog (Ollama without a stored model) now asks for a model instead.

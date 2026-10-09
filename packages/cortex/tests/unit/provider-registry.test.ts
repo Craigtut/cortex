@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { builtinProviders, getBuiltinModel } from '@earendil-works/pi-ai/providers/all';
+import { builtinProviders, getBuiltinModel, getBuiltinModels } from '@earendil-works/pi-ai/providers/all';
 import {
   PROVIDER_REGISTRY,
   OAUTH_PROVIDER_IDS,
@@ -133,7 +133,9 @@ describe('provider-registry', () => {
   // -----------------------------------------------------------------------
 
   describe('against the installed pi-ai catalog', () => {
-    const piProviders = builtinProviders();
+    // Providers that serve no chat models (pi-ai's classifier-only
+    // `typesafe`) have nothing for an agent to run, so Cortex does not list them.
+    const piProviders = builtinProviders().filter((provider) => getBuiltinModels(provider.id as never).length > 0);
 
     it('names only providers pi-ai ships', () => {
       const piIds = new Set(piProviders.map((provider) => provider.id));

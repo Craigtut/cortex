@@ -113,4 +113,66 @@ describe('installed Pi integration', () => {
       }
     },
   );
+
+  it('records an error-flagged tool result as an error, with timings and the requested thinking level', async () => {
+    const manager = new ProviderManager();
+    const catalog = await manager.listModels('anthropic');
+    const model = await manager.resolveModel('anthropic', catalog[0]!.id);
+    const stream = vi.spyOn(piCompat, 'streamSimple');
+    stream.mockImplementation((rawModel) => {
+      // Created first: a stream only times responses that start after it.
+      const events = createAssistantMessageEventStream();
+      const callsTool = stream.mock.calls.length === 1;
+      const message: AssistantMessage = {
+        role: 'assistant',
+        content: callsTool
+          ? [{ type: 'toolCall', id: 'call-1', name: 'failing_probe', arguments: {} }]
+          : [{ type: 'text', text: 'Noted the failure' }],
+        api: rawModel.api,
+        provider: rawModel.provider,
+        model: rawModel.id,
+        usage: {
+          input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: callsTool ? 'toolUse' : 'stop',
+        timestamp: Date.now(),
+      };
+      events.push({ type: 'start', partial: message });
+      events.push({ type: 'done', reason: message.stopReason as 'toolUse' | 'stop', message });
+      return events;
+    });
+
+    const loop = await AgentLoop.create({
+      model,
+      workingDirectory: process.cwd(),
+      initialBasePrompt: 'Test the upstream integration.',
+      getApiKey: async () => 'unused-test-key',
+      thinkingLevel: 'low',
+      compaction: { strategy: 'classic' },
+      disableTools: Object.values(TOOL_NAMES),
+      enableSubAgentTool: false,
+      enableLoadSkillTool: false,
+      tools: [{
+        name: 'failing_probe',
+        description: 'Report a failure without throwing.',
+        parameters: Type.Object({}),
+        // A result flagged as an error, the way pi-agent-core 0.99+ lets a
+        // tool fail without throwing. Earlier versions ignored the flag.
+        execute: async () => ({ content: [{ type: 'text', text: 'Probe failed' }], isError: true }),
+      }],
+    });
+
+    try {
+      await loop.prompt('Run the probe.');
+      const history = JSON.parse(JSON.stringify(loop.getConversationHistory())) as Array<Record<string, unknown>>;
+      expect(history.map((message) => message['role'])).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
+      expect(history[2]).toMatchObject({ role: 'toolResult', isError: true });
+      expect(history[2]!['durationMs']).toEqual(expect.any(Number));
+      expect(history[1]).toMatchObject({ thinkingLevel: 'low' });
+      expect(history[1]!['durationMs']).toEqual(expect.any(Number));
+    } finally {
+      await loop.destroy();
+    }
+  });
 });

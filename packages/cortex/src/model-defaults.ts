@@ -65,7 +65,7 @@ export const PRIMARY_MODEL_FAMILIES: Readonly<Record<string, FamilyName>> = {
   'amazon-bedrock': 'bedrock-claude-opus',
   openai: 'gpt-sol',
   'openai-codex': 'gpt-sol',
-  'azure-openai-responses': 'gpt-sol',
+  azure: 'gpt-sol',
   google: 'gemini-pro',
   'google-vertex': 'gemini-pro',
   xai: 'grok',
