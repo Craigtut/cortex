@@ -52,7 +52,7 @@ describe('observational strategy under nonBlocking', () => {
     manager.setContextWindow(100_000);
     manager.setModelContextWindow(100_000);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    manager.setObservationalCompleteFn(complete as unknown as CompleteFn);
+    manager.memory.setCompleteFn(complete as unknown as CompleteFn);
     manager.updateCurrentContextTokenCount(95_000); // over activation AND failsafe
 
     const slots = [makeUserMsg('slot')];

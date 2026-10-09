@@ -62,7 +62,7 @@ function seed(piAgent: PiAgent): void {
 describe('memory events', () => {
   it('reports each failed background call, counting the failures in a row', async () => {
     const { loop, piAgent } = createLoop();
-    loop.getCompactionManager().setObservationalCompleteFn(
+    loop.getCompactionManager().memory.setCompleteFn(
       vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')),
     );
     const errors: Array<[MemoryErrorInfo, LoopOriginContext]> = [];
@@ -85,7 +85,7 @@ describe('memory events', () => {
       .mockRejectedValueOnce(new Error('500 internal server error'))
       .mockRejectedValueOnce(new Error('500 internal server error'))
       .mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     const recovered: MemoryRecoveredInfo[] = [];
     loop.onMemoryRecovered((info) => recovered.push(info));
     seed(piAgent);
@@ -105,7 +105,7 @@ describe('memory events', () => {
 
   it('reports an in-band failure as a partial swap', async () => {
     const { loop, piAgent } = createLoop();
-    loop.getCompactionManager().setObservationalCompleteFn(
+    loop.getCompactionManager().memory.setCompleteFn(
       vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')),
     );
     const errors: MemoryErrorInfo[] = [];

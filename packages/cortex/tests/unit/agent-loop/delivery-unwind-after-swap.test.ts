@@ -77,7 +77,7 @@ describe('failed delivery after a mid-run swap', () => {
       [],
       { enableSubAgentTool: false, enableLoadSkillTool: false },
     );
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(
       '<observations>\n* observed\n</observations>',
     ));
 

@@ -234,8 +234,8 @@ describe('swap invariants through the transform pass', () => {
       }), 1);
       manager.setContextWindow(20_000);
       manager.setModelContextWindow(20_000);
-      manager.setUtilityModelContextWindow(200_000);
-      manager.setObservationalCompleteFn(complete);
+      manager.memory.setUtilityModelContextWindow(200_000);
+      manager.memory.setCompleteFn(complete);
 
       let source: AgentMessage[] = [];
       const size = (): number => Math.floor(random() * 10_000) + 10;
@@ -250,7 +250,7 @@ describe('swap invariants through the transform pass', () => {
             source.push(makeToolResultMsg(id, 'Read', tag() + 'r'.repeat(size() * 2)));
           } else source.push(assistantMsg(tag() + 'a'.repeat(size())));
         } else if (roll < 0.55) {
-          manager.onTurnEnd(Math.floor(random() * 20_000), 20_000, [SLOT, ...source], 1);
+          manager.memory.onTurnEnd(Math.floor(random() * 20_000), 20_000, [SLOT, ...source], 1);
         } else if (roll < 0.65) {
           releaseOne();
           await tick();
@@ -259,7 +259,7 @@ describe('swap invariants through the transform pass', () => {
         } else {
           const before = new Set(source);
           const latestUser = [...source].reverse().find((m) => m.role === 'user');
-          const inFlight = manager.isObserverInFlight();
+          const inFlight = manager.memory.isObserverInFlight();
           let current = [...source];
           const pass = manager.applyInTransformContext(
             { systemPrompt: '', model: null, messages: [SLOT, ...source], tools: [], thinkingLevel: 'medium' } as AgentContext,

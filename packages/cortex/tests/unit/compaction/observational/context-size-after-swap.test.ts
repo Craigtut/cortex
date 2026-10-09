@@ -61,7 +61,7 @@ describe('context size after a swap', () => {
   it('an idle-digestion swap does not leave the next pass re-activating on the old size', async () => {
     const { loop, piAgent } = createLoop();
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
       { role: 'assistant', content: 'done '.repeat(3000), timestamp: 2 },
@@ -95,7 +95,7 @@ describe('context size after a swap', () => {
 
   it('an in-band swap clears the measured size even if no turn reports a new one', async () => {
     const { loop, piAgent } = createLoop();
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
       { role: 'assistant', content: 'done '.repeat(3000), timestamp: 2 },

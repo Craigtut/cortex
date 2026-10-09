@@ -116,7 +116,7 @@ describe('compactNow', () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     const { recent } = seed(piAgent);
     const events: ObservationEvent[] = [];
     loop.onObservation((event) => events.push(event));
@@ -147,10 +147,10 @@ describe('compactNow', () => {
       .mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
       .mockResolvedValue(OBSERVED);
     const manager = loop.getCompactionManager();
-    manager.setObservationalCompleteFn(complete);
+    manager.memory.setCompleteFn(complete);
     seed(piAgent);
     // A turn end launches a background observer over the history.
-    manager.onTurnEnd(16_000, 20_000, piAgent.state.messages, loop.getContextManager().historyStart);
+    manager.memory.onTurnEnd(16_000, 20_000, piAgent.state.messages, loop.getContextManager().historyStart);
     expect(complete).toHaveBeenCalledTimes(1);
 
     const compacting = loop.compactNow();
@@ -170,7 +170,7 @@ describe('compactNow', () => {
   it('changes neither history nor the log when the observer fails', async () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
-    loop.getCompactionManager().setObservationalCompleteFn(
+    loop.getCompactionManager().memory.setCompleteFn(
       vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')),
     );
     seed(piAgent);
@@ -193,7 +193,7 @@ describe('compactNow', () => {
       .mockResolvedValueOnce(OBSERVED)
       .mockRejectedValueOnce(new Error('500 internal server error'))
       .mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     const { older } = seed(piAgent);
     const before = loop.getConversationHistory();
 
@@ -217,7 +217,7 @@ describe('compactNow', () => {
   it('reports a failed reflection and keeps the swap', async () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockImplementation(async (_context, options) => {
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockImplementation(async (_context, options) => {
       if (options?.purpose === 'reflector') throw new Error('500 internal server error');
       return OBSERVED;
     }));
@@ -245,7 +245,7 @@ describe('compactNow', () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     piAgent.state.messages.push(user('hello'), assistant('hi'));
 
     expect(await loop.compactNow()).toEqual({ status: 'nothing-to-compact' });
@@ -258,7 +258,7 @@ describe('compactNow without observing', () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     const { older, recent } = seed(piAgent);
 
     // Nothing observed yet: nothing can leave.
@@ -285,10 +285,10 @@ describe('compactNow without observing', () => {
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockImplementation(() => new Promise(() => {}));
     const manager = loop.getCompactionManager();
-    manager.setObservationalCompleteFn(complete);
+    manager.memory.setCompleteFn(complete);
     seed(piAgent);
-    manager.onTurnEnd(16_000, 20_000, piAgent.state.messages, loop.getContextManager().historyStart);
-    expect(manager.isObserverInFlight()).toBe(true);
+    manager.memory.onTurnEnd(16_000, 20_000, piAgent.state.messages, loop.getContextManager().historyStart);
+    expect(manager.memory.isObserverInFlight()).toBe(true);
 
     expect(await loop.compactNow({ observe: false })).toEqual({ status: 'nothing-to-compact' });
     expect(complete).toHaveBeenCalledTimes(1);
@@ -300,7 +300,7 @@ describe('observeNow', () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     seed(piAgent);
     const before = loop.getConversationHistory();
 
@@ -316,7 +316,7 @@ describe('observeNow', () => {
   it('leaves the log unchanged when the observer fails', async () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
-    loop.getCompactionManager().setObservationalCompleteFn(
+    loop.getCompactionManager().memory.setCompleteFn(
       vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')),
     );
     seed(piAgent);
@@ -333,7 +333,7 @@ describe('a running turn', () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     seed(piAgent);
     piAgent.holdNextRun = true;
     const turn = loop.prompt('keep going');

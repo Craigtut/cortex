@@ -17,7 +17,7 @@ function setup(options?: { workingTags?: boolean; strategy?: 'observational' | '
     strategy: options?.strategy ?? 'observational',
     currentContextTokenCount: 0,
     updateCurrentContextTokenCount: vi.fn(),
-    onTurnEnd: vi.fn(),
+    memory: { onTurnEnd: vi.fn() },
   };
   const ledger = new LoopUsage();
   const loopComplete = new HandlerList<[{ loopPath: string }]>('onLoopComplete', logger);
@@ -47,7 +47,7 @@ describe('wireLoopEvents', () => {
     const t = setup();
     t.emit({ type: 'turn_end', message: { role: 'assistant', content: [], usage } });
     expect(t.compaction.updateCurrentContextTokenCount).toHaveBeenCalledWith(33);
-    expect(t.compaction.onTurnEnd).toHaveBeenCalledWith(33, 100_000, t.state.messages, 0);
+    expect(t.compaction.memory.onTurnEnd).toHaveBeenCalledWith(33, 100_000, t.state.messages, 0);
     expect(t.ledger.snapshot().totalTurns).toBe(1);
     expect(t.ledger.totalCost).toBe(0.5);
   });
@@ -58,7 +58,7 @@ describe('wireLoopEvents', () => {
     // still finds cache-write input.
     t.emit({ type: 'turn_end', message: { role: 'assistant', content: [], usage: { cacheWrite: 7 } } });
     expect(t.compaction.updateCurrentContextTokenCount).toHaveBeenCalledWith(7);
-    expect(t.compaction.onTurnEnd).toHaveBeenCalledWith(7, 100_000, t.state.messages, 0);
+    expect(t.compaction.memory.onTurnEnd).toHaveBeenCalledWith(7, 100_000, t.state.messages, 0);
     expect(t.ledger.snapshot().totalTurns).toBe(1);
     expect(t.ledger.totalCost).toBe(0);
   });
@@ -67,7 +67,7 @@ describe('wireLoopEvents', () => {
     const t = setup();
     t.emit({ type: 'turn_end', message: { role: 'assistant', content: [] } });
     expect(t.compaction.updateCurrentContextTokenCount).not.toHaveBeenCalled();
-    expect(t.compaction.onTurnEnd).not.toHaveBeenCalled();
+    expect(t.compaction.memory.onTurnEnd).not.toHaveBeenCalled();
     expect(t.ledger.snapshot().totalTurns).toBe(1);
   });
 

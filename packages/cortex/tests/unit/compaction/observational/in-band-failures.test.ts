@@ -104,7 +104,7 @@ describe('emergency truncation under the blocking posture', () => {
     manager.setContextWindow(100_000);
     manager.setModelContextWindow(100_000);
     const complete = vi.fn<CompleteFn>().mockResolvedValue('<observations>\n* observed\n</observations>');
-    manager.setObservationalCompleteFn(complete);
+    manager.memory.setCompleteFn(complete);
     manager.updateCurrentContextTokenCount(99_000);
 
     const history = Array.from({ length: 20 }, (_, i) => (i % 2 ? assistantMsg(`a${i}`) : userMsg(`u${i}`)));
@@ -164,7 +164,7 @@ describe('transformContext never throws', () => {
 
   it('resolves when the in-band observer rejects', async () => {
     const { loop, piAgent } = createLoop();
-    loop.getCompactionManager().setObservationalCompleteFn(
+    loop.getCompactionManager().memory.setCompleteFn(
       vi.fn<CompleteFn>().mockRejectedValue(new Error('utility 529')),
     );
     piAgent.state.messages.push(userMsg('w'.repeat(30_000)), assistantMsg('d'.repeat(30_000)));

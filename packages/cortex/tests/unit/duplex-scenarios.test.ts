@@ -400,9 +400,9 @@ describe('scenario: the persistent reasoner across a compaction', () => {
    * it, not that the test wrote it into the slot itself.
    */
   function stubObserver(loop: {
-    getCompactionManager: () => { setObservationalCompleteFn: (fn: CompleteFn) => void };
+    getCompactionManager: () => { memory: { setCompleteFn: (fn: CompleteFn) => void } };
   }, seen: string[]): void {
-    loop.getCompactionManager().setObservationalCompleteFn(async (context) => {
+    loop.getCompactionManager().memory.setCompleteFn(async (context) => {
       const text = JSON.stringify(context.messages);
       seen.push(text);
       const carried = text.includes(EARLY_FACT)

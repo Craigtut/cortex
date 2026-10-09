@@ -160,9 +160,9 @@ export class SessionStatusView {
     if (!agent || !app) return;
     const cm = agent.getCompactionManager();
     app.updateStatus({
-      observationTokenCount: cm.getObservationTokenCount(),
-      observerActive: cm.isObserverInFlight(),
-      reflectorActive: cm.isReflectorInFlight(),
+      observationTokenCount: cm.memory.getObservationTokenCount(),
+      observerActive: cm.memory.isObserverInFlight(),
+      reflectorActive: cm.memory.isReflectorInFlight(),
     });
   }
 

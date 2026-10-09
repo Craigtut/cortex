@@ -29,7 +29,7 @@ afterEach(async () => {
 async function talkerDigestingOnAHungObserver(): Promise<DuplexScenarioHarness> {
   const h = createDuplexScenario({ duplex: { idleDigestionDelayMs: 5 } });
   const hung = vi.fn(() => new Promise<string>(() => {}));
-  h.talkerLoop.getCompactionManager().setObservationalCompleteFn(hung as unknown as CompleteFn);
+  h.talkerLoop.getCompactionManager().memory.setCompleteFn(hung as unknown as CompleteFn);
   h.talkerPi.state.messages.push(
     { role: 'user', content: 'talk '.repeat(3_000), timestamp: 1 } as AgentMessage,
     { role: 'assistant', content: 'reply '.repeat(3_000), timestamp: 2 } as AgentMessage,

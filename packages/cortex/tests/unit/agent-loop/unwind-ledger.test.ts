@@ -112,14 +112,14 @@ describe('an unwound delivery moves the memory ledger with the messages', () => 
     const releases: Array<() => void> = [];
     const complete = vi.fn<CompleteFn>(() =>
       new Promise<string>((resolve) => releases.push(() => resolve('<observations>\n* (10:00) user delivered the payload\n</observations>'))));
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     piAgent.state.messages.push(user('m0'), assistant('m1'));
     observedTo(loop, 2);
     piAgent.state.messages.push(user('delivery body ' + 'x'.repeat(4_000)), toolCallTurn());
     // A turn ended past the threshold: an observer starts over the delivery.
-    loop.getCompactionManager().onTurnEnd(19_000, 20_000, piAgent.state.messages, historyStart);
+    loop.getCompactionManager().memory.onTurnEnd(19_000, 20_000, piAgent.state.messages, historyStart);
     expect(complete).toHaveBeenCalledTimes(1);
-    expect(loop.getCompactionManager().isObserverInFlight()).toBe(true);
+    expect(loop.getCompactionManager().memory.isObserverInFlight()).toBe(true);
     parts.runner.boundary = historyStart + 2;
 
     expect(parts.queues.unwindFailedDelivery('delivery body ' + 'x'.repeat(4_000), 0)).toBe(true);
@@ -131,6 +131,6 @@ describe('an unwound delivery moves the memory ledger with the messages', () => 
     const state = loop.getObservationalMemoryState();
     expect(state.bufferedChunks!.map((c) => c.observations)).toEqual(['* to 2']);
     expect(state.bufferWatermark).toBe(2);
-    expect(loop.getCompactionManager().isObserverInFlight()).toBe(false);
+    expect(loop.getCompactionManager().memory.isObserverInFlight()).toBe(false);
   });
 });

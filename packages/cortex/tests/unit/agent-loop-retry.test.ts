@@ -558,7 +558,7 @@ describe('AgentLoop abort-stub trim', () => {
     const mock = createCleanAbortMock([]);
     const agent = build(mock, createConfig());
     const internal = partsOf(agent);
-    const spy = vi.spyOn(internal.compactionManager, 'onSourceHistoryTailTrimmed');
+    const spy = vi.spyOn(internal.compactionManager.memory, 'onSourceHistoryTailTrimmed');
 
     const turn = agent.prompt('hi');
     await new Promise((resolve) => setImmediate(resolve));
@@ -576,7 +576,7 @@ describe('AgentLoop abort-stub trim', () => {
     const mock = createCleanAbortMock([{ type: 'text', text: 'partial answer' }]);
     const agent = build(mock, createConfig());
     const internal = partsOf(agent);
-    const spy = vi.spyOn(internal.compactionManager, 'onSourceHistoryTailTrimmed');
+    const spy = vi.spyOn(internal.compactionManager.memory, 'onSourceHistoryTailTrimmed');
 
     const turn = agent.prompt('hi');
     await new Promise((resolve) => setImmediate(resolve));

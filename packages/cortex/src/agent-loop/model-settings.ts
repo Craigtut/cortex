@@ -8,7 +8,7 @@
 
 // Static catalog reads come from pi-ai's durable `providers/all` entrypoint.
 import { getBuiltinModel as getPiModel, getBuiltinModels as getPiModels } from '@earendil-works/pi-ai/providers/all';
-import type { CompactionManager } from '../compaction/index.js';
+import type { CompactionManager, ObservationalMemory } from '../compaction/index.js';
 import { resolveContextBudget } from '../context-budget.js';
 import { unwrapModel, wrapModel } from '../model-wrapper.js';
 import type { CortexModel } from '../model-wrapper.js';
@@ -17,10 +17,9 @@ import type { AgentLoopConfig, CortexLogger } from '../types.js';
 import { inferUtilityModel } from '../utility-model-inference.js';
 import type { CacheRetention, PiModel } from './pi-agent.js';
 
-type CompactionTarget = Pick<
-  CompactionManager,
-  'setModelContextWindow' | 'setContextWindow' | 'setUtilityModelContextWindow' | 'setCacheInfo'
->;
+type CompactionTarget = Pick<CompactionManager, 'setModelContextWindow' | 'setContextWindow' | 'setCacheInfo'> & {
+  memory: Pick<ObservationalMemory, 'setUtilityModelContextWindow'>;
+};
 
 export interface ModelSettingsPorts {
   /** Point pi's agent state at a new primary model. */
@@ -129,7 +128,7 @@ export class ModelSettings {
     this.utilityModel = model;
     this.utilityPiModel = unwrapModel(model) as PiModel;
     this.utilityOverridden = true;
-    this.ports.compaction()?.setUtilityModelContextWindow(model.contextWindow);
+    this.ports.compaction()?.memory.setUtilityModelContextWindow(model.contextWindow);
   }
 
   resetUtilityModel(): void {
@@ -141,7 +140,7 @@ export class ModelSettings {
     );
     this.utilityModel = utilityModels.utilityModel;
     this.utilityPiModel = utilityModels.utilityPiModel;
-    this.ports.compaction()?.setUtilityModelContextWindow(utilityModels.utilityModel.contextWindow);
+    this.ports.compaction()?.memory.setUtilityModelContextWindow(utilityModels.utilityModel.contextWindow);
   }
 
   setContextWindow(contextWindow: number): void {
@@ -222,7 +221,7 @@ export class ModelSettings {
     // Set utility model context window for observational memory clamps
     const utilityModel = this.utilityModel;
     if (utilityModel) {
-      compaction.setUtilityModelContextWindow(utilityModel.contextWindow);
+      compaction.memory.setUtilityModelContextWindow(utilityModel.contextWindow);
     }
   }
 

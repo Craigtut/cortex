@@ -26,18 +26,8 @@ import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS } from './microcompacti
 import { extractTextContent } from './tool-messages.js';
 import { FAILSAFE_DEFAULTS } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
-import type {
-  CompleteFn,
-  ObservationalMemoryState,
-  ObservationEvent,
-  ReflectionEvent,
-  MemoryErrorInfo,
-  MemoryRecoveredInfo,
-  MemoryGapInfo,
-  CompactNowOptions,
-  CompactNowResult,
-  ObserveNowResult,
-} from './observational/types.js';
+import type { ObservationalMemory } from './observational/index.js';
+import type { CompactNowOptions, CompactNowResult, ObserveNowResult } from './observational/types.js';
 import { resolvePromptCacheTtlMs } from '../provider-registry.js';
 import type { CacheRetention } from '../provider-registry.js';
 import type { ModelPromptCacheLifetimes } from '../model-wrapper.js';
@@ -51,6 +41,7 @@ export type { TrimAction, TrimState } from './microcompaction.js';
 export type { CompleteFn } from './observational/types.js';
 export { isContextOverflow } from './failsafe.js';
 export { ObservationalMemoryEngine } from './observational/index.js';
+export type { ObservationalMemory } from './observational/index.js';
 export type {
   ObservationalMemoryConfig,
   ObservationalMemoryState,
@@ -172,6 +163,11 @@ export class CompactionManager {
   private readonly microcompaction: MicrocompactionEngine;
   private readonly historyStart: number;
   private readonly observationalEngine: ObservationalMemoryEngine;
+  /**
+   * Observational memory's configuration, events, state and status. Its
+   * context-rewriting passes run through this manager instead.
+   */
+  readonly memory: ObservationalMemory;
 
   /** Post-hoc current-context token count, updated after each parent LLM call. */
   private _currentContextTokenCount = 0;
@@ -216,6 +212,7 @@ export class CompactionManager {
     this.historyStart = historyStart;
     this.microcompaction = new MicrocompactionEngine(config.microcompaction);
     this.observationalEngine = new ObservationalMemoryEngine(config.observational ?? {});
+    this.memory = this.observationalEngine;
   }
 
   // -----------------------------------------------------------------------
@@ -237,25 +234,11 @@ export class CompactionManager {
    * shrinks below after the provider rejected a request.
    *
    * Also used as a proxy for the utility model context window until the
-   * actual utility model window is set via setUtilityModelContextWindow().
+   * actual utility model window is set via memory.setUtilityModelContextWindow().
    */
   setModelContextWindow(modelContextWindow: number): void {
     this._modelContextWindow = modelContextWindow;
     this.observationalEngine.setUtilityModelContextWindow(modelContextWindow);
-  }
-
-  /**
-   * Set the LLM completion function for observational memory (utility model).
-   */
-  setObservationalCompleteFn(fn: CompleteFn): void {
-    this.observationalEngine.setCompleteFn(fn);
-  }
-
-  /**
-   * Update the utility model context window for observer/reflector clamps.
-   */
-  setUtilityModelContextWindow(utilityModelContextWindow: number): void {
-    this.observationalEngine.setUtilityModelContextWindow(utilityModelContextWindow);
   }
 
   /**
@@ -410,92 +393,6 @@ export class CompactionManager {
   // -----------------------------------------------------------------------
 
   /**
-   * Called at turn_end to trigger async buffer checks.
-   */
-  onTurnEnd(totalTokens: number, contextWindow: number, messages: AgentMessage[], historyStart: number): void {
-    this.observationalEngine.onTurnEnd(totalTokens, contextWindow, messages, historyStart);
-  }
-
-  /**
-   * Reconcile the observational buffer after the tail of the post-slot
-   * source history was trimmed (an aborted or failed run's stub). Clamps
-   * the buffer watermark and any in-flight observer end index to the
-   * surviving source length so the next activation cannot slice away
-   * unobserved messages.
-   *
-   * @param postSlotLength - post-slot source history length after the trim
-   */
-  onSourceHistoryTailTrimmed(postSlotLength: number): void {
-    this.observationalEngine.onSourceHistoryTailTrimmed(postSlotLength);
-  }
-
-  /**
-   * Reconcile the observational buffer after messages left the post-slot
-   * source history from anywhere in it (a failed delivery being unwound).
-   *
-   * @param postSlotIndices - removed post-slot indices, ascending, as the
-   *   history was before the removal
-   */
-  onSourceHistoryRemoved(postSlotIndices: readonly number[]): void {
-    this.observationalEngine.onSourceHistoryRemoved(postSlotIndices);
-  }
-
-  /**
-   * Register observation event handler.
-   */
-  onObservation(handler: (event: ObservationEvent) => void): void {
-    this.observationalEngine.onObservation(handler);
-  }
-
-  /**
-   * Register reflection event handler.
-   */
-  onReflection(handler: (event: ReflectionEvent) => void): void {
-    this.observationalEngine.onReflection(handler);
-  }
-
-  /** Register a handler for memory calls that failed after all attempts. */
-  onMemoryError(handler: (info: MemoryErrorInfo) => void): void {
-    this.observationalEngine.onMemoryError(handler);
-  }
-
-  /** Register a handler for the first successful memory call after failures. */
-  onMemoryRecovered(handler: (info: MemoryRecoveredInfo) => void): void {
-    this.observationalEngine.onMemoryRecovered(handler);
-  }
-
-  /** Register a handler for messages dropped before memory recorded them. */
-  onMemoryGap(handler: (info: MemoryGapInfo) => void): void {
-    this.observationalEngine.onMemoryGap(handler);
-  }
-
-  /**
-   * Get observational memory state for persistence.
-   */
-  getObservationalMemoryState(): ObservationalMemoryState {
-    return this.observationalEngine.getState();
-  }
-
-  /**
-   * Restore observational memory state from a previous session.
-   *
-   * @param state - the persisted observational memory state
-   * @param historyLength - length of the restored post-slot conversation
-   *   history, used to clamp the buffer watermark against drift
-   */
-  restoreObservationalMemoryState(state: ObservationalMemoryState, historyLength?: number): void {
-    this.observationalEngine.restoreState(state, historyLength);
-  }
-
-  /**
-   * Reset observational memory to empty (history was replaced with no
-   * memory to go with it).
-   */
-  resetObservationalMemory(): void {
-    this.observationalEngine.reset();
-  }
-
-  /**
    * Swap observations in now, whatever the utilization (see
    * ObservationalMemoryEngine.compactNow). The caller holds the loop's gate.
    *
@@ -526,76 +423,6 @@ export class CompactionManager {
     // The slot grew: the measured context no longer exists.
     if (result.status === 'observed') this.invalidateContextTokenCount();
     return result;
-  }
-
-  /**
-   * Run pending observation buffering outside a prompt (see
-   * ObservationalMemoryEngine.digestPendingBuffers). Returns true when an
-   * observer call ran to completion; false also covers a wait that hit the
-   * timeout or the preemption signal (the digestion gives the gate back
-   * rather than blocking on a hung utility request).
-   */
-  async digestPendingObservationBuffers(
-    getHistory: () => AgentMessage[],
-    options?: { timeoutMs?: number; signal?: AbortSignal },
-  ): Promise<boolean> {
-    return this.observationalEngine.digestPendingBuffers(getHistory, options);
-  }
-
-  /**
-   * Get the observation slot content string (for ContextManager.setSlot).
-   */
-  getObservationSlotContent(): string {
-    return this.observationalEngine.getSlotContent();
-  }
-
-  /**
-   * Whether observations have been produced (non-empty observation text).
-   */
-  hasObservations(): boolean {
-    return this.observationalEngine.getObservations().length > 0;
-  }
-
-  /**
-   * Whether the recall tool should be registered.
-   */
-  hasRecallTool(): boolean {
-    return this.observationalEngine.hasRecall();
-  }
-
-  /**
-   * Get the recall config if available.
-   */
-  getRecallConfig() {
-    return this.observationalEngine.getRecallConfig();
-  }
-
-  /**
-   * Current token count of activated observations only.
-   */
-  getObservationTokenCount(): number {
-    return this.observationalEngine.getObservationTokenCount();
-  }
-
-  /**
-   * Whether the observer or reflector is currently running in the background.
-   */
-  isObservationalProcessing(): boolean {
-    return this.observationalEngine.isProcessing();
-  }
-
-  /**
-   * Whether the observer specifically is in-flight.
-   */
-  isObserverInFlight(): boolean {
-    return this.observationalEngine.isObserverInFlight();
-  }
-
-  /**
-   * Whether the reflector specifically is in-flight.
-   */
-  isReflectorInFlight(): boolean {
-    return this.observationalEngine.isReflectorInFlight();
   }
 
   // -----------------------------------------------------------------------

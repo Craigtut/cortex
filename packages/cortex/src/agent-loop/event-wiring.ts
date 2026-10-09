@@ -121,7 +121,7 @@ export function wireLoopEvents(bridge: EventBridge, deps: LoopEventDeps): () => 
           compaction.updateCurrentContextTokenCount(inputTokens);
         }
         if (usage || inputTokens > 0) {
-          compaction.onTurnEnd(
+          compaction.memory.onTurnEnd(
             inputTokens,
             deps.effectiveContextWindow(),
             deps.agentState().messages,

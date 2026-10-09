@@ -104,7 +104,7 @@ describe('memory call wiring', () => {
 
   it("ends the in-band pass when the run's abort fires", async () => {
     const { loop, piAgent } = createLoop();
-    loop.getCompactionManager().setObservationalCompleteFn(
+    loop.getCompactionManager().memory.setCompleteFn(
       vi.fn<CompleteFn>().mockReturnValue(new Promise<string>(() => {})),
     );
     seed(piAgent);

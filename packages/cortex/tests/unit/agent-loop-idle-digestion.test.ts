@@ -143,7 +143,7 @@ describe('digestIdle (observational)', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedHistory(piAgent);
     const lengthBefore = piAgent.state.messages.length;
 
@@ -164,7 +164,7 @@ describe('digestIdle (observational)', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     piAgent.state.messages.push(
       { role: 'user', content: 'tiny', timestamp: 1 } as AgentMessage,
     );
@@ -179,7 +179,7 @@ describe('digestIdle (observational)', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     // Two exchanges: the older one can leave; the latest stays verbatim.
     seedHistory(piAgent);
     seedHistory(piAgent);
@@ -192,14 +192,14 @@ describe('digestIdle (observational)', () => {
     expect(result.observerRan).toBe(true);
     expect(result.historyCompacted).toBe(true);
     expect(piAgent.state.messages.length).toBeLessThan(lengthBefore);
-    expect(loop.getCompactionManager().hasObservations()).toBe(true);
+    expect(loop.getCompactionManager().memory.hasObservations()).toBe(true);
   });
 
   it('overrides the non-blocking posture for its own pass', async () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent, { compaction: { nonBlocking: true } });
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     // Two exchanges: the older one can leave; the latest stays verbatim.
     seedHistory(piAgent);
     seedHistory(piAgent);
@@ -211,7 +211,7 @@ describe('digestIdle (observational)', () => {
     // the digestion pass runs it deliberately.
     expect(result.observerRan).toBe(true);
     expect(result.historyCompacted).toBe(true);
-    expect(loop.getCompactionManager().hasObservations()).toBe(true);
+    expect(loop.getCompactionManager().memory.hasObservations()).toBe(true);
   });
 });
 
@@ -221,7 +221,7 @@ describe('digestIdle observer wait bound', () => {
     const loop = createLoop(piAgent);
     // A hung provider request: the utility completion never settles.
     const complete = vi.fn(() => new Promise<string>(() => {}));
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedHistory(piAgent);
 
     // Unbounded, this await never resolves: prompt() then throws forever
@@ -245,7 +245,7 @@ describe('digestIdle observer wait bound', () => {
     // phase after the observer waits. Unbounded, digestIdle never resolves
     // and the gate stays wedged while holding forceBlockingCompaction.
     const complete = vi.fn(() => new Promise<string>(() => {}));
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedJustPastTheTail(piAgent);
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 
@@ -273,7 +273,7 @@ describe('digestIdle preemption', () => {
       seen.push([...new Set(tags(JSON.stringify(context.messages)))]);
       return new Promise<string>((resolve) => releases.push(() => resolve(OBSERVER_OUTPUT)));
     });
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     // About 1,000 tokens a message; a piece holds three. m0 and m1 are
     // already observed.
     const message = (i: number): AgentMessage =>
@@ -360,7 +360,7 @@ describe('digestIdle preemption', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn(() => new Promise<string>(() => {}));
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedHistory(piAgent);
 
     const preempt = new AbortController();
@@ -383,7 +383,7 @@ describe('digestIdle preemption', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn(() => new Promise<string>(() => {}));
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedJustPastTheTail(piAgent);
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 
@@ -428,7 +428,7 @@ describe('digestIdle abandoned pass invalidation', () => {
     const complete = vi.fn(
       () => new Promise<string>((resolve) => { releases.push(resolve); }),
     );
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedHistory(piAgent);
     // Over the activation threshold so the pass reaches the sync observer.
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
@@ -459,7 +459,7 @@ describe('digestIdle abandoned pass invalidation', () => {
     const complete = vi.fn(
       () => new Promise<string>((resolve) => { releaseObserver = resolve; }),
     );
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedJustPastTheTail(piAgent);
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 
@@ -492,7 +492,7 @@ describe('digestIdle abandoned pass invalidation', () => {
       }
       return Promise.resolve(OBSERVER_OUTPUT);
     });
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedJustPastTheTail(piAgent);
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 
@@ -542,7 +542,7 @@ describe('digestIdle gate serialization', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedHistory(piAgent);
 
     piAgent.hangNextRun = true;
@@ -583,7 +583,7 @@ describe('digestIdle and deliver interleaving', () => {
     const complete = vi.fn(
       () => new Promise<string>((resolve) => { releaseObserver = resolve; }),
     );
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     seedHistory(piAgent);
 
     const digestion = loop.digestIdle();
@@ -625,7 +625,7 @@ describe('digestIdle abandoned pass event suppression', () => {
     const complete = vi.fn(
       () => new Promise<string>((resolve) => { releases.push(resolve); }),
     );
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     const observed = vi.fn();
     loop.onObservation(observed);
     seedHistory(piAgent);
@@ -645,7 +645,7 @@ describe('digestIdle abandoned pass event suppression', () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
-    loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    loop.getCompactionManager().memory.setCompleteFn(complete as unknown as CompleteFn);
     const observed = vi.fn();
     loop.onObservation(observed);
     // Two exchanges: the older one can leave; the latest stays verbatim.

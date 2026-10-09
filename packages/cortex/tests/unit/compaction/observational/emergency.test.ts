@@ -23,7 +23,7 @@ function failingManager(cache: 'warm' | 'cold' = 'warm'): CompactionManager {
   const manager = new CompactionManager(buildCompactionConfig({ observational: { maxAttempts: 1 } }), 1);
   manager.setContextWindow(100_000);
   manager.setModelContextWindow(100_000);
-  manager.setObservationalCompleteFn(vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')));
+  manager.memory.setCompleteFn(vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')));
   if (cache === 'warm') {
     // A warm prompt cache keeps tool-result trimming (L1) out of the way.
     manager.setCacheInfo('anthropic', 'short');
@@ -153,7 +153,7 @@ describe('the view cut in a loop', () => {
       [],
       { enableSubAgentTool: false, enableLoadSkillTool: false },
     );
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockRejectedValue(new Error('529 overloaded')));
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockRejectedValue(new Error('529 overloaded')));
     const ask = userMsg('do the task');
     const messages = (piAgent as unknown as { state: { messages: AgentMessage[] } }).state.messages;
     messages.push(ask);

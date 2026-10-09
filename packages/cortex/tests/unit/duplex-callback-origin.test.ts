@@ -48,7 +48,7 @@ function seedHistory(pi: ScriptedPiAgent, chars = 30_000): void {
 /** A loop reachable for the compaction-manager seams these tests drive. */
 interface DigestibleLoop {
   getCompactionManager: () => {
-    setObservationalCompleteFn: (fn: CompleteFn) => void;
+    memory: { setCompleteFn: (fn: CompleteFn) => void };
     updateCurrentContextTokenCount: (count: number) => void;
   };
   digestIdle: (options?: { observerTimeoutMs?: number }) => Promise<unknown>;
@@ -57,7 +57,7 @@ interface DigestibleLoop {
 /** Drive one real observational pass on one loop. */
 async function observeOn(loop: unknown, pi: ScriptedPiAgent): Promise<void> {
   const digestible = loop as DigestibleLoop;
-  digestible.getCompactionManager().setObservationalCompleteFn(
+  digestible.getCompactionManager().memory.setCompleteFn(
     (async () => OBSERVER_OUTPUT) as unknown as CompleteFn,
   );
   // Two exchanges: the older one can leave; the latest stays verbatim.
@@ -159,7 +159,7 @@ describe('fan-out callback origin', () => {
     const failed: string[] = [];
     h.facade.onMemoryError((_info, origin) => failed.push(origin.loopPath));
     const talker = h.talkerLoop as DigestibleLoop;
-    talker.getCompactionManager().setObservationalCompleteFn(
+    talker.getCompactionManager().memory.setCompleteFn(
       (async () => { throw new Error('500 internal server error'); }) as unknown as CompleteFn,
     );
     seedHistory(h.talkerPi);

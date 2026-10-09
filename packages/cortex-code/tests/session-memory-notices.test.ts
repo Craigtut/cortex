@@ -50,7 +50,7 @@ describe('memory notices', () => {
     const manager = agent.getCompactionManager();
     // Not retried, so each call fails at once.
     const failing = vi.fn<CompleteFn>().mockRejectedValue(new Error('401 Unauthorized'));
-    manager.setObservationalCompleteFn(failing);
+    manager.memory.setCompleteFn(failing);
     const history = reasonerPi.state.messages as Array<{ role: string; content: string; timestamp: number }>;
     history.push({ role: 'user', content: 'rename the payments module', timestamp: 1 });
     history.push({ role: 'assistant', content: 'Renamed.', timestamp: 2 });
@@ -64,7 +64,7 @@ describe('memory notices', () => {
     const failingNotice = app.transcript['addNotification']!.mock.calls.find(([title]) => title === 'Memory model failing')!;
     expect(String(failingNotice[1])).toContain('Memory gap');
 
-    manager.setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    manager.memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     expect((await agent.observeNow()).status).toBe('observed');
 
     expect(memoryNotices(app.transcript['addNotification']!)).toEqual([
@@ -85,7 +85,7 @@ describe('the durable marker for an overflow drop', () => {
     const size = Math.ceil((capacity * 2 * 4) / 20);
     const history = Array.from({ length: 20 }, (_, i) =>
       ({ role: i % 2 ? 'assistant' : 'user', content: String(i).repeat(size), timestamp: i + 1 }));
-    manager.restoreObservationalMemoryState({
+    manager.memory.restoreState({
       observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
       bufferedChunks: [{ observations: '* (10:00) the first exchanges', messageTokensObserved: 1_000, createdAt: new Date(), endIndex: 4 }],
       bufferWatermark: 4,

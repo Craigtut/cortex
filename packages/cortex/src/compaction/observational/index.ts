@@ -74,6 +74,41 @@ function rehydrateChunks(chunks: ObservationChunk[]): ObservationChunk[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Observational memory as the loop and consumers reach it: configuration,
+ * events, persisted state, status, and the reconciliation hooks for source
+ * rewrites the loop makes itself. The passes that rewrite context
+ * (activation, compactNow, observeNow, the overflow drop, the view cut) are
+ * left out: they run through CompactionManager, which keeps the measured
+ * context size true around them.
+ */
+export type ObservationalMemory = Pick<
+  ObservationalMemoryEngine,
+  | 'setCompleteFn'
+  | 'setUtilityModelContextWindow'
+  | 'onObservation'
+  | 'onReflection'
+  | 'onMemoryError'
+  | 'onMemoryRecovered'
+  | 'onMemoryGap'
+  | 'getState'
+  | 'restoreState'
+  | 'reset'
+  | 'onTurnEnd'
+  | 'onSourceHistoryTailTrimmed'
+  | 'onSourceHistoryRemoved'
+  | 'digestPendingBuffers'
+  | 'getSlotContent'
+  | 'getObservations'
+  | 'hasObservations'
+  | 'getObservationTokenCount'
+  | 'isProcessing'
+  | 'isObserverInFlight'
+  | 'isReflectorInFlight'
+  | 'hasRecall'
+  | 'getRecallConfig'
+>;
+
+/**
  * Core orchestrator for the observational memory system.
  *
  * Coordinates the observer, reflector, and buffering coordinator to maintain
@@ -665,6 +700,11 @@ export class ObservationalMemoryEngine {
    */
   getObservations(): string {
     return this.log.text;
+  }
+
+  /** Whether the log holds any observations yet. */
+  hasObservations(): boolean {
+    return this.log.text.length > 0;
   }
 
   /**

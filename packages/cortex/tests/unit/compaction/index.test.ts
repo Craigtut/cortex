@@ -400,7 +400,7 @@ describe('CompactionManager', () => {
       manager.setContextWindow(1_000);
       manager.updateCurrentContextTokenCount(100);
       const mockComplete = vi.fn().mockResolvedValue('<observations>\n* (10:00) observed\n</observations>');
-      manager.setObservationalCompleteFn(mockComplete);
+      manager.memory.setCompleteFn(mockComplete);
 
       const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
       const largeTurn = 'x'.repeat(5_000);
@@ -439,7 +439,7 @@ describe('CompactionManager', () => {
 
       expect(replacedHistory).not.toBeNull();
       expect(replacedHistory!.length).toBeLessThan(history.length);
-      expect(manager.getObservationalMemoryState().observations).toContain('GAP:');
+      expect(manager.memory.getState().observations).toContain('GAP:');
     });
 
     it('reports the observed messages that left with the context size before and after', () => {
@@ -448,13 +448,13 @@ describe('CompactionManager', () => {
       const history = Array.from({ length: 20 }, (_, i) =>
         (i % 2 ? makeAssistantMsg('a'.repeat(30_000)) : makeUserMsg('u'.repeat(30_000))));
       // The first four messages are observed; the rest are not.
-      manager.restoreObservationalMemoryState({
+      manager.memory.restoreState({
         observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
         bufferedChunks: [{ observations: '* (10:00) the first exchanges', messageTokensObserved: 30_000, createdAt: new Date(), endIndex: 4 }],
         bufferWatermark: 4,
       });
       const events: ObservationEvent[] = [];
-      manager.onObservation((event) => events.push(event));
+      manager.memory.onObservation((event) => events.push(event));
       let replaced: AgentMessage[] = [];
 
       manager.handleOverflowError(() => history, (h) => { replaced = h; });

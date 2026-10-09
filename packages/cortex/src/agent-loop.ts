@@ -416,7 +416,7 @@ export class AgentLoop implements
     // Observational memory described the replaced history: its watermark
     // indexes into it and its log summarizes it. Start empty; a restore with
     // memory follows with restoreObservationalMemoryState().
-    compactionManager.resetObservationalMemory();
+    compactionManager.memory.reset();
     compactionManager.invalidateContextTokenCount();
     contextManager.setSlot('_observations', '');
   }
@@ -434,7 +434,7 @@ export class AgentLoop implements
   getCompactionManager(): CompactionManager { return this.parts.compactionManager; }
 
   getObservationalMemoryState(): ObservationalMemoryState {
-    return this.parts.compactionManager.getObservationalMemoryState();
+    return this.parts.compactionManager.memory.getState();
   }
 
   restoreObservationalMemoryState(state: ObservationalMemoryState): void {
@@ -442,11 +442,11 @@ export class AgentLoop implements
     // History is restored first, so the post-slot length is what the
     // buffer watermark must align with.
     const historyLength = Math.max(0, this.agent.state.messages.length - contextManager.historyStart);
-    compactionManager.restoreObservationalMemoryState(state, historyLength);
+    compactionManager.memory.restoreState(state, historyLength);
     // Fill the slot only for real observations (its content always has a
     // preamble). The observer catches up on the next turn_end.
-    if (compactionManager.hasObservations()) {
-      contextManager.setSlot('_observations', compactionManager.getObservationSlotContent());
+    if (compactionManager.memory.hasObservations()) {
+      contextManager.setSlot('_observations', compactionManager.memory.getSlotContent());
     }
   }
 
@@ -459,19 +459,19 @@ export class AgentLoop implements
   }
 
   onObservation(handler: (event: ObservationEvent, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onObservation((event) => handler(event, this.parts.origin));
+    this.parts.compactionManager.memory.onObservation((event) => handler(event, this.parts.origin));
   }
   onReflection(handler: (event: ReflectionEvent, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onReflection((event) => handler(event, this.parts.origin));
+    this.parts.compactionManager.memory.onReflection((event) => handler(event, this.parts.origin));
   }
   onMemoryError(handler: (info: MemoryErrorInfo, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onMemoryError((info) => handler(info, this.parts.origin));
+    this.parts.compactionManager.memory.onMemoryError((info) => handler(info, this.parts.origin));
   }
   onMemoryRecovered(handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onMemoryRecovered((info) => handler(info, this.parts.origin));
+    this.parts.compactionManager.memory.onMemoryRecovered((info) => handler(info, this.parts.origin));
   }
   onMemoryGap(handler: (info: MemoryGapInfo, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onMemoryGap((info) => handler(info, this.parts.origin));
+    this.parts.compactionManager.memory.onMemoryGap((info) => handler(info, this.parts.origin));
   }
 
   // -----------------------------------------------------------------------

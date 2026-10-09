@@ -74,7 +74,7 @@ describe('view injections at the activation threshold', () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
     const complete = vi.fn<CompleteFn>().mockRejectedValue(new Error('529 overloaded'));
-    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    loop.getCompactionManager().memory.setCompleteFn(complete);
     seed(piAgent);
     loop.getContextManager().setEphemeral('EPHEMERAL-MARKER');
     const before = loop.getConversationHistory().length;
@@ -90,7 +90,7 @@ describe('view injections at the activation threshold', () => {
   it('stays in the request under the non-blocking posture with nothing buffered', async () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent, { nonBlocking: true });
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     seed(piAgent);
     loop.getContextManager().setEphemeral('EPHEMERAL-MARKER');
     const before = loop.getConversationHistory().length;
@@ -104,7 +104,7 @@ describe('view injections at the activation threshold', () => {
   it('stays in the request on a swap turn, with the swapped source and the new observations', async () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     seed(piAgent);
     loop.getContextManager().setEphemeral('EPHEMERAL-MARKER');
     const before = loop.getConversationHistory().length;
@@ -125,7 +125,7 @@ describe('view injections at the activation threshold', () => {
   it('keeps tool groups whole in a swap turn view with an injection', async () => {
     const piAgent = createPiAgent();
     const loop = createLoop(piAgent);
-    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     piAgent.state.messages.push(user('do the task'));
     for (let i = 0; i < 6; i++) {
       piAgent.state.messages.push(makeToolCallMsg([{ id: `t${i}`, name: 'Read' }]));

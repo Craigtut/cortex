@@ -416,8 +416,8 @@ export class ContextPipeline {
    */
   private writeObservationSlot(messages?: AgentMessage[]): void {
     const compaction = this.ports.compaction();
-    if (!compaction.hasObservations()) return;
-    const content = compaction.getObservationSlotContent();
+    if (!compaction.memory.hasObservations()) return;
+    const content = compaction.memory.getSlotContent();
     this.ports.slots.setSlot('_observations', content);
     const index = this.ports.slots.historyStart - 1;
     if (messages && index >= 0 && index < messages.length) {
@@ -442,7 +442,7 @@ export class ContextPipeline {
       // history: a run after a preemption can rewrite it.
       const historyStart = this.ports.slots.historyStart;
       const outcome = await raceAbort(
-        this.ports.compaction().digestPendingObservationBuffers(
+        this.ports.compaction().memory.digestPendingBuffers(
           () => this.ports.agentState().messages.slice(historyStart),
           {
             ...(options?.observerTimeoutMs !== undefined ? { timeoutMs: options.observerTimeoutMs } : {}),

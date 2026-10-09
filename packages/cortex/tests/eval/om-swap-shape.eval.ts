@@ -126,7 +126,7 @@ describe.skipIf(!hasEvalCredentials('anthropic'))('a swap in the middle of a run
         enableLoadSkillTool: false,
       });
       const observer = (async () => STUB_OBSERVATION) as CompleteFn;
-      loop.getCompactionManager().setObservationalCompleteFn(observer);
+      loop.getCompactionManager().memory.setCompleteFn(observer);
 
       const errors: string[] = [];
       loop.onError((error) => errors.push(error.originalMessage ?? String(error)));

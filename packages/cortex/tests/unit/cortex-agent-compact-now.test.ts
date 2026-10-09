@@ -35,7 +35,7 @@ describe('CortexAgent.compactNow', () => {
   it('reports the one loop in passthrough', async () => {
     const h = createPassthroughScenario();
     h.facade.setContextWindowLimit(20_000);
-    h.reasonerLoop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    h.reasonerLoop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     seed(h.reasonerPi.state.messages);
 
     const result = await h.facade.compactNow();
@@ -48,9 +48,9 @@ describe('CortexAgent.compactNow', () => {
     const h = createDuplexScenario();
     // Tail budget: 20% of 20,000 tokens, on both loops.
     h.facade.setContextWindowLimit(20_000);
-    h.reasonerLoop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
+    h.reasonerLoop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     const talkerMemory = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
-    h.talkerLoop.getCompactionManager().setObservationalCompleteFn(talkerMemory);
+    h.talkerLoop.getCompactionManager().memory.setCompleteFn(talkerMemory);
     seed(h.reasonerPi.state.messages);
     seed(h.talkerPi.state.messages);
     // The talker has its older exchange observed already.
@@ -76,7 +76,7 @@ describe('CortexAgent.compactNow', () => {
   it('does not wait behind an idle digestion pass', async () => {
     const h = createDuplexScenario({ duplex: { idleDigestionDelayMs: 5 } });
     const hung = vi.fn(() => new Promise<string>(() => {}));
-    h.talkerLoop.getCompactionManager().setObservationalCompleteFn(hung as unknown as CompleteFn);
+    h.talkerLoop.getCompactionManager().memory.setCompleteFn(hung as unknown as CompleteFn);
     h.talkerPi.state.messages.push(
       { role: 'user', content: 'talk '.repeat(3_000), timestamp: 1 } as AgentMessage,
       { role: 'assistant', content: 'reply '.repeat(3_000), timestamp: 2 } as AgentMessage,

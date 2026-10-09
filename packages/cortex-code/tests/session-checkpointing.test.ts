@@ -115,7 +115,7 @@ describe('checkpointing during a long task', () => {
       { role: 'user', content: 'where is the payments module?', timestamp: 1 },
       { role: 'assistant', content: [{ type: 'text', text: 'In src/payments.' }], timestamp: 2 },
     );
-    cm.restoreObservationalMemoryState({
+    cm.memory.restoreState({
       observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
       bufferedChunks: [{ observations: '* (10:00) payments lives in src/payments', messageTokensObserved: 20, createdAt: new Date(), endIndex: 2 }],
       bufferWatermark: 2,
@@ -125,7 +125,7 @@ describe('checkpointing during a long task', () => {
     const complete = vi.fn<CompleteFn>(() => new Promise<string>((resolve) => {
       release = () => resolve('<observations>\n* (10:01) renaming payments\n</observations>');
     }));
-    cm.setObservationalCompleteFn(complete);
+    cm.memory.setCompleteFn(complete);
 
     const save = vi.spyOn(internals.checkpoints.saver, 'save');
     reasonerPi.holdAfterTurn = true;
@@ -135,7 +135,7 @@ describe('checkpointing during a long task', () => {
 
     // Precondition: the checkpoint was taken with a real generation in flight.
     expect(complete).toHaveBeenCalledTimes(1);
-    expect(cm.isObserverInFlight()).toBe(true);
+    expect(cm.memory.isObserverInFlight()).toBe(true);
     // History and memory are read in one synchronous frame, so a generation
     // in flight cannot land between them: memory is saved as it stands,
     // and the in-flight messages are observed again after a crash.

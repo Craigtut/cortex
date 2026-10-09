@@ -2587,7 +2587,7 @@ You have 12 emotions.`;
       const agent = createTestAgentLoop(piAgent, config);
       const internal = partsOf(agent);
       const spy = vi.spyOn(
-        partsOf(agent).compactionManager,
+        partsOf(agent).compactionManager.memory,
         'onSourceHistoryRemoved',
       );
       seedCompletedTask(agent, 'task_wm', 'watermark payload');

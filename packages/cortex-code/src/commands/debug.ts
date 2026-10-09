@@ -53,8 +53,8 @@ function showObservationSlot(session: any): void {
   if (!agent || !app) return;
 
   const cm = agent.getCompactionManager();
-  const slotContent = cm.getObservationSlotContent();
-  const tokenCount = cm.getObservationTokenCount();
+  const slotContent = cm.memory.getSlotContent();
+  const tokenCount = cm.memory.getObservationTokenCount();
 
   if (!slotContent) {
     app.transcript.addNotification(

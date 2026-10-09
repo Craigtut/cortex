@@ -158,13 +158,13 @@ export function assembleLoop(params: {
     // index) is clamped to the surviving post-slot length: pi emits
     // turn_end for trimmed messages before Cortex removes them.
     const postSlotLength = Math.max(0, agent.state.messages.length - contextManager.historyStart);
-    compactionManager.onSourceHistoryTailTrimmed(postSlotLength);
+    compactionManager.memory.onSourceHistoryTailTrimmed(postSlotLength);
   };
   const notifyRemoved = (indices: readonly number[]): void => {
     // An unwound delivery leaves from inside the history: the observational
     // ledger shifts every index past it, as it does for a swap.
     const historyStart = contextManager.historyStart;
-    compactionManager.onSourceHistoryRemoved(
+    compactionManager.memory.onSourceHistoryRemoved(
       indices.filter((index) => index >= historyStart).map((index) => index - historyStart),
     );
   };
@@ -461,7 +461,7 @@ export function assembleLoop(params: {
   // Observation and reflection run on the utility model, each tagged so its
   // spend lands in its own session-usage bucket (the engine's purpose is the
   // category).
-  compactionManager.setObservationalCompleteFn(async (context, completeOptions) =>
+  compactionManager.memory.setCompleteFn(async (context, completeOptions) =>
     memoryCompletions.utility(
       {
         systemPrompt: context.systemPrompt,
@@ -472,9 +472,9 @@ export function assembleLoop(params: {
         ...(completeOptions?.signal ? { signal: completeOptions.signal } : {}),
       },
     ));
-  compactionManager.onMemoryError((info) => eventBridge.emitMemory({ kind: 'error', info }));
-  compactionManager.onMemoryRecovered((info) => eventBridge.emitMemory({ kind: 'recovered', info }));
-  compactionManager.onMemoryGap((info) => eventBridge.emitMemory({ kind: 'gap', info }));
+  compactionManager.memory.onMemoryError((info) => eventBridge.emitMemory({ kind: 'error', info }));
+  compactionManager.memory.onMemoryRecovered((info) => eventBridge.emitMemory({ kind: 'recovered', info }));
+  compactionManager.memory.onMemoryGap((info) => eventBridge.emitMemory({ kind: 'gap', info }));
 
   parts = {
     agent, logger, retryPolicy, origin, lifecycle, gate, abortState, runner, queues, background, deadLetters,
@@ -488,7 +488,7 @@ export function assembleLoop(params: {
   // Context windows and cache TTL follow the model settings from here on.
   models.syncCompaction();
 
-  const recallConfig = compactionManager.hasRecallTool() ? compactionManager.getRecallConfig() : null;
+  const recallConfig = compactionManager.memory.hasRecall() ? compactionManager.memory.getRecallConfig() : null;
   if (recallConfig) {
     tools.registerInternal(createRecallTool(recallConfig) as RegisteredTool);
     tools.refresh();
