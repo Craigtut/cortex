@@ -249,7 +249,7 @@ export function wireAgentEvents(agent: CortexAgent, app: AgentEventApp, ports: A
     if (info.consecutiveFailures !== 1) return;
     app.transcript.addNotification(
       `Memory model failing${loopSuffix(origin)}`,
-      `${info.error.message}. Nothing is lost: recent messages stay in context until memory records them.`,
+      `${info.error.message}. Recent messages stay in context until memory records them. If the context overflows first, the oldest unrecorded ones are dropped and a Memory gap notice says so.`,
       { severity: 'warning' },
     );
   });

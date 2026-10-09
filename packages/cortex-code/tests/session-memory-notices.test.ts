@@ -60,6 +60,9 @@ describe('memory notices', () => {
     // Precondition: two failed memory calls, one episode.
     expect(failing).toHaveBeenCalledTimes(2);
     expect(memoryNotices(app.transcript['addNotification']!)).toEqual(['Memory model failing']);
+    // It promises only what holds: an overflow can still drop unrecorded messages.
+    const failingNotice = app.transcript['addNotification']!.mock.calls.find(([title]) => title === 'Memory model failing')!;
+    expect(String(failingNotice[1])).toContain('Memory gap');
 
     manager.setObservationalCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
     expect((await agent.observeNow()).status).toBe('observed');
