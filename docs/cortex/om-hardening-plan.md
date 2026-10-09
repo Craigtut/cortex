@@ -1,6 +1,6 @@
 # Observational memory hardening plan
 
-**Status**: Design for review (stage 1). Nothing here is implemented.
+**Status**: Implemented 2026-10-09. The as-built record, with deviations, is at the end. The current design is documented in [observational-memory-architecture.md](./observational-memory-architecture.md) and [compaction-strategy.md](./compaction-strategy.md); this document is the history of how it got there.
 **Date**: 2026-10-08
 **Scope**: Cortex (`packages/cortex`) and Cortex Code (`packages/cortex-code`).
 **Related**: [observational-memory-architecture.md](./observational-memory-architecture.md), [compaction-strategy.md](./compaction-strategy.md), [context-manager.md](./context-manager.md), [cortex-agent.md](./cortex-agent.md), [duplex/](./duplex/), [pi-upgrade-1.x.md](./pi-upgrade-1.x.md)
@@ -453,3 +453,42 @@ Decided by the tech lead, to whom Craig delegated these calls.
 1. **Emergency numbers.** Accepted as proposed: in-band view truncation at 0.95 of the effective window; the reactive path drops to 0.8 of capacity. The reactive drop is the only lossy step, so it drops the minimum; the lossless in-band view truncation then enforces the consumer's budget on the next call.
 2. **In-band emergency stays view-only.** Accepted: a one-call note in the view in-band; a durable drop plus a `GAP` note in the log only on provider overflow. This matches "never lose memory" better than the original wording.
 3. **`compactNow` in duplex compacts both loops,** because consumers never learn the talker and reasoner split. The reasoner gets the full `compactNow`. The talker gets a non-blocking swap of what is already observed, plus its tail (swap plan steps 2 to 5 only); it never waits on an observer call, since it is the latency-critical loop. The facade returns a per-loop result. Cortex Code's `/compact` reports the reasoner's result, plus the talker's when there is one.
+
+---
+
+## Implementation record (2026-10-09)
+
+Every step landed with tests shown to fail against the code before it, run in a detached worktree at the parent commit. As built:
+
+| Step | Commit | Notes |
+| --- | --- | --- |
+| Plan | `1437b87` | |
+| 1 | `8dc0f27` | |
+| 2 | `86a315c` | |
+| 3 | `7e0820f` | |
+| 4 | `2b4c73b` | |
+| 5 | `d282cb6` | |
+| 6 | `c825108` | |
+| 7 | `315a7b4`, `521ef0b` | Split in two while the pi 1.x migration had the loop's assembly and direct completions in flight. The second half routes the run's abort through the context pipeline rather than the pi hook, and keeps memory calls off `onError` with their own completion instance, so neither touched the migration's files. |
+| 8 | `ccaffe0`, `521ef0b` | The event bridge's `memory` event and its sub-agent forwarding landed with the second half of step 7. |
+| 9 | `681acd6` | |
+| 10 | `f9cc394`, `fb99df5` | The engine passed 1,000 lines; the observation log and reflection moved to their own modules first. |
+| 11 | `6d21015` | |
+| 12 | `883fae5`, `3a52c64`, `0b0f37f` | Waited-on observation (`in-band.ts`), swap landing (`swap.ts`) and the overflow drop (`emergency.ts`) moved out of the engine first. `compactNow` takes `observe: false` for the talker's non-blocking swap. |
+| 13 | `2d1c711` | |
+| 14 | `c383f98` | |
+| 16 | `ab10a00` | Landed before step 15, so Cortex Code stopped using the classic API before Cortex removed it and every commit typechecks. |
+| 15 | `182ae39` | |
+| 17 | this commit | |
+
+Deviations from the plan:
+
+- **Also removed with classic**: `emergencyTruncate`, `shouldTruncate` and `FailsafeTruncationResult` (classic's Layer 3), the front-drop reconciliation (`onSourceHistoryTruncated`, `onSourceTruncated`, `onFrontDropped`; only `checkAndRunCompaction` called it), the loop host's `directComplete` port, and the Layer 2 summarization eval. The eval fixtures and judge stay for a future memory eval.
+- **The empty observation slot.** Every transform pass wrote the preamble into `_observations` before there was any observation: tokens for nothing, and a cache-breakpoint shift between the first and second call. The slot now fills only once there is a log, as restore already did.
+- **Cortex Code's typecheck** reads `@animus-labs/cortex` from `packages/cortex/dist`, so a cross-package change checked from source alone can pass against a stale build. Verification typechecked Cortex Code against the worktree's Cortex source, and `dist` was rebuilt after each commit that changed the public API, so the pre-commit hook stays truthful for everyone.
+
+Not verified here:
+
+- **The removed-middle shape on Anthropic.** When the latest user message is far back, a swap removes whole units from the middle of a tool loop. The design expects Anthropic to require thinking blocks only on the last assistant turn of an active tool loop, which the tail always keeps whole, and pi-ai sets `prefix_mismatch_behavior: drop_block` for Opus 5.5 and Fable 5.1. Nothing has been sent to the real API to prove it.
+- **Live sessions.** The suites run against scripted pi agents; no session ran against a real provider.
+

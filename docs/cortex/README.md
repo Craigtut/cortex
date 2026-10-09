@@ -20,7 +20,7 @@ Architecture and implementation references:
 - [MCP Integration](./mcp-integration.md)
 - [Skill System](./skill-system.md)
 - [Observational Memory Architecture](./observational-memory-architecture.md)
-- [Classic Compaction Strategy](./compaction-strategy.md)
+- [Compaction (tool result trimming and the failsafe)](./compaction-strategy.md)
 - [Tool Result Persistence](./tool-result-persistence.md)
 - [Error Recovery](./error-recovery.md)
 - [Cross-Platform Considerations](./cross-platform-considerations.md)

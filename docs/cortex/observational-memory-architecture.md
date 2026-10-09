@@ -1,6 +1,6 @@
-# Observational Memory Architecture
+# Observational memory architecture
 
-**STATUS**: Architecture (supersedes `observational-memory-strategy.md`)
+**Status**: Implemented. Hardened 2026-10-09 ([om-hardening-plan.md](./om-hardening-plan.md)): verbatim tail, bounded failures, `compactNow` and `observeNow`, gap recording; classic summarization removed.
 **Date**: 2026-04-10
 **Related docs**: [compaction-strategy.md](./compaction-strategy.md), [cortex-architecture.md](./cortex-architecture.md), [context-manager.md](./context-manager.md)
 **Research basis**: [Mastra Observational Memory](https://mastra.ai/research/observational-memory) (source analysis of `mastra-ai/mastra` repository, April 2026)
@@ -9,55 +9,39 @@
 
 ## Overview
 
-Observational memory is an alternative compaction strategy that replaces Layers 1 and 2 (microcompaction + conversation summarization) with a continuous, background-driven compression system. Two background LLM agents (Observer and Reflector) maintain a compressed event log of the conversation, enabling near-infinite session length with high memory fidelity and prompt cache efficiency.
+Observational memory is Cortex's compaction. Two background LLM agents on the utility model, the observer and the reflector, maintain a compressed event log of the conversation. As the context fills, observations replace the older messages they cover while the most recent messages stay verbatim. Sessions run indefinitely with high memory fidelity and good prompt cache behavior.
 
-Observational memory is the default compaction strategy. Consumers can opt into the legacy "classic" compaction (L1 + L2) if needed.
+Layer 1 (tool result trimming) and Layer 3 (the failsafe) run around it; see [compaction-strategy.md](./compaction-strategy.md).
 
-### Why This Exists
+### Why this exists
 
-The current Layer 2 (conversation summarization) has three limitations for long-running sessions:
+Conversation summarization, the approach this replaced, has three limits for long-running sessions:
 
-1. **Blocking**: The agentic loop pauses for an LLM summarization call at 70% context utilization.
-2. **Lossy compression**: Narrative summaries lose event-level granularity. Summarizing summaries compounds the loss.
-3. **Cache-hostile**: The entire summary is replaced on each compaction, invalidating the prompt prefix cache.
+1. **Blocking**: the loop pauses for a summarization call when the context fills.
+2. **Lossy**: narrative summaries lose event-level granularity, and summarizing summaries compounds the loss.
+3. **Cache-hostile**: each summary replaces the last, invalidating the prompt prefix cache.
 
-Observational memory solves all three: observation runs in the background (non-blocking), produces event logs rather than narrative prose (preserving granularity through reflection cycles), and uses an append-only format (cache-friendly).
+Observational memory addresses all three: observation runs in the background before it is needed, produces event logs rather than prose (preserving granularity through reflection), and appends rather than rewrites.
 
-### Core Insight
+### Core insight
 
 The system is modeled on human cognition: a "subconscious" observer watches the conversation and extracts structured notes, while a reflector periodically reorganizes and condenses those notes. The main agent (actor) sees only the compressed observations plus a tail of recent raw messages. This achieves 5-40x compression while scoring 84-95% on LongMemEval benchmarks (beating oracle baselines where the LLM was given only the relevant raw conversations).
 
 ---
 
-## Design Decisions
+## Design decisions
 
-These decisions were made during architecture review and override any conflicting assumptions in the earlier strategy proposal.
+### 1. L1 runs after the swap
 
-### 1. Replaces L2, L1 Becomes Cache-Aware
+Observational memory compresses the conversation; there is no summarization layer. Layer 1 (microcompaction) runs **after** the swap, on the history that remains, trimming large tool results in the view when the prompt cache has gone cold. The observer always reads full-fidelity source messages, while the request benefits from trimming. The insertion-time cap always runs first. See [compaction-strategy.md](./compaction-strategy.md#layer-1-tool-result-trimming-microcompaction).
 
-When observational memory is active, conversation summarization (L2) is replaced by the observer/reflector system. L1 (microcompaction) remains active in both strategies and operates in a **cache-aware, token-offset-based** mode: trimming is gated on whether the prompt cache has expired, and trim decisions are based on each tool result's token distance from the most recent message rather than discrete percentage thresholds.
-
-**L1 behavior** (applies to both classic and observational strategies; see [compaction-strategy.md](./compaction-strategy.md#layer-1-tool-result-trimming-microcompaction) for the full algorithm):
-
-- **Cache check**: Cortex resolves the active cache TTL from the model's stated lifetimes (pi-ai's `Model.promptCache`), falling back to the provider's `PROVIDER_CACHE_CONFIG` entry, based on the current `CacheRetention` setting (Anthropic short: 5 min / long: 1 hr; OpenAI short: 10 min / long: 24 hr; Google/Mistral/Azure: no caching, L1 runs freely). On each `transformContext`, L1 checks whether the elapsed time since the last LLM call exceeds the TTL.
-- **Trim floor**: Even when the cache is cold, L1 only runs above 25% context utilization. This prevents pointless work on nearly empty contexts.
-- **Hot zone**: When trimming runs, tool results within `max(hotZoneMinTokens, contextWindow * hotZoneRatio)` tokens of the most recent message stay full. Defaults: 16,000 tokens floor, 5% ratio. Non-reproducible tools get an extended hot zone.
-- **Progressive bookend degradation**: Beyond the hot zone, bookend size shrinks linearly across the degradation span (default 40% of context window) from `bookendMaxChars` (2,000) down to `bookendMinChars` (256).
-- **Beyond the degradation span**: Tool results become placeholder (most categories) or clear (ephemeral only).
-
-In the observational strategy, L1 runs **after** the observer/reflector activates buffered chunks and trims observed messages from the source history. L1 then trims any remaining tool results in the unobserved tail before the prompt is sent to the LLM. This lets the observer process full-fidelity source messages while the LLM prompt benefits from tool result trimming.
-
-**Phase 0** (insertion-time cap) always runs regardless of strategy or cache state. It caps individual tool results at `maxResultTokens` and enforces `maxAggregateTurnTokens`. This is a safety mechanism that prevents a single massive tool result from blowing up context.
-
-Layer 3 (emergency truncation) is unchanged and serves as the safety valve.
-
-### 2. Percentage-Based Thresholds on Total Context Utilization
+### 2. Percentage-based thresholds on total context utilization
 
 Thresholds are expressed as percentages of the total context window, not fixed token amounts. This supports any context window size from 32k to 1M+.
 
 The observation threshold is based on **total context window utilization**, not just message tokens. This includes system prompt, consumer slots, the observation slot, and raw messages. If a consumer bloats their slots, the effective message budget shrinks and observation activates sooner.
 
-### 3. Observations Live in a Context Slot
+### 3. Observations live in a context slot
 
 Observations are stored in a Cortex-managed context slot (`_observations`) at the last slot position (after all consumer slots, before conversation history). This provides:
 
@@ -67,69 +51,72 @@ Observations are stored in a Cortex-managed context slot (`_observations`) at th
 
 The slot is managed internally by the `ObservationalMemoryEngine`. Consumers never interact with it directly.
 
-### 4. Dynamic Buffer Intervals
+### 4. Dynamic buffer intervals
 
 Buffer intervals are computed dynamically at each turn boundary based on current context utilization. The interval targets roughly 4 buffer cycles between the current utilization and the activation threshold, capped at a maximum token count to prevent oversized observer calls on large windows. This adapts naturally to any context window size and any consumer slot configuration without assuming a fixed "message budget."
 
-### 5. Consumer Hooks for Coordination
+### 5. Consumer hooks
 
-Two method-level event hooks notify consumers of observation lifecycle events: `agent.onObservation()` and `agent.onReflection()`. These follow the same registration pattern as `agent.onBeforeCompaction()` (multiple handlers, register at any time). They enable consumers with their own compaction systems (e.g., Animus's thought/experience compression) to coordinate their compaction timing with Cortex's.
+Method-level hooks notify consumers: `onObservation` (observations recorded, messages swapped out), `onReflection` (the log condensed), and the memory health hooks `onMemoryError`, `onMemoryRecovered` and `onMemoryGap`. Multiple handlers, register at any time. On `CortexAgent` they fan out to both resident loops with the loop's origin. They let consumers with their own memory (e.g., Animus's thought and experience compression) coordinate with Cortex's.
 
-### 6. Optional Recall via Consumer-Provided Search
+### 6. Optional recall via consumer-provided search
 
 Cortex provides an opinionated but minimal recall tool interface. Observations include timestamps. A consumer can provide a `search` function that accepts a query and optional time range. Cortex registers a recall tool that wraps it. Consumers own message persistence and search implementation.
 
-### 7. Observer/Reflector Prompts
+### 7. Observer and reflector prompts
 
 Default prompts are adapted from Mastra's proven prompts (94.87% on LongMemEval). Consumers can append custom instructions but cannot replace the core prompt. This ensures a quality baseline while allowing domain-specific customization.
 
-### 8. No Observation Editing
+### 8. No observation editing
 
-Agents cannot directly edit their observations. Corrections flow naturally through the observer: the user says "no, I meant X," the next observation captures the correction, and the reflector reconciles it with the original. A `triggerObservation()` method allows consumers to force an observation cycle if needed (e.g., after a critical correction).
+Agents cannot directly edit their observations. Corrections flow through the observer: the user says "no, I meant X," the next observation captures the correction, and the reflector reconciles it with the original. `observeNow()` records everything not yet in the log at once, for a correction the log should carry immediately.
 
-### 9. No Pinned Observations
+### 9. No pinned observations
 
 Observations are not pinnable. Long-term memory that must survive indefinitely is a consumer concern (vector databases, persistent storage). The observation system is for context compression, not permanent storage. Archive pointers and observation group ranges are not used; consumers who need recall implement their own persistence and search.
 
-### 10. L3 Never Truncates Observations
+### 10. L3 never truncates observations, and never loses silently
 
-Emergency truncation only removes raw messages, never observation content. If messages are growing faster than the observer can compress, a synchronous observation is forced before any truncation happens.
+The in-band failsafe cuts only the request's **view**: the source keeps every message and the observer still reads it. Messages leave the source unobserved only after the provider rejects a request as too long, and then the log records a `GAP` line (marked critical, and restored if a reflection drops it) and `onMemoryGap` fires.
+
+### 11. A verbatim tail survives every swap
+
+A swap keeps the most recent messages as they are: units (a tool call with its results, or a single message) walked back from the end while they fit `min(tailRatio × effective window, tailMaxTokens)`, and the last unit whatever its size. The latest user message stays wherever it is: when it is older than the cut, it moves to the front of what remains. The agent never loses the request it is working on, nor the last thing it did.
+
+### 12. Failures are bounded and change nothing
+
+Every observer and reflector call runs under a policy: a timeout per attempt, quick retries for errors worth retrying, and the caller's abort ending the call at once. A call that fails after its attempts changes nothing it would have recorded: unobserved messages stay in context and a failed reflection keeps the current log. One failure puts memory into a degraded mode in which a request never waits on a memory call; background calls keep trying, and their first success recovers it. Memory failures never reach the loop's general `onError`.
+
+### 13. Explicit compaction and observation
+
+`compactNow()` swaps observations in whatever the utilization; `observeNow()` records without removing anything. Both run under the loop gate, so neither races a turn.
+
+### 14. Observations are tracked by message range
+
+Every buffered chunk records the end of the range it covers, and every source rewrite reports to the ledger that owns the indices, so an observer in flight survives a swap and lands at its shifted range. Nothing is observed twice, and nothing leaves the source unobserved except through decision 10.
 
 ---
 
 ## Configuration
 
-### Strategy Selection
-
 ```typescript
 interface CortexCompactionConfig {
-  // Strategy selection
-  strategy?: 'observational' | 'classic';  // default: 'observational'
-
-  // Non-blocking posture: no synchronous LLM call in transformContext
+  // Never run a memory call while a request waits (the duplex talker).
   nonBlocking?: boolean;  // default: false
 
-  // Classic-specific (used when strategy === 'classic')
-  microcompaction?: Partial<MicrocompactionConfig>;
-  compaction?: Partial<CompactionConfig>;
-  adaptive?: Partial<AdaptiveThresholdConfig>;
+  microcompaction: MicrocompactionConfig;  // Layer 1
+  failsafe: FailsafeConfig;                // Layer 3
 
-  // Observational-specific (used when strategy === 'observational')
   observational?: Partial<ObservationalMemoryConfig>;
-
-  // Always active regardless of strategy
-  failsafe?: Partial<FailsafeConfig>;
 }
 ```
 
-When `strategy` is `'observational'` (or omitted), observational memory handles compression. L1 threshold trimming and L2 summarization are disabled. When `'classic'`, the existing L1 + L2 + L3 system operates unchanged.
-
-### Non-Blocking Posture and Idle Digestion
+### Non-blocking posture and idle digestion
 
 For loops whose turns must never stall on a multi-second in-band LLM call (a presence loop mid-conversation), two controls exist:
 
-- **`nonBlocking: true`** disables every synchronous LLM call inside `transformContext`. Activation still consumes already-buffered chunks (a cheap merge), but the forced synchronous observer on the unobserved tail, the pre-truncation catch-up observation, and inline reflection are skipped; reflection at threshold swaps in a buffered result or launches asynchronously instead. Emergency truncation remains the only blocking in-band path, at the accepted cost of dropping unobserved content if the failsafe fires before digestion catches up.
-- **`AgentLoop.digestIdle()`** runs the deferred work OUTSIDE a prompt: it waits for any in-flight observer chunk to land, observes the still-unobserved tail (buffering the result as a chunk), then runs the threshold pass (activation, reflection, classic summarization) with blocking work explicitly allowed even under the non-blocking posture. It is serialized through the loop gate, so it can never race a running turn's history mutations; an owner schedules it during idle windows so the expensive calls happen while nobody is waiting. Returns `{ observerRan, historyCompacted }`. The observer waits are bounded (`observerTimeoutMs`, default 60s): on timeout the digestion returns `observerRan: false` and releases the gate while the hung observer stays in flight (its chunk still lands whenever it settles), so a hung utility request can never wedge the loop. A `signal` option preempts the pass the same way (`preempted: true`), which is how the duplex facade keeps idle digestion from delaying a user's next input.
+- **`nonBlocking: true`** disables every synchronous memory call inside `transformContext`. A swap still merges what is already observed (cheap), but the catch-up observer and inline reflection never run while a request waits; reflection at threshold swaps in a buffered result or launches in the background. Past the threshold, buffering keeps launching at its floor interval, so the next activation has chunks to merge.
+- **`AgentLoop.digestIdle()`** runs the deferred work outside a prompt: it waits for any in-flight observer chunk to land, observes the still-unobserved tail (buffering the result), then runs the threshold pass (activation, reflection) with blocking work allowed even under the non-blocking posture. It is serialized through the loop gate, so it can never race a running turn's history mutations; an owner schedules it during idle windows so the expensive calls happen while nobody is waiting. Returns `{ observerRan, historyCompacted }`. Each phase is bounded (`observerTimeoutMs`, default 60s): on timeout the digestion releases the gate and an abandoned pass discards its late rewrite. A `signal` option preempts the pass the same way (`preempted: true`), which is how the duplex facade keeps idle digestion from delaying a user's next input.
 
 ### ObservationalMemoryConfig
 
@@ -208,6 +195,40 @@ interface ObservationalMemoryConfig {
   reflectorInstruction?: string;
 
   /**
+   * Share of the effective context window the verbatim tail may hold: the
+   * most recent messages a swap keeps as they are.
+   * @default 0.2
+   */
+  tailRatio?: number;
+
+  /**
+   * Cap on the verbatim tail, in tokens.
+   * @default 64_000
+   */
+  tailMaxTokens?: number;
+
+  /**
+   * Wall-clock bound on each observer or reflector attempt.
+   * @default 60_000
+   */
+  callTimeoutMs?: number;
+
+  /**
+   * Attempts per observer or reflector call, the first included. Quick
+   * retries (1s, then 2s) for errors worth retrying; authentication and
+   * context-overflow errors are not retried.
+   * @default 3
+   */
+  maxAttempts?: number;
+
+  /**
+   * Budget for all memory calls one in-band pass (a request waiting) may
+   * make before it sends the request as it stands.
+   * @default 60_000
+   */
+  blockingBudgetMs?: number;
+
+  /**
    * Optional recall tool. When provided, Cortex registers a recall tool
    * that enables the agent to search through persisted conversation history.
    * The consumer owns message persistence and search implementation.
@@ -221,52 +242,69 @@ interface ObservationalMemoryConfig {
 }
 ```
 
-### Event Types
+### Event types
 
 ```typescript
 interface ObservationEvent {
-  /** The raw messages that were compressed and removed from context. */
-  compactedMessages: AgentMessage[];
-  /** The observation text those messages were compressed into. */
+  /** What recorded them: a threshold activation, compactNow, observeNow, or the swap before an overflow drop. */
+  trigger: 'activation' | 'compact-now' | 'observe-now' | 'emergency';
+  /** Messages whose observations this event added to the log. */
+  observedMessages: AgentMessage[];
+  /** Messages that left context; empty when nothing was swapped out. */
+  removedMessages: AgentMessage[];
+  /** The whole observation log after this event. */
   observations: string;
-  /** Total context utilization (0-1) at the time of activation. */
   contextUtilization: number;
-  /** Whether this was a sync (blocking) or async (buffered) observation. */
+  /** Estimated context size before and after, in tokens. */
+  tokensBefore: number;
+  tokensAfter: number;
+  /** Whether observations were made while a caller waited. */
   sync: boolean;
-  /** Timestamp of the observation. */
   timestamp: Date;
 }
 
 interface ReflectionEvent {
-  /** Observations before reflection. */
   previousObservations: string;
-  /** Observations after reflection. */
   newObservations: string;
-  /** How many reflection generations have occurred in this session. */
   generationCount: number;
   /** Compression level used (0-4). */
   compressionLevel: number;
-  /** Timestamp of the reflection. */
   timestamp: Date;
 }
 
-interface RecallResult {
-  /** The message or tool result content. */
-  content: string;
-  /** When the message occurred. */
-  timestamp: Date;
-  /** Type of content. */
-  type: 'message' | 'tool-result' | 'tool-call';
-  /** Message role. */
-  role?: 'user' | 'assistant';
+interface MemoryErrorInfo {
+  operation: 'observe' | 'reflect';
+  trigger: 'buffer' | 'activation' | 'idle' | 'compact-now' | 'observe-now';
+  error: Error;          // the last attempt's
+  attempts: number;
+  /** 1 on the call that started a degraded episode. */
+  consecutiveFailures: number;
+  /** 'retry-later' (background), 'partial-swap' (in-band), 'unchanged'. */
+  outcome: 'retry-later' | 'partial-swap' | 'unchanged';
+}
+
+interface MemoryRecoveredInfo {
+  failures: number;
+  degradedForMs: number;
+}
+
+interface MemoryGapInfo {
+  droppedMessages: number;
+  from: Date | null;
+  to: Date | null;
+  reason: string;
+  /** The GAP line appended to the log. */
+  note: string;
 }
 ```
 
+The memory events also reach the event bridge as `memory` (`{ kind: 'error' | 'recovered' | 'gap', info }`), so they forward from sub-agents.
+
 ---
 
-## Context Layout
+## Context layout
 
-When observational memory is active, the message array layout is:
+The message array layout:
 
 ```
 Message Array:
@@ -283,8 +321,8 @@ Message Array:
 │    suggested-response]                  │  Changes only on activation/reflection
 │                                         │
 ├─────────────────────────────────────────┤
-│ RAW MESSAGE REGION (N+2..M)             │  Unobserved messages, append-only
-│   [user message]                        │  Grows between observation cycles
+│ RAW MESSAGE REGION (N+2..M)             │  The verbatim tail and anything not
+│   [user message]                        │  yet swapped out; grows between swaps
 │   [assistant response]                  │
 │   [toolCall + toolResult messages]      │
 │   [user message]                        │
@@ -297,22 +335,22 @@ Message Array:
 └─────────────────────────────────────────┘
 
 Cache behavior:
-  Slots + Observation slot = stable prefix → CACHE HIT (between activations)
-  Raw messages = appending suffix → new tokens each turn
-  On activation: observation slot updates, raw messages trimmed → partial cache miss
-  On reflection: observation slot rewritten → full cache miss (rare)
+  Slots + observation slot = stable prefix: cache hit (between swaps)
+  Raw messages = appending suffix: new tokens each turn
+  On a swap: observation slot updates, older raw messages leave: partial cache miss
+  On reflection: observation slot rewritten: full cache miss (rare)
 ```
 
-### Slot Registration
+### Slot registration
 
-When `strategy === 'observational'`, Cortex appends `'_observations'` to the consumer's slot list during agent construction. This is transparent to the consumer:
+Cortex appends `'_observations'` to the consumer's slot list during agent construction. This is transparent to the consumer:
 
 - Consumer configures: `slots: ['system-context', 'thoughts', 'experiences']`
 - Cortex internally registers: `['system-context', 'thoughts', 'experiences', '_observations']`
 - `slotCount` becomes 4 (consumer's 3 + 1 internal), so `historyStart` is 5 (the system head plus 4 slots)
-- All compaction operations use `historyStart` to skip the head and slot region, naturally including the observation slot
+- All compaction operations use `historyStart` to skip the head and slot region
 
-The observation slot content is a user-role message containing:
+The slot stays empty until there are observations. Then it holds a user-role message containing:
 1. Context preamble (instructions for the agent on how to use observations)
 2. `<observations>` block with the formatted observation log
 3. `<current-task>` with the agent's current task
@@ -320,9 +358,9 @@ The observation slot content is a user-role message containing:
 
 ---
 
-## Observer System
+## Observer system
 
-### When It Runs
+### When it runs
 
 The observer runs asynchronously in the background. The interval between observer calls is computed dynamically at each turn boundary based on current context utilization. There is no fixed "message budget"; the system adapts to whatever space is actually available.
 
@@ -375,50 +413,33 @@ As utilization increases toward 90%, intervals shrink:
 | 200k | 160k used | ~20k | ~5k | 5k |
 | 1M | 800k used | ~100k | ~25k | 25k |
 
-### Trigger Mechanism
+Past the activation threshold, buffering keeps launching at the floor interval (`bufferMinTokens`, bounded by the input cap) instead of stopping: a swap can only bring in what is observed.
+
+### Trigger mechanism
 
 At each agentic turn boundary (`turn_end` event):
 
-1. Compute unobserved message tokens (messages after the observation watermark)
-2. If unobserved tokens >= `bufferInterval` AND no observer is currently in flight:
-   - Snapshot the unobserved messages
-   - Launch the observer asynchronously (do not await)
-   - Track the in-flight promise
-3. When the observer completes:
-   - Parse the output (observations, current-task, suggested-response)
-   - Store as a buffered observation chunk
-   - Advance the buffer watermark
+1. Compute unobserved message tokens (messages after the watermark).
+2. If unobserved tokens >= `bufferInterval` and no observer is in flight, launch the observer over the next **piece**: whole units from the watermark, as many as fit the observer's input cap. The ledger records the pending range.
+3. When the observer completes, its chunk lands at that range (shifted by any swap since) and the watermark advances. A failed call leaves the range unobserved for the next attempt.
 
-### Activation
+### Activation: the swap
 
-In `applyInTransformContext()` (fires before each LLM call):
+In `applyInTransformContext()`, before each LLM call, once utilization reaches `activationThreshold`:
 
-1. Compute total context utilization
-2. If utilization >= `activationThreshold` (90%):
-   a. If buffered observation chunks exist:
-      - Merge all completed chunks into the observation slot content
-      - Remove observed messages from `agent.state.messages` (messages covered by completed chunks only; in-flight observer messages stay as raw)
-      - Reset completed buffer state
-   b. If utilization is still >= `activationThreshold` after step (a) (no buffers existed, or buffers weren't enough):
-      - Run the observer synchronously on remaining unbuffered messages
-      - Merge sync observations into the observation slot
-      - Remove the observed messages
-   c. Update the turn's history boundary (`TurnRunner.boundary`, public as `prePromptMessageCount`)
-   d. Reset microcompaction cache
-   e. Fire `onObservation` with the compacted messages and new observations
-   f. Check observation slot tokens against reflection threshold
+1. **Select the tail.** The verbatim tail starts at `T`; the latest user message is at `U`.
+2. **Catch up**, only when blocking work is allowed, memory is healthy, and swapping in what is already observed would still leave utilization at or above the threshold: wait for the observer in flight, then observe `[watermark, T)` in pieces within the input cap. All of it shares one budget (`blockingBudgetMs`) and the run's abort signal.
+3. **Cut** at the unit boundary at or below `min(T, watermark)`. If nothing new would leave history, stop.
+4. **Merge** every chunk covering a removed message into the log, in order, with the latest of their hints. A chunk that reaches past the cut is merged whole; its remaining messages stay in history as observed-and-kept.
+5. **Remove** the messages before the cut, except the latest user message, which moves to the front of what remains.
+6. **Rebase** the ledger: the observed-and-kept prefix, the remaining chunks and the in-flight range shift with the messages.
+7. Fire `onObservation`, then check the log against the reflection threshold.
 
-**In-flight observer handling:** Activation only removes messages covered by completed buffer chunks. If an async observer call is in-flight, its messages remain in context as raw messages. When the in-flight observer completes, its chunk becomes the first chunk for the next activation cycle.
+Every await happens before anything changes; steps 3 to 6 run in one synchronous block. An abandoned pass (a timed-out digestion) applies nothing, and what it observed stays buffered. Chunks wholly inside the tail stay buffered rather than merged, so a swap never grows the log without removing anything.
 
-```
-Before activation:
-  [slots] [chunk1 ✓] [chunk2 ✓] [observer in-flight...] [unbuffered]
+When the latest user message is far back (a long autonomous run), the kept history is that message, then a gap the log covers, then the tail. The log can therefore describe work after the oldest kept message; the preamble says so.
 
-After activation:
-  [slots] [observation slot updated] [in-flight msgs kept] [unbuffered]
-```
-
-### Observer Prompt
+### Observer prompt
 
 Adapted from Mastra's observer prompt. Key structure:
 
@@ -458,7 +479,7 @@ Priority levels (inter-agent signaling, guides the reflector):
 
 The consumer can append domain-specific instructions via `observerInstruction`.
 
-### Message Formatting for Observer
+### Message formatting for the observer
 
 Messages are formatted with temporal context for the observer:
 
@@ -476,9 +497,15 @@ Tool results receive special formatting: the tool name is prominent, results are
 
 ---
 
-## Reflector System
+The prompt tells the observer that after a swap older raw messages are removed and only the most recent stay verbatim, so its continuation hints connect what the agent was doing before that tail to the work in it. The preamble tells the agent the same: the most recent messages follow verbatim and are the more precise record where they overlap an observation, an observation can describe work after the oldest message still visible, and a line marked `GAP` means a span was lost before it could be recorded, so it should say so rather than guess.
 
-### When It Runs
+Tool results in the observer's input are bookended to fit the observer's input cap, so a single huge result never overflows the utility model.
+
+---
+
+## Reflector system
+
+### When it runs
 
 The reflector condenses observations when the observation slot exceeds the effective reflection threshold. The threshold is percentage-based, scaling with the context window and clamped to the utility model's capacity:
 
@@ -491,18 +518,17 @@ const effectiveReflectionThreshold = Math.min(
 
 Like the observer, the reflector runs asynchronously.
 
-### Trigger Mechanism
+### Trigger mechanism
 
-After each observation activation:
+After each swap:
 
-1. Estimate tokens in the observation slot
-2. If observation tokens >= `effectiveReflectionThreshold * reflectionBufferActivation` (50%):
-   - Launch the reflector asynchronously
-3. If observation tokens >= `effectiveReflectionThreshold`:
-   - If a buffered reflection is ready, swap it in
-   - Otherwise, force a synchronous reflection
+1. Estimate tokens in the log.
+2. From `effectiveReflectionThreshold * reflectionBufferActivation` (50%), launch the reflector in the background.
+3. At `effectiveReflectionThreshold`, swap in a buffered reflection if one is ready; otherwise run the reflector while the caller waits (or, under the non-blocking posture, in the background).
 
-### Compression Levels
+A reflection condenses the log as it was when the reflector started, so it lands onto that prefix and keeps everything appended since. An empty, unparseable, or not-smaller reply is rejected, and a failed reflection keeps the current log: larger than ideal, which costs tokens, not memory. A `GAP` line the reflector drops is put back.
+
+### Compression levels
 
 The reflector retries with escalating compression when output exceeds the target:
 
@@ -516,7 +542,7 @@ The reflector retries with escalating compression when output exceeds the target
 
 Maximum 3 retries from starting level. Each reflection increments `generationCount`.
 
-### Reflector Prompt
+### Reflector prompt
 
 Adapted from Mastra's reflector prompt:
 
@@ -535,15 +561,31 @@ Guidance:
   - Preserve ✅ completion markers
   - Condense older observations more aggressively, retain detail for recent
   - User assertions ("User stated X") take precedence over questions
+  - Keep every GAP line
 ```
 
 The consumer can append domain-specific instructions via `reflectorInstruction`.
 
 ---
 
-## Threshold System
+## Failure handling
 
-### Total Context Utilization
+| Call | Policy | On failure |
+| --- | --- | --- |
+| Background observer (buffering, idle) | timeout, 3 attempts | its range stays unobserved; the next turn tries again |
+| In-band catch-up | timeout, 3 attempts, one shared pass budget, run abort | the swap brings in only what is already observed; the request goes out as it stands |
+| Reflector | timeout, 3 attempts | the current log stays |
+| `compactNow` / `observeNow` | full policy (the user asked) | history and the log are unchanged; the result says why |
+
+Quick retries wait 1s, then 2s. Authentication and context-overflow errors are not retried: the same request fails the same way. A reply that cannot be used (empty, unparseable, truncated, degenerate repetition, a reflection that is not smaller) counts as a failed attempt.
+
+While memory is degraded (a call failed after all its attempts, and none has succeeded since), an in-band pass makes no memory calls: it merges what is buffered and sends the request. Background buffering keeps calling, and its first success fires `onMemoryRecovered`.
+
+---
+
+## Threshold system
+
+### Total context utilization
 
 All threshold decisions use total context utilization:
 
@@ -557,7 +599,7 @@ This means:
 - If the consumer calls `setContextWindowLimit()` to a smaller value, all thresholds adjust
 - The system gracefully handles any context window size
 
-### Utility Model Context Window Constraints
+### Utility model context window constraints
 
 Both the observer and reflector run on the utility model. Their inputs must fit within the utility model's context window. Two internal clamps enforce this:
 
@@ -583,230 +625,80 @@ These clamps are internal implementation details, not consumer-facing configurat
 
 If the consumer uses a utility model with a very small context window, both observer and reflector calls are naturally bounded to fit, at the cost of more frequent observation and reflection cycles.
 
-### Token Estimation
+### Token estimation
 
 Uses the existing dual-tracking approach:
 - Heuristic: `estimateTokens(text)` = `Math.ceil(text.length / 4)`
-- Post-hoc: `_currentContextTokenCount` from the last API response
+- Post-hoc: the measured input of the last parent call
 - Working value: `Math.max(heuristic, postHoc)` to avoid underestimating
 
-### Activation Flow Summary
+A swap, an overflow drop and `observeNow` invalidate the measured count: it described a context that no longer exists.
 
-```
-turn_end event fires
-  └→ Compute total context utilization
-  └→ Compute dynamic bufferInterval from tokensUntilActivation
-  └→ Check unobserved message tokens since last buffer
-       └→ If unobservedTokens >= bufferInterval AND no observer in flight:
-            └→ Snapshot unobserved messages
-            └→ Launch async observer (do not await)
+### Activation, failsafe and overflow
 
-transformContext fires (before next LLM call)
-  └→ Phase 0: Insertion-time cap (always, regardless of strategy)
-  └→ Build context snapshot
-  └→ Compute total utilization
-       ├→ If utilization >= activationThreshold (90%):
-       │    ├→ Activate completed buffers, trim observed messages
-       │    ├→ If still >= activationThreshold: force sync observation
-       │    ├→ Fire onObservation
-       │    └→ Check observation tokens for reflection threshold
-       └→ If utilization >= L3 threshold (90% of MODEL window):
-            └→ Emergency truncation (messages only, never observations)
-  └→ Return final context
-```
-
-### Distinction Between Activation Threshold and L3 Threshold
-
-- **Activation threshold** (default 0.9): percentage of the **effective context window** (consumer-imposed limit or model window). This is where observations activate.
-- **L3 threshold** (default 0.9): percentage of the **model context window** (the actual model limit). This is the hard safety valve.
-
-When `contextWindowLimit` is set below the model window, there is a gap between activation and L3. For example, with a 200k model window and 100k limit:
-- Activation at 90k (90% of 100k)
-- L3 at 180k (90% of 200k)
-
-This gap provides ample room for the observation system to operate before the hard limit is hit.
+- **Activation threshold** (default 0.9): of the **effective** window (the consumer's limit, or the model's window). A swap happens here.
+- **Failsafe threshold** (default 0.95): of the effective window, after the swap and Layer 1. Past it, the request's view is cut; the source keeps every message.
+- **Overflow**: after the provider rejects a request as too long, the source shrinks to 80% of the model's capacity, observed messages leaving as in a swap and unobserved ones that do not fit dropped with a `GAP` line.
 
 ---
 
-## Integration with Existing Compaction
+## Session state
 
-### What Changes in `CompactionManager`
-
-The `applyInTransformContext()` method gains a strategy switch:
+### Saving state
 
 ```typescript
-async applyInTransformContext(context, getHistory, setHistory, getSourceHistory, setSourceHistory) {
-  // Phase 0: Insertion-time cap (always runs)
-  await this.applyInsertionCap(sourceMessages, historyStart);
-
-  // Compute utilization
-  const currentTokens = this.estimateCurrentContextTokens(context);
-  const utilization = currentTokens / this._contextWindow;
-
-  if (this._strategy === 'observational') {
-    // Observational memory path
-    context = await this.observationalEngine.applyInTransformContext(
-      context, utilization, getHistory, setHistory, getSourceHistory, setSourceHistory
-    );
-  } else {
-    // Classic path (existing L1 + L2)
-    history = await this.microcompaction.apply(history, ...);
-    if (shouldCompact(totalAfterMicro, ...)) {
-      await runCompaction(...);
-    }
-  }
-
-  // L3: Emergency truncation (always, uses model window)
-  if (shouldTruncate(totalNow, this._modelContextWindow, ...)) {
-    // For observational: truncate messages only, never observations
-    emergencyTruncate(history, ...);
-  }
-
-  return context;
-}
-```
-
-### What Stays the Same
-
-- Phase 0 insertion-time cap: unchanged, always runs
-- L1 cache-aware microcompaction: active in both strategies (only runs when cache is cold)
-- Layer 3 emergency truncation: unchanged, always active
-- `_currentContextTokenCount` tracking via `turn_end` events: unchanged
-- `_contextWindow` / `_modelContextWindow` distinction: unchanged
-- Error handling and `isContextOverflow`: unchanged
-
-### What Is Disabled
-
-When `strategy === 'observational'`:
-- L2 summarization (`runCompaction()`): disabled, replaced by observer/reflector
-- Adaptive threshold system: not applicable (observational memory uses its own threshold system)
-- `onBeforeCompaction` / `onPostCompaction`: not fired (replaced by `onObservation` / `onReflection`)
-
-### Migration Path
-
-Observational memory is the default. No configuration change is needed to use it:
-
-```typescript
-// Default: observational memory (zero config)
-const agent = await AgentLoop.create(config);
-
-// With hooks (method-level, like onBeforeCompaction)
-const agent = await AgentLoop.create(config);
-agent.onObservation((event) => {
-  // persist compacted messages if desired
-});
-agent.onReflection((event) => {
-  // coordinate consumer-side compaction
-});
-
-// Opt into classic compaction
-const agent = await AgentLoop.create({
-  compaction: {
-    strategy: 'classic',
-  }
-});
-```
-
----
-
-## Session State
-
-### Saving State
-
-```typescript
-// Existing API (conversation history after slots, excludes observation slot)
 const history = agent.getConversationHistory();
-
-// New API for observation state
 const omState = agent.getObservationalMemoryState();
-// Returns: ObservationalMemoryState | null (null if not using observational strategy)
 ```
+
+On `CortexAgent`, `getState()` returns both loops' histories and memory in one coherent artifact, and is the supported persistence surface.
 
 ### ObservationalMemoryState
 
 ```typescript
 interface ObservationalMemoryState {
-  /** Current observation text (the slot content). */
+  /** Current observation text (the slot's log). */
   observations: string;
-
-  /** Continuation hints from the last observer run. */
-  continuationHint: {
-    currentTask: string;
-    suggestedResponse: string;
-  } | null;
-
-  /** Current observation token estimate. */
+  continuationHint: { currentTask: string; suggestedResponse: string } | null;
   observationTokenCount: number;
-
-  /** How many reflection cycles have occurred. */
   generationCount: number;
-
-  /** Buffered observation chunks not yet activated. */
+  /** Buffered chunks not yet merged into the log, each with the end of its range. */
   bufferedChunks: ObservationChunk[];
-
-  /**
-   * Index into post-slot conversation history up to which `bufferedChunks`
-   * cover messages. Persisted so the buffer can be restored without
-   * re-observing already-buffered messages. Optional: sessions saved before
-   * buffer persistence omit it, in which case chunks are discarded on restore.
-   */
+  /** Where the observed messages end. */
   bufferWatermark?: number;
+  /** Messages at the front that are in the log and still in history. */
+  observedPrefix?: number;
 }
 
 interface ObservationChunk {
-  /** The observation text produced by the observer. */
   observations: string;
-  /** Token count of messages that were observed. */
   messageTokensObserved: number;
-  /** When this chunk was created. */
   createdAt: Date;
-  /** Current task from this observation (latest wins on activation). */
   currentTask?: string;
-  /** Suggested response from this observation (latest wins on activation). */
   suggestedResponse?: string;
+  /** End of the source range this chunk covers. Absent in state saved before ranges existed. */
+  endIndex?: number;
 }
 ```
 
-### Restoring State
+### Restoring state
 
 ```typescript
-// Existing API
-agent.restoreConversationHistory(history);
-
-// New API
-agent.restoreObservationalMemoryState(omState);
-// Internally: sets the observation slot content, restores metadata
+agent.restoreConversationHistory(history);       // resets memory: it described the old history
+agent.restoreObservationalMemoryState(omState);  // then restores it, aligned to that history
 ```
 
-The consumer typically saves both in `onLoopComplete`:
+`restoreConversationHistory()` alone leaves memory empty, and drops any memory work in flight from the replaced session. The observation slot fills only when the restored log is non-empty.
 
-```typescript
-agent.onLoopComplete(() => {
-  const history = agent.getConversationHistory();
-  const omState = agent.getObservationalMemoryState();
-  persist({ history, omState });
-});
-```
-
-And restores after creation:
-
-```typescript
-const agent = await AgentLoop.create(config);
-agent.restoreConversationHistory(saved.history);
-if (saved.omState) {
-  agent.restoreObservationalMemoryState(saved.omState);
-}
-```
-
-### Session Resumption
+### Session resumption
 
 On resumption, the agent starts with:
 - Observation slot populated with previous observations
 - `<current-task>` and `<suggested-response>` providing continuity
 - Conversation history restored (may include unobserved messages from the previous session)
-- Buffered observation chunks that completed before the session was saved are restored alongside other state, together with the `bufferWatermark` that tracks how many messages they cover. In-flight (incomplete) observer operations are lost.
+- Buffered observation chunks that completed before the session was saved are restored alongside other state, each with the end of the range it covers, together with the `bufferWatermark` and the `observedPrefix`. In-flight (incomplete) observer calls are lost; their messages are observed again.
 
-**Buffer restore on resumption:** Completed chunks and their watermark are restored verbatim, so the observer work done in the previous session is not recomputed. Because the watermark indexes into the post-slot conversation history (restored first, at the same positions), the chunks stay correctly aligned: the next activation trims exactly `messages[0:bufferWatermark]` when it merges their observations, with no duplication. On restore the watermark is clamped to the restored history length to guard against a watermark that drifted ahead of a stale `history.json` (possible only on a hard crash; the auto-saver writes history and observations atomically, and graceful shutdown re-saves both).
+**Buffer restore on resumption:** Completed chunks and their ranges are restored verbatim, so the observer work done in the previous session is not recomputed. Because the indices point into the post-slot conversation history (restored first, at the same positions), the chunks stay aligned: the next swap removes exactly the messages it merges. Indices are clamped to the restored history length to guard against state that drifted ahead of a stale history (possible only on a hard crash). Older state restores leniently: chunks saved without ranges merge into one chunk ending at the watermark (lossless, since together they covered exactly that range), and state saved without a watermark drops its chunks and observes the history again.
 
 **Resumption launches no observer.** The restored buffer is valid as-is, and the unobserved tail after the watermark is restored as raw messages, which the model reads directly. There is no benefit to pre-compressing that tail at resume time: at any utilization below the activation threshold there is ample room for the raw messages, and compression only matters as the window fills. So restore does no LLM work at all. The unobserved remainder is observed lazily through normal operation:
 
@@ -817,15 +709,15 @@ This makes resume a pure, deterministic state restore. It is also the correct be
 
 Sessions saved before buffer persistence was added have no `bufferWatermark`; their chunks are discarded on restore (the pre-persistence behavior) and re-observed lazily through normal `turn_end` buffering.
 
-**Hot resumption edge case:** If the session is restored at high utilization (e.g., 89%) and the first agent turn pushes past the activation threshold, the per-prompt activation check in `transformContext` is the safety net: one blocking observer call on the unbuffered messages, immediate activation, messages trimmed. After that, async buffering operates normally. This is at most one blocking pause on the first turn after a hot resumption, and only when resuming an already near-full session. We deliberately do not optimize this case with an eager resume-time observer, since that would tax every resume to smooth a rare one.
+**Hot resumption edge case:** If the session is restored at high utilization (e.g., 89%) and the first agent turn pushes past the activation threshold, the per-prompt activation check in `transformContext` is the safety net: one blocking catch-up observation up to the verbatim tail, then the swap. After that, async buffering operates normally. This is at most one blocking pause on the first turn after a hot resumption, and only when resuming an already near-full session. We deliberately do not optimize this case with an eager resume-time observer, since that would tax every resume to smooth a rare one.
 
 The `<suggested-response>` is particularly valuable on resumption: it tells the agent what it should say next after the gap, enabling smooth continuation even though the raw conversational flow may be sparse.
 
 ---
 
-## Recall Tool (Optional)
+## Recall tool (optional)
 
-### When to Use
+### When to use
 
 Recall is for consumers who persist raw messages and want the agent to search back through them. It is entirely optional. Without it, observations are the sole memory and the system works fine for most use cases.
 
@@ -837,7 +729,6 @@ The consumer provides a `search` function. Cortex wraps it in a tool.
 // Consumer configuration
 const agent = await AgentLoop.create({
   compaction: {
-    strategy: 'observational',
     observational: {
       recall: {
         search: async (query, options) => {
@@ -851,7 +742,7 @@ const agent = await AgentLoop.create({
 });
 ```
 
-### Tool Schema
+### Tool schema
 
 The recall tool registered for the agent:
 
@@ -876,7 +767,7 @@ The recall tool registered for the agent:
 }
 ```
 
-### Prompt Instructions
+### Prompt instructions
 
 When recall is configured, the observation context preamble includes:
 
@@ -895,7 +786,7 @@ Do not use recall when:
 - The question is about general facts or preferences
 ```
 
-### Temporal Anchoring
+### Temporal anchoring
 
 The key value Cortex adds to recall is temporal context from observations. The agent sees:
 
@@ -914,145 +805,41 @@ The time range narrows the consumer's search space regardless of their backend (
 
 ---
 
-## Implementation Plan
-
-### Module Structure
+## Module structure
 
 ```
 packages/cortex/src/compaction/
-  index.ts                        -- CompactionManager (updated with strategy switch)
-  microcompaction.ts              -- Layer 1 (unchanged)
-  compaction.ts                   -- Layer 2 summarization (unchanged)
-  failsafe.ts                     -- Layer 3 (updated: never truncate observations)
-  observational/                  -- NEW: Observational memory system
-    index.ts                      -- ObservationalMemoryEngine (main orchestrator)
-    observer.ts                   -- Observer prompts, message formatting, output parsing
-    reflector.ts                  -- Reflector prompts, compression levels, output parsing
-    buffering.ts                  -- Async buffering coordinator (observer + reflector)
-    types.ts                      -- All observational memory types
-    constants.ts                  -- Default config, prompt constants
-    recall-tool.ts                -- Recall tool factory (conditional registration)
+  index.ts            CompactionManager: observational memory, then L1, then L3
+  microcompaction.ts  Layer 1
+  failsafe.ts         Layer 3 settings, overflow detection
+  observational/
+    index.ts          ObservationalMemoryEngine: activation, onTurnEnd, digestion, compactNow, observeNow
+    ledger.ts         which messages are observed, by range; moves with every source rewrite
+    buffering.ts      background observer and reflector calls
+    in-band.ts        observation while a caller waits (catch-up)
+    tail.ts           verbatim tail selection
+    units.ts          units: a tool-call group or a single message
+    swap.ts           where a swap cuts, what it keeps, how it lands
+    log.ts            the observation log and its slot content
+    reflection.ts     when and how the log is condensed
+    emergency.ts      view truncation and the overflow drop with its gap reports
+    calls.ts          call policy: timeouts, retries, abort
+    health.ts         degraded and recovered
+    reply.ts          rejecting unusable replies
+    observer.ts       observer prompt, formatting, parsing
+    reflector.ts      reflector prompt, compression levels, parsing
+    recall-tool.ts    optional recall tool
+    types.ts          public types
+    constants.ts      defaults and prompts
 ```
-
-### Integration Points in Existing Code
-
-#### `packages/cortex/src/types.ts`
-
-- Add `strategy?: 'observational' | 'classic'` to `CortexCompactionConfig`
-- Add `observational?: Partial<ObservationalMemoryConfig>` to `CortexCompactionConfig`
-- Add `ObservationalMemoryConfig`, `ObservationalMemoryState`, `ObservationChunk` types
-- Add `ObservationEvent`, `ReflectionEvent`, `RecallResult` types
-
-#### `packages/cortex/src/compaction/index.ts` (CompactionManager)
-
-- Add `_strategy` field, set from config
-- Instantiate `ObservationalMemoryEngine` when `strategy === 'observational'`
-- Add strategy switch in `applyInTransformContext()`
-- Wire observer/reflector `CompleteFn` (utility model via `utilityComplete`)
-- Add `getObservationalMemoryState()` / `restoreObservationalMemoryState()` methods
-- Add `triggerObservation()` method (force sync observation)
-
-#### `packages/cortex/src/compaction/failsafe.ts`
-
-- When observational memory is active, `emergencyTruncate()` must skip observation slot messages
-- Add `observationSlotIndex` parameter to identify which messages to protect
-
-#### `packages/cortex/src/agent-loop.ts`
-
-- In constructor: when `strategy === 'observational'`, append `'_observations'` to slot list
-- Wire `ObservationalMemoryEngine` with `utilityComplete` for observer/reflector calls
-- Wire `turn_end` event to trigger async buffer check
-- Add `onObservation(handler)` / `onReflection(handler)` event registration methods (method-level, consistent with `onBeforeCompaction` pattern, supports multiple handlers)
-- Add `getObservationalMemoryState()` / `restoreObservationalMemoryState()` public API
-- Add `triggerObservation()` public API
-- Register recall tool when `observational.recall` is provided
-
-#### `packages/cortex/src/context-manager.ts`
-
-- No changes needed. The `_observations` slot is registered through the existing slot mechanism.
-
-### Implementation Sequence
-
-1. **Types and configuration** (`observational/types.ts`, `observational/constants.ts`, updates to `types.ts`)
-   - Define all interfaces, types, defaults
-   - Add strategy field to `CortexCompactionConfig`
-
-2. **Observer** (`observational/observer.ts`)
-   - Observer system prompt (adapted from Mastra)
-   - `formatMessagesForObserver()`: converts `AgentMessage[]` to observer input
-   - `parseObserverOutput()`: extracts observations, current-task, suggested-response from XML
-   - `runObserver()`: calls `CompleteFn` with observer prompt, returns parsed output
-   - Degenerate repetition detection (retry once on looping output)
-
-3. **Reflector** (`observational/reflector.ts`)
-   - Reflector system prompt (adapted from Mastra)
-   - `runReflector()`: calls `CompleteFn` with reflector prompt
-   - Progressive compression retry (levels 0-4, max 3 retries)
-   - `validateCompression()`: check output is below threshold
-
-4. **Buffering coordinator** (`observational/buffering.ts`)
-   - Manages async observer and reflector promises
-   - At-most-one-in-flight per operation type
-   - Buffer interval calculation and trigger logic
-   - Abort/cleanup on agent destruction
-   - Failed calls logged but do not crash the agentic loop
-
-5. **ObservationalMemoryEngine** (`observational/index.ts`)
-   - Main orchestrator class
-   - `applyInTransformContext()`: activation check, buffer swap, message trimming
-   - `onTurnEnd()`: buffer interval check, async observer trigger
-   - State management (observation text, watermarks, chunks, generation count)
-   - Observation slot content assembly (preamble + observations + continuation hints)
-   - `getState()` / `restoreState()` for session persistence
-   - `triggerObservation()` for manual sync observation
-   - Event emission (onObservation, onReflection)
-
-6. **Recall tool** (`observational/recall-tool.ts`)
-   - `createRecallTool(searchFn)`: factory that produces a `CortexTool`
-   - Wraps consumer's search function with temporal parsing
-   - Conditional registration (only when `recall` config is provided)
-
-7. **CompactionManager integration** (`index.ts`)
-   - Strategy switch in constructor and `applyInTransformContext()`
-   - Wire `ObservationalMemoryEngine` with `CompleteFn` and event handlers
-   - Expose state save/restore through to engine
-
-8. **AgentLoop integration** (`agent-loop.ts`)
-   - Slot registration for `_observations`
-   - Event wiring (turn_end to engine, engine events to consumer hooks)
-   - Public API surface (state, events, triggerObservation)
-   - Recall tool registration
-
-9. **Tests**
-   - Unit: observer prompt formatting and output parsing
-   - Unit: reflector prompt and compression validation
-   - Unit: buffering coordinator (interval triggers, dedup, abort)
-   - Unit: activation (message removal, slot update, watermark)
-   - Unit: total context utilization calculation
-   - Integration: full pipeline with mocked LLM
-   - Integration: strategy switching (classic vs observational)
-   - Integration: session state save/restore
-   - Integration: recall tool registration and execution
 
 ---
 
-## Open Questions (Minor)
+## Open questions (minor)
 
-### 1. First Observation Cold Start
+### Observation slot size on resumption
 
-On the very first observation cycle, no previous observations exist. The observer runs on the initial batch of messages with an empty previous-observations context. This should work naturally (the observer just extracts observations without dedup context), but worth verifying during implementation that the prompt handles the empty case gracefully.
-
-### 2. Reflector Async Buffering Details
-
-Mastra supports async reflection buffering (start at 50% of threshold). The exact mechanics of how buffered reflection swaps into the observation slot while potentially new observations are also being buffered need careful implementation to avoid race conditions. The buffering coordinator must ensure atomic state transitions.
-
-### 3. Dynamic Interval Recalculation
-
-The buffer interval is recomputed at each `turn_end` from current total utilization. When consumer slots change size mid-session, `tokensUntilActivation` changes and the interval adjusts automatically. Implementation must avoid caching the interval across turns.
-
-### 4. Observation Slot Size for Session Resumption
-
-On session resumption with a large observation history, the observation slot may contain significant token counts. This is expected and correct (it's the compressed memory). But it means the effective message budget on resumption is smaller than at session start. The dynamic threshold system handles this naturally.
+On session resumption with a large observation history, the observation slot may hold significant token counts. This is expected (it is the compressed memory), and the dynamic thresholds account for it: the effective message budget on resumption is smaller than at session start.
 
 ### Small context budgets
 
@@ -1062,3 +849,4 @@ model's capacity. For example, a 4096-token utility model has a 2457.6-token
 buffer cap even when the preferred batch minimum is 5000 tokens. Reflection
 continues to use the smaller of the primary budget fraction and the utility
 capacity fraction. See [context capacity and budgets](context-manager.md#context-capacity-and-budgets).
+

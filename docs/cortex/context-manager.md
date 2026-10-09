@@ -197,7 +197,7 @@ The `build*Context()` functions are the mind's responsibility (they live in the 
 
 ### Cortex-Managed Observation Slot
 
-When the observational memory compaction strategy is active (the default), Cortex automatically appends a `_observations` slot as the last slot position. This slot is managed internally by Cortex's `ObservationalMemoryEngine` and consumers never interact with it directly. See [observational-memory-architecture.md](./observational-memory-architecture.md) for details.
+Cortex automatically appends a `_observations` slot as the last slot position. It stays empty until there are observations. This slot is managed internally by Cortex's `ObservationalMemoryEngine` and consumers never interact with it directly. See [observational-memory-architecture.md](./observational-memory-architecture.md) for details.
 
 ### Consumer Observation Slots (Example: Animus)
 

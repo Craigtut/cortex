@@ -209,7 +209,7 @@ Loop configuration, routed for you:
 | `resolvePermission` | Optional permission gate for tool calls | facade broker in duplex, direct in passthrough |
 | `resolveNetworkAccess` | Optional network gate (sandbox) | facade broker, same pipeline |
 | `retryPolicy` | Retry behavior | reasoner and sub-agents; the talker gets fail-fast defaults |
-| `compaction` | Compaction strategy and thresholds | both loops, independent managers, staggered thresholds |
+| `compaction` | Observational memory and compaction thresholds | both loops, independent managers, staggered thresholds |
 | `persistResult` | Optional callback for storing oversized tool results | shared, with origin context |
 | `deferredTools` | Optional schema deferral for large MCP tool sets | reasoner and sub-agents |
 | `sandbox`, `envOverrides`, `logger` | Environment-level | shared |
@@ -601,7 +601,7 @@ const agent = await CortexAgent.create({
 
 ## Usage and Cost
 
-`getSessionUsage()` returns one aggregate across both loops, every sub-agent, every quick lookup, and utility spend (observer, reflector, summarization, WebFetch, Bash utility calls). Children are counted exactly once, so do not add `SubAgentResult.usage` on top of it. The v2 persistence artifact keeps per-loop attribution alongside the total, so a restore does not flatten it.
+`getSessionUsage()` returns one aggregate across both loops, every sub-agent, every quick lookup, and utility spend (observer, reflector, WebFetch, Bash utility calls). Children are counted exactly once, so do not add `SubAgentResult.usage` on top of it. The v2 persistence artifact keeps per-loop attribution alongside the total, so a restore does not flatten it.
 
 `budgetGuard.maxCost` keeps its per-prompt meaning on the reasoner. For a whole-session ceiling across everything, set `duplex.maxTotalCost`. Leave it unset and the aggregate is uncapped; Cortex records a `duplex-cost-cap-unset` note in [the resolution report](#what-you-actually-got) rather than inventing a number for you.
 

@@ -359,6 +359,5 @@ Each phase of the pipeline (THOUGHT, AGENTIC LOOP, REFLECT) can fail independent
 ### Context Overflow During Agentic Loop
 
 Detected via pi-ai's `isContextOverflow()`. Handled by the compaction system (see `compaction-strategy.md`):
-1. Reactive compaction triggers
-2. The loop retries with the compacted context
-3. If compaction fails, the emergency truncation layer fires
+1. The source shrinks to 80% of the model's capacity: observed messages leave as in any swap, and unobserved ones that do not fit are dropped, with a `GAP` line in the observation log and `onMemoryGap`
+2. The latest user message stays, and the next attempt runs with the smaller context

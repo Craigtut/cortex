@@ -2,7 +2,7 @@
 
 Production-grade agent framework with structured context management. Built on `@earendil-works/pi-agent-core`.
 
-Cortex treats the context window as a managed surface, not a flat chat log. Named slots, stability-ordered layout, observational memory, and classic compaction controls give you fine-grained control over what the model sees while maximizing prompt cache hit rates.
+Cortex treats the context window as a managed surface, not a flat chat log. Named slots, stability-ordered layout, and observational memory give you fine-grained control over what the model sees while maximizing prompt cache hit rates.
 
 ## Install
 
@@ -50,7 +50,7 @@ See the [sandbox consumer guide](../../docs/cortex/sandbox-consumer-guide.md) fo
 ## Key Features
 
 - **Context Slots**: Named, stability-ordered content blocks for prompt cache optimization. Ephemeral context provides fresh per-loop state without accumulating in persistent history.
-- **Compaction**: Observational memory by default, with classic microcompaction, summarization, and emergency truncation available via config
+- **Compaction**: Observational memory with a verbatim recent tail, cache-aware tool result trimming, and a failsafe that never drops a message silently; `compactNow()` when you choose the moment
 - **Built-in Tools**: Bash, TaskOutput, Read, Write, Edit, UndoEdit, Glob, Grep, WebFetch, SubAgent
 - **MCP Support**: Integrate external tool servers via the Model Context Protocol
 - **Skills**: Progressive disclosure system for dynamically loading capabilities

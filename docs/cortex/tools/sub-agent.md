@@ -148,7 +148,7 @@ Spawn configuration (both the programmatic `spawnBackgroundSubAgent` API and int
 - **`timeoutMs`**: Wall-clock cap for the whole spawn. On expiry the child is aborted and its result reports `status: 'timed_out'`, with whatever partial output its transcript holds; background timeouts deliver that result to the parent loop like any completion. Default: no cap.
 - **`model`**: Model for this spawn (default: the parent's primary model). The child's utility model re-resolves from the override's provider, so a fast-model spawn stays fast end to end.
 - **`thinkingLevel`**: Thinking level for this spawn.
-- **`compaction`**: Compaction configuration for this spawn (e.g. a classic strategy or non-blocking posture for a short-lived child).
+- **`compaction`**: Compaction configuration for this spawn (e.g. a non-blocking posture or a different activation threshold for a short-lived child).
 
 ## Event Bridge
 

@@ -15,9 +15,9 @@ The log is the facade-owned, append-only record of the session: every user utter
 
 The log is not a context surface. No loop's prompt is built by projecting log entries into synthetic view messages. This was the original design and it was rejected (decisions.md D7) after the context-pipeline audit identified three violations, all in current code:
 
-1. **View injections vanish on compaction turns.** After observational activation or L2 summarization, the post-slot view is rebuilt from the source array (`compaction/observational/index.ts:317-339`, `compaction/index.ts:916-921`), so anything that existed only in the returned view silently disappears from the prompt on exactly those turns.
+1. **View injections vanish on compaction turns.** After an observational swap, the post-slot view is rebuilt from the source array (`compaction/observational/index.ts:317-339`, `compaction/index.ts:916-921`), so anything that existed only in the returned view silently disappears from the prompt on exactly those turns.
 2. **The observational watermark requires an append-only source.** Buffering tracks an index into the post-slot source history (`compaction/observational/buffering.ts:409-459`); the only sanctioned mutation is front-truncation. Foreign insertions desync the watermark into silent observation loss or an orphaned-toolResult provider 400.
-3. **Tool-call-group adjacency.** Any insertion between an assistant tool call and its consecutive tool results corrupts group detection (`compaction/tool-call-groups.ts:39-81`), L2/L3 atomicity, toolResult merge runs, and the cache-breakpoint index simulation (`cache-breakpoints.ts:190-195`) simultaneously.
+3. **Tool-call-group adjacency.** Any insertion between an assistant tool call and its consecutive tool results corrupts group detection (`compaction/tool-call-groups.ts:39-81`), the unit atomicity of swaps and truncation, toolResult merge runs, and the cache-breakpoint index simulation (`cache-breakpoints.ts:190-195`) simultaneously.
 
 ## The Two Sanctioned Channels
 
@@ -54,7 +54,7 @@ A message delivered into a running turn extends that turn, so it inherits its bu
 Real messages are append-only source content, which makes them:
 
 - cache-friendly (the prefix only extends)
-- compaction-safe (they participate in summarization and observation like any message)
+- compaction-safe (they participate in observation like any message)
 - persistence-free (they ride the loop's existing history)
 
 Message shape constraints from the audit: user-role, non-whitespace string content, timestamp set. Whitespace-only content is silently dropped at conversion; toolResult-role synthetics merge into adjacent runs and can 400; assistant-role synthetics with error stop reasons get stripped.
@@ -100,8 +100,8 @@ Each loop keeps its own transcript, its own stable session ID (`sessionId` per i
 
 ## Compaction Interactions
 
-- Every loop runs its own compaction manager. The talker compacts (infinite conversation is a consumer expectation); observational is the default strategy on both resident loops, with classic as a talker tuning option if duplicate observation cost across overlapping content proves material (decisions.md D4).
-- **The talker runs a non-blocking compaction posture.** Its synchronous observer fallback is disabled, leaving emergency truncation as the only in-band path, because a blocking observer call inside `transformContext` is multi-second dead air on the presence loop and would recur at every activation for the whole session. Staggering thresholds between loops does not help the user who is mid-conversation when the talker crosses its own.
+- Every loop runs its own compaction manager. The talker compacts (infinite conversation is a consumer expectation); both resident loops run observational memory (classic summarization, once a talker tuning option in decisions.md D4, was removed on 2026-10-09).
+- **The talker runs a non-blocking compaction posture.** It never waits on a memory call: a swap merges only what is already observed, and the in-band failsafe cuts only the request's view, because a blocking observer call inside `transformContext` is multi-second dead air on the presence loop and would recur at every activation for the whole session. Staggering thresholds between loops does not help the user who is mid-conversation when the talker crosses its own.
 - The facade schedules deferred digestion (pending observation buffers, threshold compaction) during idle-signal windows for both loops, and staggers their thresholds so blocking work on the reasoner never coincides with a talker activation.
 - The log itself never compacts. Since it is also the persistence artifact, it carries a retention policy, and that policy is now scoped by entry type rather than a flat FIFO. `maxEntries` still bounds the whole log; what it no longer does is decide *which* entries pay for the overflow. `applyRetention` evicts churn first, oldest-first (`lifecycle`, `delivery`, `directive`, `lookup_result`, `retrying`, all produced at machine frequency), and reaches conversational history (`utterance`, `reply`, `ask`, `ask_answer`, plus `error`) only once no churn is left, at which point it degrades to the old oldest-first behavior. `error` sits with the durable set because it is rare enough to crowd out nothing and is what a consumer most needs when reconstructing a failure. An over-cap restore applies the same selection, so the two paths cannot drift. One consequence to know: the retained set is no longer a contiguous seq suffix, so `firstRetainedSeq` bounds it from below but guarantees nothing above, and `subscribeLog` replay announces every hole in the requested range rather than only the leading one.
 - Persisted-result breadcrumbs (`[Result persisted: <path>]`) inside delivered content assume a shared filesystem; both resident loops share `workingDirectory` and the persist layout, so a delivered breadcrumb remains resolvable by the reasoner. The talker has no Read tool and simply speaks around them.

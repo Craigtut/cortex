@@ -17,7 +17,7 @@ Cortex was originally built for [Animus](https://github.com/Craigtut/animus), an
 - The agent runs indefinitely, so context will inevitably exceed the window. Compaction must be graceful, not catastrophic.
 - Cost matters. Prompt caching discounts (up to 90% on Anthropic) make the difference between viable and prohibitively expensive for a continuously running agent.
 
-No existing agentic loop framework provided the level of context control needed. The underlying loop library, `@earendil-works/pi-agent-core`, is deliberately minimal: it provides the agentic loop and nothing else. Cortex wraps it with everything needed to manage context in production: structured slots, ephemeral injection, observational memory, classic compaction controls, skills, tools, and provider management.
+No existing agentic loop framework provided the level of context control needed. The underlying loop library, `@earendil-works/pi-agent-core`, is deliberately minimal: it provides the agentic loop and nothing else. Cortex wraps it with everything needed to manage context in production: structured slots, ephemeral injection, observational memory, skills, tools, and provider management.
 
 ## Core Insight: Context as a Managed Surface
 
@@ -65,13 +65,7 @@ This placement is intentional: because ephemeral content sits below the stable c
 
 ## Compaction: Graceful Context Management
 
-Context grows. For a continuously running agent, it will always eventually exceed the window. Cortex handles this with two strategies:
-
-**Observational memory (default):** Background observer and reflector calls compress older conversation history into structured observations stored in an internal slot. This keeps long-running sessions useful without relying on a single large summary blob.
-
-**Classic compaction (`strategy: 'classic'`):** A traditional layered strategy with tool result microcompaction, conversation summarization, and emergency truncation.
-
-Both strategies preserve context slots and keep emergency truncation as a safety valve.
+Context grows. For a continuously running agent, it will always eventually exceed the window. Cortex handles this with observational memory: background observer and reflector calls compress older conversation history into structured observations stored in an internal slot, and swap them in for the messages they cover while the most recent messages stay verbatim. This keeps long-running sessions useful without relying on a single large summary blob. Tool result trimming and a failsafe that never drops a message silently run around it.
 
 The key insight is that slots are never touched by compaction. They are managed independently by the consumer and rebuilt from authoritative sources. This means the agent's core context (identity, configuration, observation summaries, goals) survives indefinitely, regardless of how many compaction cycles occur.
 

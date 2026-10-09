@@ -342,11 +342,11 @@ The consumer disables working tags for voice by passing `workingTags: { enabled:
 
 Working tag content stays in conversation history and is subject to normal compaction:
 
+- **Observational memory**: The observer sees full text including working content. This is beneficial: the analysis within working tags gives it better context for its observations.
 - **Microcompaction (Layer 1)**: Only touches tool results, never agent text. Working tags unaffected.
-- **Conversation Summarization (Layer 2)**: The summarizer sees full text including working content. This is beneficial: the analysis within working tags provides better context for producing structured summaries.
-- **Emergency Truncation (Layer 3)**: Removes whole turns. No special handling needed.
+- **Failsafe (Layer 3)**: Cuts whole units from a request's view. No special handling needed.
 
-Working tags may help the summarizer distinguish analytical work from user-facing communication, potentially improving summary quality.
+Working tags may help the observer distinguish analytical work from user-facing communication.
 
 ### Sub-Agent Communication
 
@@ -409,5 +409,4 @@ The parsing utilities are pure functions with no dependencies. The system prompt
 ## References
 
 - [System Prompt](./system-prompt.md): Where the Response Delivery section is placed in the operational rules
-- [Compaction Strategy](./compaction-strategy.md): How working tag content is handled during compaction
-- [Compaction Strategy](./compaction-strategy.md): Three-layer compaction design and how working tags interact with it
+- [Compaction](./compaction-strategy.md): How compaction treats agent text, working tags included

@@ -25,6 +25,8 @@ Consequences accepted: the reasoner is the scheduler of all work, and its turn-b
 
 The talker is not a stripped-down chat wrapper. It has its own compaction (consumers rely on effectively infinite conversation), slots, working tags, and cache management. Default compaction strategy is observational, same as everything else; downgrading the talker to the classic strategy is a tuning option if duplicate observation cost proves material, not an architectural decision.
 
+> **Note (2026-10-09):** the classic strategy was removed ([om-hardening-plan.md](../om-hardening-plan.md)), so the downgrade option no longer exists. The talker runs observational memory under the non-blocking posture: it swaps in only what it has already observed and never waits on a memory call, and `CortexAgent.compactNow()` treats it the same way.
+
 ## D5: The Talker Has No Blocking Tools
 
 The invariant is that the talker's turns are structurally incapable of blocking on tool execution, so the voice channel always has someone home. It carries exactly one fixed toolset: the control tools of D8, all of which are local, sub-millisecond dispatches into the facade. Consumer-supplied tools, I/O tools, and MCP tools are wired to the reasoner and never reach the talker. Status arrives by injection, never by a tool.
