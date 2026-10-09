@@ -7,7 +7,7 @@
 
 import type { AgentMessage } from '../../context-manager.js';
 import { estimateTokens } from '../../token-estimator.js';
-import { extractTextContent } from '../microcompaction.js';
+import { extractTextContent } from '../tool-messages.js';
 import { findToolCallGroups } from '../tool-call-groups.js';
 
 /** A unit's range in history, [start, end). */

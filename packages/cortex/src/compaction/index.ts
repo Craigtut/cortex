@@ -22,7 +22,8 @@ import type { AgentMessage, AgentContext } from '../context-manager.js';
 import type { CortexLogger, CortexCompactionConfig } from '../types.js';
 import { NOOP_LOGGER } from '../noop-logger.js';
 import { estimateTokens } from '../token-estimator.js';
-import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS, extractTextContent } from './microcompaction.js';
+import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS } from './microcompaction.js';
+import { extractTextContent } from './tool-messages.js';
 import { FAILSAFE_DEFAULTS } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
 import type {

@@ -9,7 +9,7 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
-import { isToolResultMessage } from '../microcompaction.js';
+import { isToolResultMessage } from '../tool-messages.js';
 import { messageTokens, unitsOf } from './units.js';
 
 export interface TailSelection {

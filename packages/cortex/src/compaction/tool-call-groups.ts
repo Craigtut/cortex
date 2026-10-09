@@ -17,7 +17,7 @@
  */
 
 import type { AgentMessage } from '../context-manager.js';
-import { isToolCallMessage, isToolResultMessage } from './microcompaction.js';
+import { isToolCallMessage, isToolResultMessage } from './tool-messages.js';
 
 /**
  * Collect the tool call IDs from an assistant message's 'toolCall' blocks.

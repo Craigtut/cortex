@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import {
-  MicrocompactionEngine,
-  extractTextContent,
-} from '../../../src/compaction/microcompaction.js';
+import { MicrocompactionEngine } from '../../../src/compaction/microcompaction.js';
+import { extractTextContent } from '../../../src/compaction/tool-messages.js';
 import type { AgentMessage } from '../../../src/context-manager.js';
 import type { MicrocompactionConfig, PersistResultFn } from '../../../src/types.js';
 

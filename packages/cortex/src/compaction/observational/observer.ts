@@ -18,7 +18,8 @@ import { OBSERVER_SYSTEM_PROMPT } from './constants.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { isSystemMessage } from '../../system-transcript.js';
 import { MemoryReplyError, readObservationsBlock } from './reply.js';
-import { applyBookend, extractTextContent } from '../microcompaction.js';
+import { applyBookend } from '../microcompaction.js';
+import { extractTextContent } from '../tool-messages.js';
 import { callWithPolicy, SINGLE_ATTEMPT } from './calls.js';
 import type { CallPolicy } from './calls.js';
 

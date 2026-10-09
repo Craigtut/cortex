@@ -810,7 +810,8 @@ The time range narrows the consumer's search space regardless of their backend (
 ```
 packages/cortex/src/compaction/
   index.ts            CompactionManager: observational memory, then L1, then L3
-  microcompaction.ts  Layer 1
+  microcompaction.ts  Layer 1, and the insertion-time cap
+  tool-messages.ts    reading tool calls and results out of messages
   failsafe.ts         Layer 3 settings, overflow detection
   observational/
     index.ts          ObservationalMemoryEngine: activation, onTurnEnd, digestion, compactNow, observeNow
