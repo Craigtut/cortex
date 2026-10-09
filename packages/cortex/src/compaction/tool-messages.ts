@@ -7,6 +7,7 @@
  */
 
 import type { AgentMessage } from '../context-manager.js';
+import { contentPartsOf, stringField } from '../pi-message.js';
 
 
 /**
@@ -44,38 +45,36 @@ export function extractTextContent(message: AgentMessage): string {
   }
 
   // Guard: content may be undefined/null (corrupted toolResult) or empty
-  if (!Array.isArray(message.content) || message.content.length === 0) {
+  const parts = contentPartsOf(message);
+  if (!parts || parts.length === 0) {
     return '';
   }
 
   const segments: string[] = [];
-  for (const part of message.content) {
-    if (part.type === 'toolCall') {
-      const name = typeof part['name'] === 'string' ? part['name'] : 'unknown';
+  for (const part of parts) {
+    if (part['type'] === 'toolCall') {
+      const name = stringField(part, 'name') ?? 'unknown';
       const args = formatToolCallArgs(part['arguments']);
       segments.push(args ? `[Tool call: ${name} ${args}]` : `[Tool call: ${name}]`);
       continue;
     }
-    if (typeof part.text === 'string') {
-      segments.push(part.text);
+    const text = stringField(part, 'text');
+    if (text !== undefined) {
+      segments.push(text);
     }
   }
   return segments.join('\n');
 }
 
 /**
- * Check if a message is a tool result.
- * Pi-agent-core stores tool results as messages with content arrays
- * containing tool_result type parts.
+ * Check if a message is a tool result: pi's `toolResult` message, or a
+ * restored message carrying legacy `tool_result` parts.
  */
 export function isToolResultMessage(message: AgentMessage): boolean {
   if (message.role === 'toolResult') {
     return true;
   }
-  if (!Array.isArray(message.content)) {
-    return false;
-  }
-  return message.content.some(part => part.type === 'tool_result');
+  return contentPartsOf(message)?.some(part => part['type'] === 'tool_result') ?? false;
 }
 
 /**
@@ -87,10 +86,7 @@ export function isToolCallMessage(message: AgentMessage): boolean {
   if (message.role !== 'assistant') {
     return false;
   }
-  if (!Array.isArray(message.content)) {
-    return false;
-  }
-  return message.content.some(part => part.type === 'toolCall');
+  return contentPartsOf(message)?.some(part => part['type'] === 'toolCall') ?? false;
 }
 
 /**
@@ -98,20 +94,15 @@ export function isToolCallMessage(message: AgentMessage): boolean {
  * Returns null if the message is not a tool-related message.
  */
 export function extractToolName(message: AgentMessage): string | null {
-  if (typeof message.toolName === 'string') {
-    return message.toolName;
+  const toolName = stringField(message, 'toolName');
+  if (toolName !== undefined) {
+    return toolName;
   }
 
-  if (!Array.isArray(message.content)) {
-    return null;
-  }
-
-  for (const part of message.content) {
-    if (part.type === 'toolCall' && typeof part['name'] === 'string') {
-      return part['name'];
-    }
-    if (part.type === 'tool_result' && typeof part['name'] === 'string') {
-      return part['name'];
+  for (const part of contentPartsOf(message) ?? []) {
+    const name = stringField(part, 'name');
+    if ((part['type'] === 'toolCall' || part['type'] === 'tool_result') && name !== undefined) {
+      return name;
     }
   }
 

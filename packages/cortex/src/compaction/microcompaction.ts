@@ -28,6 +28,8 @@
 import type { AgentMessage } from '../context-manager.js';
 import type { MicrocompactionConfig, ToolCategory } from '../types.js';
 import { estimateTokens } from '../token-estimator.js';
+import { contentPartsOf, stringField, withContent } from '../pi-message.js';
+import type { LoosePart } from '../pi-message.js';
 import { extractTextContent, extractToolName, isToolResultMessage } from './tool-messages.js';
 import { messageTokens } from './message-tokens.js';
 
@@ -378,25 +380,37 @@ export function applyTrimAction(message: AgentMessage, action: TrimAction): Agen
   // If the message has a structured content array (e.g., runtime toolResult
   // messages with text parts, or legacy tool_result parts), preserve the array
   // structure and only replace text within each part.
-  if (Array.isArray(message.content) && message.content.length > 0) {
-    const newContent = message.content.map(part => {
-      const shouldTrim = typeof part.text === 'string' && (
-        part.type === 'tool_result' ||
-        (part.type === 'text' && isToolResultMessage(message))
+  const parts = contentPartsOf(message);
+  if (parts && parts.length > 0) {
+    const newContent = parts.map(part => {
+      const text = stringField(part, 'text');
+      const shouldTrim = text !== undefined && (
+        part['type'] === 'tool_result' ||
+        (part['type'] === 'text' && isToolResultMessage(message))
       );
       if (!shouldTrim) {
         return part;
       }
-      const trimmed = getTrimmedText(part.text as string, action);
-      return { ...part, text: trimmed };
+      return { ...part, text: getTrimmedText(text, action) };
     });
-    return { ...message, content: newContent };
+    return withContent(message, newContent);
   }
 
   // Plain string content: replace directly (backward compat for non-tool messages)
   const content = typeof message.content === 'string' ? message.content : '';
-  const trimmed = getTrimmedText(content, action);
-  return { ...message, content: trimmed };
+  return withContent(message, getTrimmedText(content, action));
+}
+
+/**
+ * The tool output text of a part: a legacy `tool_result` part's text, or a
+ * text part of pi's `toolResult` message. Undefined for any other part.
+ */
+function toolResultPartText(message: AgentMessage, part: LoosePart): string | undefined {
+  const text = stringField(part, 'text');
+  if (text === undefined) return undefined;
+  const isLegacyToolResult = part['type'] === 'tool_result';
+  const isRuntimeToolResultText = message.role === 'toolResult' && part['type'] === 'text';
+  return isLegacyToolResult || isRuntimeToolResultText ? text : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -469,20 +483,21 @@ export class MicrocompactionEngine {
       const msg = messages[i]!;
       if (!isToolResultMessage(msg)) continue;
       if (typeof msg.content === 'string') continue;
+      const parts = contentPartsOf(msg);
+      if (!parts) continue;
 
       let modified = false;
-      const newContent = msg.content.map(part => {
-        const isLegacyToolResult = part.type === 'tool_result' && typeof part.text === 'string';
-        const isRuntimeToolResultText = msg.role === 'toolResult' && part.type === 'text' && typeof part.text === 'string';
-        if (!isLegacyToolResult && !isRuntimeToolResultText) {
+      const newContent = parts.map(part => {
+        const text = toolResultPartText(msg, part);
+        if (text === undefined) {
           return part;
         }
         // Skip already-capped content
-        if ((part.text as string).includes('tokens trimmed at insertion')) {
+        if (text.includes('tokens trimmed at insertion')) {
           return part;
         }
-        const capped = capToolResult(part.text as string, config);
-        if (capped !== part.text) {
+        const capped = capToolResult(text, config);
+        if (capped !== text) {
           modified = true;
           return { ...part, text: capped };
         }
@@ -490,7 +505,7 @@ export class MicrocompactionEngine {
       });
 
       if (modified) {
-        messages[i] = { ...msg, content: newContent };
+        messages[i] = withContent(msg, newContent);
       }
     }
 
@@ -502,24 +517,21 @@ export class MicrocompactionEngine {
       const msg = messages[i]!;
       if (!isToolResultMessage(msg)) continue;
       if (typeof msg.content === 'string') continue;
+      const parts = contentPartsOf(msg);
+      if (!parts) continue;
 
-      const parts = msg.content;
       const partInfos: Array<{ index: number; tokens: number; text: string; toolName: string }> = [];
       let totalTokens = 0;
 
       for (let p = 0; p < parts.length; p++) {
         const part = parts[p]!;
-        const isLegacyToolResult = part.type === 'tool_result' && typeof part.text === 'string';
-        const isRuntimeToolResultText = msg.role === 'toolResult' && part.type === 'text' && typeof part.text === 'string';
-        if (!isLegacyToolResult && !isRuntimeToolResultText) {
+        const text = toolResultPartText(msg, part);
+        if (text === undefined) {
           continue;
         }
 
-        const text = part.text as string;
         const tokens = estimateTokens(text);
-        const name = (typeof (part as Record<string, unknown>)['name'] === 'string'
-          ? (part as Record<string, unknown>)['name'] as string
-          : null) ?? extractToolName(msg) ?? 'unknown';
+        const name = stringField(part, 'name') ?? extractToolName(msg) ?? 'unknown';
         partInfos.push({ index: p, tokens, text, toolName: name });
         totalTokens += tokens;
       }
@@ -568,7 +580,7 @@ export class MicrocompactionEngine {
       // persist), writing the capped copy would resurrect stale content at
       // an unrelated index. Skipping is safe; the cap is an optimization.
       if (messages[i] !== msg) continue;
-      messages[i] = { ...msg, content: newParts };
+      messages[i] = withContent(msg, newParts);
     }
   }
 
@@ -683,23 +695,21 @@ export class MicrocompactionEngine {
     }
 
     // String content: treat as a single unit (non-tool-result message).
-    if (!Array.isArray(message.content) || message.content.length === 0) {
+    const parts = contentPartsOf(message);
+    if (!parts || parts.length === 0) {
       return applyTrimAction(message, action);
     }
 
     // Per-part processing: each tool result text part gets its own persistence
     // decision and its own replacement text.
-    const messageToolName = typeof message.toolName === 'string' ? message.toolName : null;
-    const newParts = await Promise.all(message.content.map(async part => {
-      const isLegacyToolResult = part.type === 'tool_result' && typeof part.text === 'string';
-      const isRuntimeToolResultText = message.role === 'toolResult' && part.type === 'text' && typeof part.text === 'string';
-      const isToolResultText = isLegacyToolResult || isRuntimeToolResultText;
-      if (!isToolResultText) {
+    const messageToolName = stringField(message, 'toolName') ?? null;
+    const newParts = await Promise.all(parts.map(async part => {
+      const partText = toolResultPartText(message, part);
+      if (partText === undefined) {
         return part;
       }
 
-      const partText = part.text as string;
-      const toolName = typeof part['name'] === 'string' ? part['name'] as string : messageToolName;
+      const toolName = stringField(part, 'name') ?? messageToolName;
       const category = toolName ? getToolCategory(toolName, this.config.toolCategories) : undefined;
 
       // Only persist non-reproducible and computational parts.
@@ -729,7 +739,7 @@ export class MicrocompactionEngine {
       return { ...part, text: persistedText };
     }));
 
-    return { ...message, content: newParts };
+    return withContent(message, newParts);
   }
 
   /**

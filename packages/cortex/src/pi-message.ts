@@ -1,12 +1,14 @@
 /**
  * Readers for pi-agent-core / pi-ai message and event shapes.
  *
- * pi's types reach Cortex as opaque records (the loop holds them as
- * `unknown` so a pi upgrade cannot break the build), so every reader here
- * is defensive: a missing or malformed field reads as empty, never throws.
- * One reader per question keeps the several consumers (the loop, the event
- * bridge, the facade, quick lookups) from drifting apart on shape details
- * such as string versus typed-part content.
+ * Cortex types its transcript with pi's own message types, but history a
+ * consumer restores is data Cortex did not write: it can hold string
+ * content where pi has parts, legacy `tool_result` parts, or missing
+ * fields. Every reader here is defensive: a missing or malformed field
+ * reads as empty, never throws. One reader per question keeps the several
+ * consumers (the loop, the event bridge, the facade, compaction, quick
+ * lookups) from drifting apart on shape details such as string versus
+ * typed-part content.
  */
 
 import type { CortexUsage } from './types.js';
@@ -31,6 +33,35 @@ function joinTextParts(content: unknown[]): string {
 // ---------------------------------------------------------------------------
 // Message content
 // ---------------------------------------------------------------------------
+
+/** A content part as stored: any shape, since restored history may hold any. */
+export type LoosePart = Readonly<Record<string, unknown>>;
+
+/**
+ * A message's content array, its parts read as loose records, or null when
+ * the content is a string or missing. The array itself, not a copy: a
+ * rewrite maps over it index for index.
+ */
+export function contentPartsOf(message: unknown): readonly LoosePart[] | null {
+  const content = asRecord(message)?.['content'];
+  return Array.isArray(content) ? (content as LoosePart[]) : null;
+}
+
+/** A string field of a record, or undefined. */
+export function stringField(value: unknown, key: string): string | undefined {
+  const field = asRecord(value)?.[key];
+  return typeof field === 'string' ? field : undefined;
+}
+
+/**
+ * `message` with its content replaced, every other field kept. For
+ * rewrites that change the text inside a message, not its kind: the caller
+ * keeps each part's shape (or the content's string form), so the result is
+ * the same kind of message as the input, restored legacy shapes included.
+ */
+export function withContent<T extends object>(message: T, content: string | readonly unknown[]): T {
+  return { ...message, content } as T;
+}
 
 /**
  * Text of an assistant message: string content as is, typed content's text

@@ -13,6 +13,8 @@
 
 import type { CompleteFn } from './types.js';
 import type { AgentMessage } from '../../context-manager.js';
+import { contentPartsOf, stringField, withContent } from '../../pi-message.js';
+import type { LoosePart } from '../../pi-message.js';
 import type { ObserverOutput } from './types.js';
 import { OBSERVER_SYSTEM_PROMPT } from './constants.js';
 import { charsForTokens, estimateTokens } from '../../token-estimator.js';
@@ -85,7 +87,7 @@ export function formatMessagesForObserver(messages: AgentMessage[]): string {
     if (typeof msg.content === 'string') {
       lines.push(`**${roleLabel} (${label})**: ${resultHeader}${msg.content}`);
     } else if (Array.isArray(msg.content)) {
-      const parts = formatContentParts(msg.content);
+      const parts = formatContentParts(contentPartsOf(msg) ?? []);
       if (parts) {
         lines.push(`**${roleLabel} (${label})**:\n${resultHeader}${parts}`);
       } else {
@@ -130,16 +132,15 @@ function formatTime(date: Date): string {
  * legacy tool_result parts. Other part types are rendered with their type
  * label.
  */
-function formatContentParts(
-  parts: Array<{ type: string; text?: string; [key: string]: unknown }>,
-): string {
+function formatContentParts(parts: readonly LoosePart[]): string {
   const formatted: string[] = [];
 
   for (const part of parts) {
-    switch (part.type) {
+    const text = stringField(part, 'text');
+    switch (part['type']) {
       case 'text': {
-        if (typeof part.text === 'string' && part.text.length > 0) {
-          formatted.push(part.text);
+        if (text !== undefined && text.length > 0) {
+          formatted.push(text);
         }
         break;
       }
@@ -177,8 +178,8 @@ function formatContentParts(
 
       default: {
         // Unknown part type: include type label and any text
-        if (typeof part.text === 'string' && part.text.length > 0) {
-          formatted.push(`[${part.type}]: ${part.text}`);
+        if (text !== undefined && text.length > 0) {
+          formatted.push(`[${String(part['type'])}]: ${text}`);
         }
         break;
       }
@@ -216,12 +217,11 @@ function summarizeToolArgs(input: unknown): string {
 /**
  * Extract text content from a tool_result part.
  */
-function extractToolResultContent(
-  part: { type: string; text?: string; [key: string]: unknown },
-): string {
+function extractToolResultContent(part: LoosePart): string {
   // Direct text field
-  if (typeof part.text === 'string' && part.text.length > 0) {
-    return part.text;
+  const text = stringField(part, 'text');
+  if (text !== undefined && text.length > 0) {
+    return text;
   }
 
   // Content may be nested in a 'content' field (some tool result formats)
@@ -274,27 +274,24 @@ export function fitMessagesToObserverBudget(messages: AgentMessage[], maxInputTo
   };
   return messages.map((msg) => {
     if (msg.role === 'toolResult' && typeof msg.content === 'string') {
-      return { ...msg, content: bookend(msg.content) };
+      return withContent(msg, bookend(msg.content));
     }
-    if (!Array.isArray(msg.content) || toolResultTexts(msg) === 0) return msg;
-    return {
-      ...msg,
-      content: msg.content.map((part) =>
-        isToolResultText(msg, part) ? { ...part, text: bookend(part.text as string) } : part),
-    };
+    const parts = contentPartsOf(msg);
+    if (!parts || toolResultTexts(msg) === 0) return msg;
+    return withContent(msg, parts.map((part) =>
+      isToolResultText(msg, part) ? { ...part, text: bookend(stringField(part, 'text')!) } : part));
   });
 }
 
 /** How many tool-result text parts a message carries. */
 function toolResultTexts(msg: AgentMessage): number {
   if (msg.role === 'toolResult' && typeof msg.content === 'string') return 1;
-  if (!Array.isArray(msg.content)) return 0;
-  return msg.content.filter((part) => isToolResultText(msg, part)).length;
+  return contentPartsOf(msg)?.filter((part) => isToolResultText(msg, part)).length ?? 0;
 }
 
-function isToolResultText(msg: AgentMessage, part: { type: string; text?: string }): boolean {
-  if (typeof part.text !== 'string') return false;
-  return part.type === 'tool_result' || (msg.role === 'toolResult' && part.type === 'text');
+function isToolResultText(msg: AgentMessage, part: LoosePart): boolean {
+  if (stringField(part, 'text') === undefined) return false;
+  return part['type'] === 'tool_result' || (msg.role === 'toolResult' && part['type'] === 'text');
 }
 
 // ---------------------------------------------------------------------------
