@@ -147,7 +147,7 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
   {
     id: 'xai',
     name: 'xAI',
-    authMethods: ['api_key'],
+    authMethods: ['oauth', 'api_key'],
     envVar: 'XAI_API_KEY',
     keyUrl: 'console.x.ai',
   },
@@ -223,7 +223,7 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
   {
     id: 'openrouter',
     name: 'OpenRouter',
-    authMethods: ['api_key'],
+    authMethods: ['oauth', 'api_key'],
     envVar: 'OPENROUTER_API_KEY',
     keyUrl: 'openrouter.ai/keys',
   },
@@ -290,7 +290,7 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
   {
     id: 'kimi-coding',
     name: 'Kimi Coding',
-    authMethods: ['api_key'],
+    authMethods: ['oauth', 'api_key'],
     envVar: 'KIMI_API_KEY',
   },
   {

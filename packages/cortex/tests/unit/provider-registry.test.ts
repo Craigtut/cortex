@@ -112,6 +112,11 @@ describe('provider-registry', () => {
         expect(PROVIDER_REGISTRY.some(provider => provider.id === id), `Missing provider "${id}"`).toBe(true);
       }
     });
+
+    it('agrees with the registry about which providers offer OAuth', () => {
+      const withOAuth = PROVIDER_REGISTRY.filter(provider => provider.authMethods.includes('oauth')).map(provider => provider.id);
+      expect([...withOAuth].sort()).toEqual([...OAUTH_PROVIDER_IDS].sort());
+    });
   });
 
   // -----------------------------------------------------------------------
