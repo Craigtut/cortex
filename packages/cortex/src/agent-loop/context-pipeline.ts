@@ -297,6 +297,21 @@ export class ContextPipeline {
     return result;
   }
 
+  /**
+   * Replace post-slot history outside a transform pass (reactive overflow
+   * truncation, an explicit compaction). Compaction rewrites keep the current
+   * turn's messages as a contiguous suffix, so the history boundary moves
+   * with them, exactly as for a rewrite inside the pass.
+   */
+  writeSource(history: AgentMessage[]): void {
+    const historyStart = this.ports.slots.historyStart;
+    const messages = this.ports.agentState().messages;
+    const currentTickCount = messages.length - this.ports.boundary();
+    spliceHistory(messages, historyStart, history);
+    this.ports.setAgentMessages([...messages]);
+    this.ports.setBoundary(Math.max(historyStart, messages.length - currentTickCount));
+  }
+
   /** The loop's live context as pi would hand it to transformContext. */
   snapshot(): AgentContext {
     const state = this.ports.agentState();

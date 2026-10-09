@@ -175,6 +175,9 @@ export class BufferingCoordinator {
     promise
       .then((output: ObserverOutput) => {
         if (this.aborted) return;
+        // Invalidated (a restore or reset replaced the buffer): this call
+        // no longer owns the in-flight slot, which may hold a newer call.
+        if (this.inFlightObserver !== promise) return;
 
         // Discard if activation already processed these messages
         if (this.activationEpoch !== launchEpoch) {
@@ -206,6 +209,7 @@ export class BufferingCoordinator {
         if (logger) {
           logger.warn(`Observer buffer call failed: ${message}`);
         }
+        if (this.inFlightObserver !== promise) return;
         this.inFlightObserver = null;
         this.inFlightObserverEndIndex = null;
       });
@@ -309,6 +313,8 @@ export class BufferingCoordinator {
     promise
       .then((output: ReflectorOutput) => {
         if (this.aborted) return;
+        // Invalidated by a restore or reset: the log it condensed is gone.
+        if (this.inFlightReflector !== promise) return;
 
         this.bufferedReflection = {
           observations: output.observations,
@@ -322,6 +328,7 @@ export class BufferingCoordinator {
         if (logger) {
           logger.warn(`Reflector buffer call failed: ${message}`);
         }
+        if (this.inFlightReflector !== promise) return;
         this.inFlightReflector = null;
       });
   }
@@ -368,10 +375,25 @@ export class BufferingCoordinator {
 
   /**
    * Restore state from a previous session.
+   *
+   * Work in flight belongs to the replaced state: an observer's indices and a
+   * reflection's input describe history and a log that no longer exist, so
+   * both are invalidated (they settle unobserved) along with any buffered
+   * reflection.
    */
   restoreState(state: { chunks: ObservationChunk[]; watermark: number }): void {
+    this.invalidateInFlight();
     this.chunks = [...state.chunks];
     this.bufferWatermark = state.watermark;
+  }
+
+  /** Forget the work in flight and any buffered reflection. */
+  private invalidateInFlight(): void {
+    this.activationEpoch++;
+    this.inFlightObserver = null;
+    this.inFlightObserverEndIndex = null;
+    this.inFlightReflector = null;
+    this.bufferedReflection = null;
   }
 
   /**

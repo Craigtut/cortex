@@ -81,7 +81,6 @@ export interface LoopHost {
   isAborted(): boolean;
   emitError(error: Error, wasAborted?: boolean): ClassifiedError;
   getConversationHistory(): AgentMessage[];
-  restoreConversationHistory(messages: AgentMessage[]): void;
   getTransformContextHook(): (context: AgentContext) => Promise<AgentContext>;
   createChildAgent(params: ChildLoopParams): Promise<ChildLoop>;
 }
@@ -346,7 +345,7 @@ export function assembleLoop(params: {
     compaction: () => compactionManager,
     handleOverflow: () => compactionManager.handleOverflowError(
       () => host.getConversationHistory(),
-      (history) => host.restoreConversationHistory(history),
+      (history) => pipeline.writeSource(history),
     ),
     historyStart: () => contextManager.historyStart,
     notifyTailTrimmed,

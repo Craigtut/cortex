@@ -605,6 +605,14 @@ export class CompactionManager {
   }
 
   /**
+   * Reset observational memory to empty (history was replaced with no
+   * memory to go with it).
+   */
+  resetObservationalMemory(): void {
+    this.observationalEngine?.reset();
+  }
+
+  /**
    * Force a synchronous observation cycle.
    */
   async triggerObservation(messages: AgentMessage[], historyStart: number): Promise<void> {

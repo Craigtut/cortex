@@ -55,6 +55,10 @@ export interface LoopContextApi {
    * saved history replay as declared; the loop then brings the prompt and
    * tools up to date on its next request.
    *
+   * Observational memory starts empty: it described the replaced history.
+   * To restore memory with the history, call
+   * restoreObservationalMemoryState() after this.
+   *
    * @param messages - Previously saved conversation history
    */
   restoreConversationHistory(messages: AgentMessage[]): void;

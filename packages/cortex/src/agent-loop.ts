@@ -188,7 +188,6 @@ export class AgentLoop implements
         isAborted: () => this.isAborted(),
         emitError: (error, wasAborted) => this.emitError(error, wasAborted),
         getConversationHistory: () => this.getConversationHistory(),
-        restoreConversationHistory: (messages) => this.restoreConversationHistory(messages),
         getTransformContextHook: () => this.getTransformContextHook(),
         createChildAgent: (params) => this.createChildAgent(params),
       },
@@ -384,6 +383,7 @@ export class AgentLoop implements
   }
 
   restoreConversationHistory(messages: AgentMessage[]): void {
+    const { compactionManager, contextManager } = this.parts;
     // Replace everything after the slots, folding the replaced history's
     // system messages into the head so the transcript still declares the
     // loop's tools. Empty turn content gets a placeholder and messages
@@ -391,12 +391,20 @@ export class AgentLoop implements
     const now = Date.now();
     spliceHistory(
       this.agent.state.messages,
-      this.parts.contextManager.historyStart,
+      contextManager.historyStart,
       messages.map((msg) => {
         const patched = isSystemMessage(msg) ? msg : withPlaceholderContent(msg);
         return patched.timestamp == null ? { ...patched, timestamp: now } : patched;
       }),
     );
+    // Observational memory described the replaced history: its watermark
+    // indexes into it and its log summarizes it. Start empty; a restore with
+    // memory follows with restoreObservationalMemoryState().
+    compactionManager.resetObservationalMemory();
+    compactionManager.invalidateContextTokenCount();
+    if (compactionManager.strategy === 'observational') {
+      contextManager.setSlot('_observations', '');
+    }
   }
 
   setHeadlineProvider(provider: (() => string | null) | null, options?: { maxTokens?: number }): void {
@@ -415,7 +423,7 @@ export class AgentLoop implements
   async checkAndRunCompaction(): Promise<CompactionResult | null> {
     return this.parts.compactionManager.checkAndRunCompaction(
       () => this.getConversationHistory(),
-      (history) => this.restoreConversationHistory(history),
+      (history) => this.parts.pipeline.writeSource(history),
     );
   }
 

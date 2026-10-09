@@ -671,6 +671,19 @@ export class ObservationalMemoryEngine {
   }
 
   /**
+   * Return to the empty state: no observations, no hint, nothing buffered,
+   * nothing in flight. For history that was replaced with no memory to go
+   * with it, which no previous log or watermark describes.
+   */
+  reset(): void {
+    this.observations = '';
+    this.continuationHint = null;
+    this.observationTokenCount = 0;
+    this.generationCount = 0;
+    this.buffering.restoreState({ chunks: [], watermark: 0 });
+  }
+
+  /**
    * Reconcile buffer state after emergency truncation spliced the source
    * history from the front.
    *
