@@ -106,12 +106,13 @@ describe('checkpointing during a long task', () => {
     await turn;
   });
 
-  it('omits observational memory while a generation is in flight', async () => {
+  it('keeps observational memory while a generation is in flight', async () => {
     const { internals, agent, reasonerPi } = await createPassthroughSession(cwd);
     const sessionId = internals.sessionId;
     const cm = agent.getCompactionManager();
-    // A watermark written while the observer is mid-generation would index
-    // into a history that is not the one being saved.
+    // History and memory are read in one synchronous frame, so a generation
+    // in flight cannot land between them: dropping memory bought nothing
+    // and lost every observation on crash recovery.
     vi.spyOn(cm, 'isObserverInFlight').mockReturnValue(true);
 
     const save = vi.spyOn(internals.checkpoints.saver, 'save');
@@ -120,7 +121,9 @@ describe('checkpointing during a long task', () => {
     await waitUntil(() => save.mock.calls.length > 0, 3000, 'a checkpoint was taken mid-run');
     await internals.checkpoints.saver.flush();
 
-    expect(readState(sessionId).reasonerMemory).toBeNull();
+    const state = readState(sessionId);
+    expect(state.reasonerMemory).not.toBeNull();
+    expect(state.reasonerMemory!.bufferWatermark).toBeLessThanOrEqual(state.reasonerHistory.length);
 
     reasonerPi.holdAfterTurn = false;
     reasonerPi.releaseRun();

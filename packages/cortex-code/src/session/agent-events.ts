@@ -16,6 +16,9 @@ import type {
   CortexAgent,
   CortexEvent,
   LoopOriginContext,
+  MemoryErrorInfo,
+  MemoryGapInfo,
+  MemoryRecoveredInfo,
   RetryExhaustedInfo,
   RetryScheduledInfo,
   RetrySucceededInfo,
@@ -244,6 +247,39 @@ export function wireAgentEvents(agent: CortexAgent, app: AgentEventApp, ports: A
     if (!ports.routing.isWorkLoop(origin)) return;
     ports.status.refreshObservationalMemory();
   });
+
+  // Memory health, for ANY loop, like the compaction failures above. One
+  // notice per degraded episode: the call that starts it says so, the
+  // first success after it says it is over, and the failures between
+  // repeat nothing the user does not already know.
+  agent.onMemoryError((info: MemoryErrorInfo, origin: LoopOriginContext) => {
+    if (info.consecutiveFailures !== 1) return;
+    app.transcript.addNotification(
+      `Memory model failing${loopSuffix(origin)}`,
+      `${info.error.message}. Nothing is lost: recent messages stay in context until memory records them.`,
+      { severity: 'warning' },
+    );
+  });
+  agent.onMemoryRecovered((info: MemoryRecoveredInfo, origin: LoopOriginContext) => {
+    app.transcript.addNotification(
+      `Memory model recovered${loopSuffix(origin)}`,
+      `After ${info.failures} failed ${info.failures === 1 ? 'call' : 'calls'}.`,
+      { severity: 'info' },
+    );
+  });
+  agent.onMemoryGap((info: MemoryGapInfo, origin: LoopOriginContext) => {
+    app.transcript.addNotification(
+      `Memory gap${loopSuffix(origin)}`,
+      `${info.droppedMessages} messages left the context before memory recorded them (${info.reason}).`,
+      { severity: 'warning' },
+    );
+    ports.status.refreshObservationalMemory();
+  });
+
+  /** Which loop a duplex notice is about; nothing for the work loop. */
+  function loopSuffix(origin: LoopOriginContext): string {
+    return ports.routing.isWorkLoop(origin) ? '' : ' (conversation)';
+  }
 
   // Sub-agent events: rendered as tool calls via the SubAgent renderer
   agent.onSubAgentSpawned((taskId, instructions, background) => {

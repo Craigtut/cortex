@@ -1,5 +1,6 @@
 import { SelectList, Text, Container, type SelectItem } from '@earendil-works/pi-tui';
-import type { Command } from './index.js';
+import type { Command, CommandSession } from './index.js';
+import { compactContext } from './compact.js';
 import { selectListTheme, colors } from '../tui/theme.js';
 import { OverlayBox } from '../tui/overlay-box.js';
 import { detectOllama, getOllamaContextWindow } from '../providers/ollama.js';
@@ -315,25 +316,7 @@ async function showModelSwitchWarning(
     warningList.onSelect = async (choice) => {
       warningHandle.hide();
       app.focusEditor();
-
-      switch (choice.value) {
-        case 'compact-first': {
-          app.showStatusSpinner('Compacting...');
-          try {
-            await session.getAgent()?.checkAndRunCompaction();
-          } catch {
-            // Continue anyway
-          }
-          app.hideStatusSpinner();
-          await doModelSwitch(session, provider, modelId);
-          break;
-        }
-        case 'switch-anyway':
-          await doModelSwitch(session, provider, modelId);
-          break;
-        case 'cancel':
-          break;
-      }
+      await applySwitchWarningChoice(session, choice.value, provider, modelId);
       resolve();
     };
 
@@ -343,6 +326,30 @@ async function showModelSwitchWarning(
       resolve();
     };
   });
+}
+
+/**
+ * What a choice in the context-window warning does. Compacting first goes
+ * through compactNow, which keeps the recent messages and changes nothing
+ * if it fails; the switch happens either way.
+ */
+export async function applySwitchWarningChoice(
+  session: Pick<CommandSession, 'getAgent' | 'getApp' | 'getCompactionStrategy' | 'getProvider' | 'switchModel' | 'switchProvider'>,
+  choice: string,
+  provider: string,
+  modelId: string,
+): Promise<void> {
+  switch (choice) {
+    case 'compact-first':
+      await compactContext(session);
+      await doModelSwitch(session, provider, modelId);
+      break;
+    case 'switch-anyway':
+      await doModelSwitch(session, provider, modelId);
+      break;
+    case 'cancel':
+      break;
+  }
 }
 
 // ---------------------------------------------------------------------------

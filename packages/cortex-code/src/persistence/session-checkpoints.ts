@@ -41,7 +41,6 @@ export type CheckpointAgent = Pick<
   | 'getConversationHistory'
   | 'getObservationalMemoryState'
   | 'getSessionUsage'
-  | 'getCompactionManager'
 >;
 
 /** The session facts recorded in meta.json alongside every save. */
@@ -159,11 +158,10 @@ export class SessionCheckpoints {
    * blocked. Closing that gap needs a turn-boundary snapshot on the facade,
    * not a workaround here.
    *
-   * Observational memory rides along only when neither the observer nor the
-   * reflector is in flight. Its buffer watermark indexes into history, so a
-   * generation landing between the two reads would persist a watermark that
-   * does not match what was saved; omitting it costs observations on crash
-   * recovery and keeps the artifact coherent.
+   * Observational memory always rides along. Its buffer watermark indexes
+   * into history, and both are read in this one synchronous frame, so no
+   * generation can land between the reads; a call still in flight is simply
+   * not in the snapshot, and its messages are observed again after a crash.
    */
   crashCheckpoint(): void {
     const agent = this.getAgent();
@@ -171,10 +169,6 @@ export class SessionCheckpoints {
     const base = this.lastCompositeState;
     if (!base) return;
 
-    const memorySettled = this.compactionStrategy === 'observational'
-      ? !agent.getCompactionManager().isObserverInFlight()
-        && !agent.getCompactionManager().isReflectorInFlight()
-      : true;
     const usage = agent.getSessionUsage();
 
     this.record({
@@ -185,7 +179,7 @@ export class SessionCheckpoints {
       // artifact restored into this session round-trips instead of losing a
       // half it cannot see.
       reasonerHistory: agent.getConversationHistory(),
-      reasonerMemory: memorySettled ? agent.getObservationalMemoryState() : null,
+      reasonerMemory: agent.getObservationalMemoryState(),
       usage: { ...base.usage, total: usage, perLoop: { ...base.usage.perLoop, reasoner: usage } },
     });
   }
