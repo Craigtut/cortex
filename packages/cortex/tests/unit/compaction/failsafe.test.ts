@@ -307,4 +307,22 @@ describe('isContextOverflow', () => {
     expect(isContextOverflow(new Error('CONTEXT_LENGTH_EXCEEDED'))).toBe(true);
     expect(isContextOverflow(new Error('Token Limit Exceeded'))).toBe(true);
   });
+
+  // Bedrock reports a tokens-per-minute throttle as "Too many tokens, please
+  // wait before trying again." pi-ai's formatBedrockError prefixes it
+  // "Throttling error:"; the raw SDK name is "ThrottlingException". Waiting
+  // fixes it; dropping history does not.
+  it('does not treat throttling or rate limits that mention too many tokens as overflow', () => {
+    // Precondition: the phrase alone is an overflow signal.
+    expect(isContextOverflow(new Error('Request has too many tokens'))).toBe(true);
+
+    expect(isContextOverflow(new Error(
+      'Throttling error: Too many tokens, please wait before trying again.',
+    ))).toBe(false);
+    expect(isContextOverflow(new Error(
+      'ThrottlingException: Too many tokens, please wait before trying again.',
+    ))).toBe(false);
+    expect(isContextOverflow(new Error('Rate limit reached: too many tokens per minute'))).toBe(false);
+    expect(isContextOverflow(new Error('429 Too Many Requests: too many tokens in flight'))).toBe(false);
+  });
 });

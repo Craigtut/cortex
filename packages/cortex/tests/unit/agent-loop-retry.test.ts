@@ -4,6 +4,7 @@ import type { LoopRunInfo, PiAgent, PiModel } from '../../src/agent-loop.js';
 import type { PiEvent } from '../../src/event-bridge.js';
 import type { AgentLoopConfig } from '../../src/types.js';
 import { wrapModel } from '../../src/model-wrapper.js';
+import { CompactionManager } from '../../src/compaction/index.js';
 import { partsOf } from './agent-loop/parts.js';
 
 // ---------------------------------------------------------------------------
@@ -617,5 +618,51 @@ describe('AgentLoop.currentRun across a retry ladder', () => {
 
     await loop.prompt('more');
     expect(seen.at(-1)).toEqual(expect.objectContaining({ id: 2, attempt: 1 }));
+  });
+});
+
+describe('AgentLoop reactive overflow handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A mock whose first attempt fails with `message`; a retry succeeds. */
+  function failFirstAttemptWith(message: string): RetryMockAgent {
+    const mock = createRetryMock(['ok']);
+    mock.prompt = async (input: string) => {
+      mock.promptCalls += 1;
+      mock.state.messages.push({ role: 'user', content: input } as never);
+      mock.state.errorMessage = message;
+      mock.state.messages.push(
+        { role: 'assistant', content: [], stopReason: 'error', errorMessage: message } as never,
+      );
+      return undefined;
+    };
+    return mock;
+  }
+
+  it('runs emergency truncation when the provider reports a context overflow', async () => {
+    const truncate = vi.spyOn(CompactionManager.prototype, 'handleOverflowError');
+    const loop = build(failFirstAttemptWith('prompt is too long: 213462 tokens > 200000 maximum'), createConfig());
+
+    await expect(loop.prompt('hi')).rejects.toThrow();
+
+    expect(truncate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not truncate history when Bedrock throttles on tokens per minute', async () => {
+    const truncate = vi.spyOn(CompactionManager.prototype, 'handleOverflowError');
+    const mock = failFirstAttemptWith('Throttling error: Too many tokens, please wait before trying again.');
+    const loop = build(mock, createConfig());
+    const scheduled = vi.fn();
+    loop.onRetryScheduled(scheduled);
+
+    await loop.prompt('hi');
+
+    // The failure reached the turn runner and was retried as a rate limit.
+    expect(scheduled).toHaveBeenCalledTimes(1);
+    expect(scheduled.mock.calls[0][0].category).toBe('rate_limit');
+    expect(mock.continueCalls).toBe(1);
+    expect(truncate).not.toHaveBeenCalled();
   });
 });

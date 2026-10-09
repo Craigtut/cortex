@@ -145,10 +145,24 @@ export function shouldTruncate(
 }
 
 /**
+ * Throttling and rate-limit errors that can share wording with an overflow.
+ * Bedrock reports a tokens-per-minute throttle as "Too many tokens, please
+ * wait before trying again." (prefixed "Throttling error:" by pi-ai, or the
+ * raw "ThrottlingException"). Mirrors pi-ai's own overflow exclusions.
+ */
+const NON_OVERFLOW_PATTERNS: RegExp[] = [
+  /throttl/i,
+  /rate limit/i,
+  /too many requests/i,
+];
+
+/**
  * Check if an error represents a context overflow.
- * Matches common API error patterns from various providers.
+ * Matches common API error patterns from various providers, excluding
+ * throttling and rate-limit errors that use the same wording.
  */
 export function isContextOverflow(error: Error): boolean {
+  if (NON_OVERFLOW_PATTERNS.some((p) => p.test(error.message))) return false;
   const msg = error.message.toLowerCase();
   return (
     msg.includes('context_length_exceeded') ||
