@@ -249,7 +249,7 @@ export class ContextPipeline {
         if (passIsStale()) {
           // A late abandoned pass would destroy messages appended since.
           this.ports.logger.warn('discarding history rewrite from an abandoned digestion pass');
-          return;
+          return false;
         }
         // Exact only while every rewrite keeps the current tick's messages
         // as a contiguous suffix of `history`; a strategy that breaks that
@@ -261,6 +261,7 @@ export class ContextPipeline {
           historyStart,
           sourceMessages.length - currentTickCount,
         ));
+        return true;
       },
       // Staleness also suppresses event dispatch: a consumer must never
       // see a compaction reported for a rewrite that never landed.

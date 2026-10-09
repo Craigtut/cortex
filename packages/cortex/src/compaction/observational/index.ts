@@ -216,7 +216,7 @@ export class ObservationalMemoryEngine {
     getHistory: (ctx: AgentContext) => AgentMessage[],
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory: () => AgentMessage[],
-    setSourceHistory: (history: AgentMessage[]) => void,
+    setSourceHistory: (history: AgentMessage[]) => boolean | void,
     options?: { allowSync?: boolean; isStale?: () => boolean },
   ): Promise<AgentContext> {
     if (utilization < this.config.activationThreshold) {

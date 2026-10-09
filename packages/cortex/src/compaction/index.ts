@@ -444,6 +444,18 @@ export class CompactionManager {
   }
 
   /**
+   * Forget the post-hoc count after compaction rewrote the source history:
+   * it measured a context that no longer exists. Estimates fall back to the
+   * heuristic until the next parent turn measures again.
+   */
+  invalidateContextTokenCount(): void {
+    this.logger.debug('[Compaction] context token count invalidated by a history rewrite', {
+      prev: this._currentContextTokenCount,
+    });
+    this._currentContextTokenCount = 0;
+  }
+
+  /**
    * Get the post-hoc current-context token count from the most recent parent turn.
    */
   get currentContextTokenCount(): number {
@@ -842,7 +854,8 @@ export class CompactionManager {
    * @param getHistory - Function to get conversation history from the context
    * @param setHistory - Function to set conversation history in the context
    * @param getSourceHistory - Function to get the original source transcript history (post-slot)
-   * @param setSourceHistory - Function to replace the original source transcript history
+   * @param setSourceHistory - Function to replace the original source
+   *   transcript history; returns false when the owner discarded the rewrite
    * @param options - allowBlocking overrides the configured nonBlocking
    *   posture for this call (an idle-digestion entry point runs the
    *   synchronous work deliberately). Omitted: the config decides.
@@ -858,7 +871,7 @@ export class CompactionManager {
     getHistory: (ctx: AgentContext) => AgentMessage[],
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory?: () => AgentMessage[],
-    setSourceHistory?: (history: AgentMessage[]) => void,
+    setSourceHistory?: (history: AgentMessage[]) => boolean | void,
     options?: { allowBlocking?: boolean; isStale?: () => boolean },
   ): Promise<AgentContext> {
     // pi requires transformContext never to throw. Every layer keeps its
@@ -879,7 +892,7 @@ export class CompactionManager {
     getHistory: (ctx: AgentContext) => AgentMessage[],
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory?: () => AgentMessage[],
-    setSourceHistory?: (history: AgentMessage[]) => void,
+    setSourceHistory?: (history: AgentMessage[]) => boolean | void,
     options?: { allowBlocking?: boolean; isStale?: () => boolean },
   ): Promise<AgentContext> {
     if (this._contextWindow <= 0) {
@@ -914,7 +927,7 @@ export class CompactionManager {
 
     // Compute utilization and slot tokens (shared by both strategies and L3)
     const originalHistoryTokens = this.estimateHistoryTokens(getHistory(context));
-    const slotTokens = Math.max(0, currentTokens - originalHistoryTokens);
+    let slotTokens = Math.max(0, currentTokens - originalHistoryTokens);
     const utilization = this._contextWindow > 0 ? currentTokens / this._contextWindow : 0;
 
     let layer2Failed = false;
@@ -928,8 +941,15 @@ export class CompactionManager {
       // compression. L2 summarization is skipped, but L1 still runs in
       // cache-aware mode on the unobserved tail to trim large tool results
       // before they hit the LLM.
+      // A landed rewrite makes the last measured input size describe a
+      // context that no longer exists.
+      const writeSource = (rewritten: AgentMessage[]): boolean | void => {
+        const landed = setSourceHistory(rewritten);
+        if (landed !== false) this.invalidateContextTokenCount();
+        return landed;
+      };
       context = await this.observationalEngine.applyInTransformContext(
-        context, utilization, this.historyStart, getHistory, setHistory, getSourceHistory, setSourceHistory,
+        context, utilization, this.historyStart, getHistory, setHistory, getSourceHistory, writeSource,
         { allowSync: allowBlocking, ...(isStale ? { isStale } : {}) },
       );
       history = getHistory(context);
@@ -937,8 +957,10 @@ export class CompactionManager {
       // Run L1 on the surviving (post-observation) history. Cache-aware
       // gating ensures we only trim when the prompt cache has gone cold,
       // preserving cache hits during active use. Re-estimate from the
-      // updated context so the observation slot's new size is reflected.
+      // updated context so the observation slot's new size is reflected,
+      // and so L3 below measures the context this call will actually send.
       const postObsTotal = this.estimateCurrentContextTokens(context);
+      slotTokens = Math.max(0, postObsTotal - this.estimateHistoryTokens(history));
       const trimmedHistory = await this.microcompaction.apply(
         history, this._contextWindow, postObsTotal, { cacheCold: this.shouldTrimHistory(postObsTotal) },
       );
