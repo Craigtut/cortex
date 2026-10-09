@@ -838,6 +838,26 @@ describe('ProviderManager', () => {
       pm.cancelOAuth();
     });
 
+    it("ends pi's login when the flow times out, so a late browser completion stores nothing", async () => {
+      // pi closes its callback server when the login's signal aborts; a
+      // login left running would keep the port bound and store later.
+      const credentials = new InMemoryCredentialStore();
+      const timedOutPm = new ProviderManager({ credentials, oauthCallbackRoutes: {} });
+      let finishInBrowser!: () => void;
+      mockLoginCodex.mockImplementation(() => new Promise((resolve) => {
+        finishInBrowser = () => resolve({ type: 'oauth', access: 'late', refresh: 'r', expires: Date.now() + 3600_000 });
+      }));
+
+      await expect(timedOutPm.initiateOAuth('openai-codex', { onAuth: vi.fn(), onPrompt: vi.fn(), timeoutMs: 50 }))
+        .rejects.toMatchObject({ code: 'timed_out' });
+      const interaction = mockLoginCodex.mock.calls[0]![0] as { signal: AbortSignal };
+      finishInBrowser();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(interaction.signal.aborted).toBe(true);
+      expect(await credentials.read('openai-codex')).toBeUndefined();
+    });
+
     it('fails immediately on a failed browser callback instead of hanging', async () => {
       // pi-ai serves its error page then hangs forever (never settles).
       // The render shim sees the error page; Cortex must reject right away.
@@ -860,6 +880,8 @@ describe('ProviderManager', () => {
       expect(err).toBeInstanceOf(OAuthError);
       expect((err as OAuthError).code).toBe('callback_failed');
       expect((err as OAuthError).message).toContain('State mismatch');
+      // pi's login ends with the flow, closing its callback server.
+      expect((mockLoginCodex.mock.calls[0]![0] as { signal: AbortSignal }).signal.aborted).toBe(true);
     });
   });
 

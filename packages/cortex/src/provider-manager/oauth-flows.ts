@@ -374,6 +374,11 @@ export class OAuthFlows {
     } finally {
       if (timer) clearTimeout(timer);
       shim.release();
+      // However the flow ended, end pi's login with it: a timed-out or
+      // failed flow would otherwise keep its callback server bound and store
+      // a credential the user completes later in the browser. A login that
+      // succeeded has already stored its credential.
+      abort.abort();
     }
   }
 
