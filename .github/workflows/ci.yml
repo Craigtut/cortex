@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -100,3 +101,84 @@ jobs:
           packages/cortex-code/tests/providers/browser-auth.test.ts
           packages/cortex-code/tests/providers/setup-tui-render.test.ts
           packages/cortex-code/tests/providers/setup-tui-input.test.ts
+
+  # Windows 11 on ARM64, the one hosted Windows 11 image (free for public
+  # repositories). MXC needs Windows 11 with the process security environment,
+  # which KB5120998 rolls out gradually, so each run's probe decides whether
+  # this image can contain anything; nothing assumes it. Off pull requests:
+  # it installs the real SDK and runs real containment. It uses no secrets.
+  #
+  # When the probe reports MXC unavailable, the job still passes (packaging
+  # was verified), but the checklist step shows as skipped, a warning
+  # annotation says Windows containment was NOT validated, and the probe's
+  # section of the job summary is headed "NOT available". Failing instead
+  # would turn every push red for a reason outside this repository until
+  # Microsoft enables the feature on the image, and a job that is always red
+  # stops being read, which would hide a real packaging failure here. Once the
+  # probe passes, any checklist failure fails the job.
+  windows-arm:
+    name: Windows 11 ARM64 packaging and MXC real host
+    if: github.event_name != 'pull_request'
+    runs-on: windows-11-arm
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          check-latest: true
+          cache: npm
+
+      # MXC's native stdio transfer needs Node 24.21+ (or 26.8+). Fail here so
+      # an old Node is never reported as an unavailable host.
+      - name: Check Node supports MXC
+        shell: bash
+        run: >-
+          node -e "const [major, minor] = process.versions.node.split('.').map(Number);
+          if (!((major === 24 && minor >= 21) || (major === 26 && minor >= 8) || major > 26)) {
+          console.error('Node ' + process.version + ' cannot run MXC (needs 24.21+ or 26.8+)'); process.exit(1); }"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Packaging
+        run: node tools/release/verify-cortex-install.mjs
+
+      # Only the published package depends on the SDK (through the Windows
+      # variant), so install the release's pinned version for the probe and
+      # the checklist, without touching package.json or the lockfile.
+      - name: Install the pinned MXC SDK
+        shell: bash
+        run: |
+          sdk="$(node --input-type=module -e "const { MXC_SDK } = await import('./tools/release/cortex-packages.mjs'); console.log(MXC_SDK.name + '@' + MXC_SDK.version)")"
+          npm install --no-save --no-audit --no-fund "${sdk}"
+
+      - name: MXC probe
+        id: probe
+        run: node tools/mxc/probe-report.mjs
+
+      # The automatable part of docs/cortex/windows-sandbox-build.md. With
+      # CORTEX_MXC_REAL_HOST=1 the suite fails, rather than skips, when MXC
+      # turns out to be unavailable.
+      - name: MXC real-host checklist
+        if: steps.probe.outputs.available == 'true'
+        env:
+          CORTEX_MXC_REAL_HOST: "1"
+        run: npx vitest run packages/cortex/tests/unit/sandbox/mxc-real-host.integration.test.ts
+
+      - name: Flag that Windows containment was not validated
+        if: steps.probe.outputs.available != 'true'
+        shell: bash
+        run: |
+          message="MXC BaseContainer is not available on this windows-11-arm image, so the real-host checklist did not run. Packaging was verified; Windows containment was NOT. See the MXC probe in the job summary."
+          echo "::warning title=Windows containment NOT validated::${message}"
+          printf '\n> [!WARNING]\n> %s\n' "${message}" >> "${GITHUB_STEP_SUMMARY}"
