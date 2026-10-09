@@ -40,57 +40,17 @@ import { RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
 import { InBandObserver } from './in-band.js';
-import { historyTokens, pieceEnd } from './units.js';
+import { BackgroundObservation } from './background.js';
+import { historyTokens } from './units.js';
 import { selectTail } from './tail.js';
 import { applySwap, removedBy, removesAny, swapCut } from './swap.js';
 import { OverflowDrop, truncateView } from './emergency.js';
 import type { SwapCut } from './swap.js';
 import { ObservationLog } from './log.js';
-import type { MemoryCallTrigger } from './health.js';
-
-// ---------------------------------------------------------------------------
-// Re-exports
-// ---------------------------------------------------------------------------
-
-export { BufferingCoordinator } from './buffering.js';
-export { runObserver } from './observer.js';
-export { runReflector, computeEffectiveReflectionThreshold } from './reflector.js';
-export { createRecallTool } from './recall-tool.js';
-
-export type {
-  ObservationalMemoryConfig,
-  ObservationalMemoryState,
-  ObservationChunk,
-  ObservationEvent,
-  ReflectionEvent,
-  ContinuationHint,
-  RecallConfig,
-  RecallResult,
-  ObserverOutput,
-  ReflectorOutput,
-  BufferState,
-  MemoryCallTrigger,
-  MemoryErrorInfo,
-  MemoryRecoveredInfo,
-  MemoryGapInfo,
-  MemoryEventPayload,
-  CompactNowOptions,
-  CompactNowResult,
-  ObserveNowResult,
-  ReflectionOutcome,
-} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Default wall-clock budget for idle digestion's observer waits. Idle
- * digestion holds the caller's loop gate, so waiting on a hung utility
- * request must be bounded; a healthy observer call settles well inside
- * this. Overridable per call (digestIdle's observerTimeoutMs).
- */
-export const DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS = 60_000;
 
 /** Whether `now` still holds exactly the messages of `snapshot`. */
 function unchanged(snapshot: AgentMessage[], now: AgentMessage[]): boolean {
@@ -132,6 +92,7 @@ export class ObservationalMemoryEngine {
   private readonly reflection: Reflection;
   private readonly inBand: InBandObserver;
   private readonly overflow: OverflowDrop;
+  private readonly background: BackgroundObservation;
   private contextWindow: number = 0;
   private utilityModelContextWindow: number = 0;
   private logger: { warn: (msg: string) => void; info: (msg: string) => void } | null = null;
@@ -170,6 +131,16 @@ export class ObservationalMemoryEngine {
       logText: () => this.log.text,
       observerConfig: () => this.buildObserverConfig(),
       policy: () => this.callPolicy(),
+      logger: () => this.logger,
+    });
+    this.background = new BackgroundObservation({
+      buffering: this.buffering,
+      completeFn: () => this.completeFn,
+      logText: () => this.log.text,
+      observerConfig: () => this.buildObserverConfig(),
+      inputCap: () => this.observerInputCap(),
+      config: () => this.config,
+      utilityModelContextWindow: () => this.utilityModelContextWindow,
       logger: () => this.logger,
     });
     this.overflow = new OverflowDrop({
@@ -436,77 +407,33 @@ export class ObservationalMemoryEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Turn-end handler
+  // Background observation (see background.ts)
   // -------------------------------------------------------------------------
 
   /**
-   * Called at each turn_end event. Handles async buffer triggering.
-   *
-   * Computes the dynamic buffer interval and launches an async observer
-   * if enough unobserved tokens have accumulated.
+   * At a turn end, launch an observer over the next piece of unobserved
+   * history once enough has accumulated (see BackgroundObservation).
    *
    * @param totalTokens - Total tokens from the last LLM response
    * @param contextWindow - Current context window size
    * @param messages - Current conversation messages (post-slot)
    * @param historyStart - Index of the first history message (past the system head and slots)
    */
-  onTurnEnd(
-    totalTokens: number,
-    contextWindow: number,
-    messages: AgentMessage[],
-    historyStart: number,
-  ): void {
-    if (!this.completeFn || contextWindow <= 0) return;
-
-    const currentUtilization = totalTokens / contextWindow;
-    const tokensUntilActivation = (this.config.activationThreshold - currentUtilization) * contextWindow;
-
-    // Past the threshold, keep buffering at the floor interval: activation
-    // can only swap in what is observed, and a non-blocking or degraded
-    // pass does not observe in-band.
-    const bufferInterval = tokensUntilActivation <= 0
-      ? Math.min(this.config.bufferMinTokens, this.observerInputCap())
-      : this.buffering.computeBufferInterval(tokensUntilActivation, {
-        bufferTargetCycles: this.config.bufferTargetCycles,
-        bufferTokenCap: this.config.bufferTokenCap,
-        bufferMinTokens: this.config.bufferMinTokens,
-        utilityModelContextWindow: this.utilityModelContextWindow,
-      });
-
-    // Skip slot messages to avoid processing them as conversation content
-    const history = messages.slice(historyStart);
-
-    // Compute unobserved tokens (messages after buffer watermark)
-    const watermark = this.buffering.getWatermark();
-    const unobservedMessages = history.slice(watermark);
-    const unobservedTokens = unobservedMessages.reduce((sum, msg) => {
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : JSON.stringify(msg.content);
-      return sum + estimateTokens(content);
-    }, 0);
-
-    if (this.buffering.shouldBuffer(unobservedTokens, bufferInterval)) {
-      this.launchPiece(history, watermark, 'buffer');
-    }
+  onTurnEnd(totalTokens: number, contextWindow: number, messages: AgentMessage[], historyStart: number): void {
+    this.background.onTurnEnd(totalTokens, contextWindow, messages.slice(historyStart));
   }
 
   /**
-   * Launch an observer over the next piece of unobserved history from
-   * `watermark`: whole units, as many as fit the observer's input cap.
+   * Observe what is pending outside a prompt, one piece at a time, leaving
+   * the chunks buffered (see BackgroundObservation.digest).
+   *
+   * @returns true when an observer call ran to completion in this digestion
    */
-  private launchPiece(history: AgentMessage[], watermark: number, trigger: MemoryCallTrigger): void {
-    if (!this.completeFn) return;
-    const end = pieceEnd(history, watermark, this.observerInputCap());
-    this.buffering.launchObserver(
-      this.completeFn,
-      history.slice(watermark, end),
-      end,
-      this.log.text || null,
-      this.buildObserverConfig(),
-      this.logger ?? undefined,
-      trigger,
-    );
+  digestPendingBuffers(
+    getHistory: () => AgentMessage[],
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<boolean> {
+    return this.background.digest(getHistory, options);
   }
 
   /**
@@ -517,89 +444,6 @@ export class ObservationalMemoryEngine {
     return this.utilityModelContextWindow > 0
       ? Math.min(this.config.bufferTokenCap, this.utilityModelContextWindow * 0.6)
       : this.config.bufferTokenCap;
-  }
-
-  // -------------------------------------------------------------------------
-  // Idle digestion
-  // -------------------------------------------------------------------------
-
-  /**
-   * Run pending observation buffering OUTSIDE a prompt: wait for any
-   * in-flight observer to land its chunk, then observe the still-unobserved
-   * tail (when it clears the buffering floor) one piece at a time, each
-   * within the observer's input cap, waiting for each chunk.
-   *
-   * Chunks stay buffered rather than activating here: activation trims raw
-   * history, which is a threshold decision, while this call only ensures the
-   * expensive observer work is DONE so the next activation (in-band or via
-   * an explicit digestion pass) is a cheap chunk merge. This is the
-   * primitive behind "digest during idle windows".
-   *
-   * Every wait is bounded by `timeoutMs` (one wall-clock budget for the
-   * whole call) and by `signal` (the owner preempting the digestion):
-   * callers hold the loop gate while digesting, so a hung utility request
-   * must time the digestion out rather than wedge the gate, and input
-   * arriving must stop it. A stopped digestion launches nothing more; an
-   * observer already in flight lands its chunk whenever it settles.
-   *
-   * History is read afresh for every piece: a run between pieces may have
-   * swapped observed messages out and rebased the ledger, and a piece cut
-   * from an older snapshot would mark messages observed that no observer
-   * saw.
-   *
-   * @param getHistory - The live post-slot history
-   * @param options.timeoutMs - Wall-clock budget for the whole call (default 60s)
-   * @param options.signal - Preempts the digestion
-   * @returns true when an observer call ran to completion in this digestion
-   */
-  async digestPendingBuffers(
-    getHistory: () => AgentMessage[],
-    options: { timeoutMs?: number; signal?: AbortSignal } = {},
-  ): Promise<boolean> {
-    if (!this.completeFn) return false;
-    const deadline = deadlineSignal(options.timeoutMs ?? DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS);
-    const stop = options.signal ? AbortSignal.any([deadline.signal, options.signal]) : deadline.signal;
-    const timedOut = (what: string): false => {
-      if (deadline.signal.aborted) this.logger?.warn(`Idle digestion timed out waiting for ${what}`);
-      return false;
-    };
-    try {
-      // Let an already-running observer finish and record its chunk, so the
-      // tail read below starts at the settled watermark. When the wait is
-      // given up, launch nothing behind a hung observer.
-      if (!(await this.buffering.observerSettledUnless(stop))) return timedOut('the in-flight observer');
-
-      const unobservedTokens = getHistory().slice(this.buffering.getWatermark()).reduce((sum, msg) => {
-        const content = typeof msg.content === 'string'
-          ? msg.content
-          : JSON.stringify(msg.content);
-        return sum + estimateTokens(content);
-      }, 0);
-      // Same floor onTurnEnd's buffering uses: observing a trivial tail
-      // thrashes the utility model for nothing.
-      if (unobservedTokens === 0 || unobservedTokens < this.config.bufferMinTokens) return false;
-
-      // One piece at a time, each within the observer's input cap, until the
-      // tail is observed, a call fails, or the digestion is stopped.
-      let observerRan = false;
-      for (;;) {
-        if (stop.aborted) return observerRan;
-        const history = getHistory();
-        const before = this.buffering.getWatermark();
-        if (before >= history.length) return observerRan;
-        this.launchPiece(history, before, 'idle');
-        if (!this.buffering.isObserverInFlight()) {
-          // launchObserver declined (the coordinator was aborted): no
-          // observer ran, so do not report one.
-          return observerRan;
-        }
-        if (!(await this.buffering.observerSettledUnless(stop))) return timedOut('its observer call');
-        if (this.buffering.getWatermark() <= before) return observerRan;
-        observerRan = true;
-      }
-    } finally {
-      deadline.clear();
-    }
   }
 
   // -------------------------------------------------------------------------

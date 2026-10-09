@@ -814,7 +814,8 @@ packages/cortex/src/compaction/
   tool-messages.ts    reading tool calls and results out of messages
   failsafe.ts         Layer 3 settings, overflow detection
   observational/
-    index.ts          ObservationalMemoryEngine: activation, onTurnEnd, digestion, compactNow, observeNow
+    index.ts          ObservationalMemoryEngine: activation, compactNow, observeNow, state
+    background.ts     observation nobody waits on: turn-end buffering, idle digestion
     ledger.ts         which messages are observed, by range; moves with every source rewrite
     buffering.ts      background observer and reflector calls
     in-band.ts        observation while a caller waits (catch-up)

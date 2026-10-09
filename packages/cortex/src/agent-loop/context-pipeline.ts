@@ -22,7 +22,7 @@
 import { computeCacheBreakpointIndices } from '../cache-breakpoints.js';
 import type { CacheBreakpointIndices } from '../cache-breakpoints.js';
 import type { CompactionManager, CompactNowOptions, CompactNowResult, ObserveNowResult } from '../compaction/index.js';
-import { DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS } from '../compaction/observational/index.js';
+import { DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS } from '../compaction/observational/background.js';
 import type { AgentContext, AgentMessage, ContextManager } from '../context-manager.js';
 import { errorMessageOf } from '../error-classifier.js';
 import { withPlaceholderContent } from '../pi-message.js';
