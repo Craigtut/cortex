@@ -7,7 +7,8 @@
 
 import type { CompactionManager } from '../../compaction/index.js';
 import type { ObservationEvent, ObservationalMemoryState, ReflectionEvent } from '../../compaction/observational/types.js';
-import type { AgentContext, AgentMessage, ContextManager } from '../../context-manager.js';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { AgentContext, ContextManager } from '../../context-manager.js';
 import type { CompactionDegradedInfo, CompactionExhaustedInfo, CompactionResult, CompactionTarget, LoopOriginContext } from '../../types.js';
 
 export interface LoopContextApi {

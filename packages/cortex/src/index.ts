@@ -120,10 +120,33 @@ export {
 } from './retry-policy.js';
 export type { RetryDecisionContext } from './retry-policy.js';
 
+// pi's own message and agent types. Conversation history, events, and the
+// agent Cortex drives are pi's; consumers type against them through Cortex.
+export type {
+  Agent,
+  AgentEvent,
+  AgentMessage,
+  AgentState,
+} from '@earendil-works/pi-agent-core';
+export type {
+  Api,
+  AssistantMessage,
+  ImageContent,
+  Message,
+  Model,
+  StopReason,
+  SystemMessage,
+  TextContent,
+  ThinkingContent,
+  ToolCall,
+  ToolResultMessage,
+  Usage,
+  UserMessage,
+} from '@earendil-works/pi-ai';
+
 // Context Manager (Phase 1B)
 export { ContextManager } from './context-manager.js';
 export type {
-  AgentMessage,
   AgentStateAccessor,
   AgentContext,
 } from './context-manager.js';
@@ -150,8 +173,6 @@ export type {
   CortexEventType,
   CortexEvent,
   CortexEventListener,
-  PiEventType,
-  PiEvent,
   PiEventSource,
   CortexEventPayloads,
 } from './event-bridge.js';

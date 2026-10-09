@@ -4,7 +4,7 @@
  * accepted shape to the current one (docs/cortex/duplex/facade-api.md).
  */
 
-import type { AgentMessage } from '../context-manager.js';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { ObservationalMemoryState } from '../compaction/index.js';
 import type { SessionLogEntry } from '../session-log.js';
 import type { SessionUsage } from '../types.js';

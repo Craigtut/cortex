@@ -9,7 +9,8 @@
 import type { DeliverResult, DirectCompletionOptions } from '../agent-loop.js';
 import type { CortexLogger, PendingAsk, SessionUsage } from '../types.js';
 import type { CortexModel } from '../model-wrapper.js';
-import type { AgentMessage, ContextManager } from '../context-manager.js';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { ContextManager } from '../context-manager.js';
 import type { ObservationalMemoryState } from '../compaction/index.js';
 import type { BudgetGuard } from '../budget-guard.js';
 import type { EventBridge } from '../event-bridge.js';

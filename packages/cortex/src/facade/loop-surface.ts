@@ -73,7 +73,7 @@ import type {
 } from '../types.js';
 import type { CortexTool } from '../tool-contract.js';
 import type { CortexModel } from '../model-wrapper.js';
-import type { AgentMessage } from '../context-manager.js';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { BudgetGuard } from '../budget-guard.js';
 import type { SkillRegistry } from '../skill-registry.js';
 import type {

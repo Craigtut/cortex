@@ -16,6 +16,7 @@ import type { BudgetGuard } from './budget-guard.js';
 import type { DirectCompletionContext } from './cache-breakpoints.js';
 import type { CompactionManager } from './compaction/index.js';
 import type { ObservationalMemoryState, ObservationEvent, ReflectionEvent } from './compaction/observational/types.js';
+import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core';
 import type { AgentContext, AgentMessage, ContextManager } from './context-manager.js';
 import { classifyError } from './error-classifier.js';
 import type { EventBridge } from './event-bridge.js';
@@ -187,7 +188,7 @@ export class AgentLoop implements
         utilityComplete: (context, completeOptions) => this.utilityComplete(context, completeOptions),
         isAborted: () => this.isAborted(),
         emitError: (error, wasAborted) => this.emitError(error, wasAborted),
-        getConversationHistory: () => this.getConversationHistory(),
+        getConversationHistory: () => this.loopHistory(),
         getTransformContextHook: () => this.getTransformContextHook(),
         createChildAgent: (params) => this.createChildAgent(params),
       },
@@ -374,15 +375,25 @@ export class AgentLoop implements
 
   getContextManager(): ContextManager { return this.parts.contextManager; }
 
-  getConversationHistory(): AgentMessage[] {
-    // Everything after the slots, system messages included: they declare
-    // the prompt and tools in effect at their point, and the observational
-    // watermark counts them. A restore replays them; the loop then patches
-    // the prompt and pi the tools to what is live now.
+  getConversationHistory(): PiAgentMessage[] {
+    return this.loopHistory() as PiAgentMessage[];
+  }
+
+  /**
+   * Everything after the slots, system messages included: they declare the
+   * prompt and tools in effect at their point, and the observational
+   * watermark counts them. A restore replays them; the loop then patches
+   * the prompt and pi the tools to what is live now. The transcript is pi's;
+   * the loop's internals read it through the looser view in
+   * context-manager.ts, and this and restoreConversationHistory() are where
+   * the two meet.
+   */
+  private loopHistory(): AgentMessage[] {
     return this.agent.state.messages.slice(this.parts.contextManager.historyStart);
   }
 
-  restoreConversationHistory(messages: AgentMessage[]): void {
+  restoreConversationHistory(history: PiAgentMessage[]): void {
+    const messages = history as AgentMessage[];
     const { compactionManager, contextManager } = this.parts;
     // Replace everything after the slots, folding the replaced history's
     // system messages into the head so the transcript still declares the
@@ -422,7 +433,7 @@ export class AgentLoop implements
 
   async checkAndRunCompaction(): Promise<CompactionResult | null> {
     return this.parts.compactionManager.checkAndRunCompaction(
-      () => this.getConversationHistory(),
+      () => this.loopHistory(),
       (history) => this.parts.pipeline.writeSource(history),
     );
   }
