@@ -44,6 +44,10 @@ export async function resolveStoredOAuthApiKey(
           oauthMeta: result.meta,
         });
       }
+      if (!result.apiKey) {
+        // Kimi Coding's OAuth authorizes with a header, which a key cannot carry.
+        throw new Error(`OAuth for "${provider}" does not yield an API key`);
+      }
       return result.apiKey;
     } catch (error) {
       // A concurrent refresh may have rotated (and invalidated) our token. If a

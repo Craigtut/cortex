@@ -50,6 +50,10 @@ interface IProviderManager {
   cancelOAuth(): void;
   resolveOAuthApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult>;
 
+  // ── Stored credentials ──
+  getAuth(provider: string): Promise<ModelAuth | undefined>;
+  logout(provider: string): Promise<void>;
+
   // ── API Key ──
   validateApiKey(provider: string, apiKey: string): Promise<ApiKeyValidationResult>;
   checkEnvApiKey(provider: string): string | null;
@@ -694,9 +698,18 @@ The filtering pipeline in `listModels()` applies three steps in sequence:
 
 Providers not listed in `LEGACY_MODEL_PREFIXES` (e.g., Mistral, Groq) have no filtering applied; all their models pass through unchanged.
 
+## Credential Store
+
+ProviderManager runs on pi-ai's `Models` collection, with every built-in provider plus Cortex's `ollama` and `custom` providers. Pass `credentials`, a pi-ai `CredentialStore` (`read`, `list`, `modify`, `delete`, keyed by provider id), to keep credentials in your own storage; the default is in memory.
+
+- `initiateOAuth()` stores the credential the login obtains, and still returns it as `OAuthResult.credentials` for consumers that keep the blob themselves.
+- `getAuth(provider)` returns the request auth a stored credential yields (pi's `ModelAuth`: `apiKey`, `headers`, `baseUrl`). It refreshes an expiring OAuth token inside the store's `modify`, so concurrent requests refresh a rotating token once. Implement `modify` with a cross-process lock when several processes share the store.
+- `resolveOAuthApiKey(provider, blob)` works on a caller-held blob and returns `auth` alongside `apiKey`, which Kimi Coding (a header) and GitHub Copilot (a per-account base URL) need. It cannot serialize concurrent refreshes; prefer `getAuth`.
+- `getAuth` ignores provider env vars and credential files unless `ambientCredentials: true` is passed.
+
 ## AgentLoop Integration
 
-AgentLoop receives a `CortexModel` and an optional `getApiKey` callback. The callback is the consumer's responsibility to implement; ProviderManager is not involved.
+AgentLoop receives a `CortexModel` and an optional `getAuth` or `getApiKey` callback. ProviderManager's `getAuth` has the callback's shape, so a consumer that keeps credentials in a store wires `getAuth: (provider) => manager.getAuth(provider)`; the loop and the manager stay independent.
 
 `CortexModel` is the public model boundary for Cortex. Consumers obtain it from `ProviderManager`, store it, and pass it back into `AgentLoop`. Raw pi-ai model objects do not cross the public API boundary.
 

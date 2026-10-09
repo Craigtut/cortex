@@ -30,6 +30,8 @@ import type {
 import { OAUTH_CALLBACK_ROUTES, probeCallbackPortInUse } from './provider-manager/oauth-callback-page.js';
 import type { OAuthCallbackRoute } from './provider-manager/oauth-callback-page.js';
 import { OAuthFlows } from './provider-manager/oauth-flows.js';
+import type { CredentialStore, ModelAuth } from '@earendil-works/pi-ai';
+import { authContextFor, ModelRuntime } from './model-runtime.js';
 import { listProviderModels } from './provider-manager/model-catalog.js';
 import { validateProviderApiKey } from './provider-manager/api-key-validation.js';
 import type { ApiKeyValidationResult } from './provider-manager/api-key-validation.js';
@@ -80,6 +82,10 @@ export interface IProviderManager {
   cancelOAuth(): void;
   resolveOAuthApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult>;
 
+  // Stored credentials
+  getAuth(provider: string): Promise<ModelAuth | undefined>;
+  logout(provider: string): Promise<void>;
+
   // API Key
   validateApiKey(provider: string, apiKey: string): Promise<ApiKeyValidationResult>;
   checkEnvApiKey(provider: string): string | null;
@@ -118,16 +124,47 @@ export interface ProviderManagerOptions {
    * depends on real, worker-shared port state.
    */
   probeCallbackPortInUse?: ((port: number, host: string) => Promise<boolean>) | undefined;
+  /**
+   * Where provider credentials live: pi's `CredentialStore`, keyed by
+   * provider id (`read`, `list`, `modify`, `delete`). `initiateOAuth()`
+   * stores the credential it obtains, and `getAuth()` reads and refreshes
+   * it under the store's lock, so concurrent requests (a duplex talker,
+   * reasoner, and utility calls) refresh a rotating token once. In memory
+   * by default; implement it over your own storage, with a cross-process
+   * lock in `modify` where several processes share it.
+   */
+  credentials?: CredentialStore | undefined;
+  /**
+   * Let `getAuth()` fall back to ambient credentials (provider env vars,
+   * Anthropic workload identity federation, AWS profiles, gcloud ADC) for a
+   * provider with nothing stored. Default false.
+   */
+  ambientCredentials?: boolean | undefined;
 }
 
 export class ProviderManager implements IProviderManager {
   private readonly oauth: OAuthFlows;
+  private readonly credentials: CredentialStore | undefined;
+  private readonly ambientCredentials: boolean;
+  private modelRuntime: ModelRuntime | null = null;
 
   constructor(options: ProviderManagerOptions = {}) {
+    this.credentials = options.credentials;
+    this.ambientCredentials = options.ambientCredentials === true;
     this.oauth = new OAuthFlows({
       routes: options.oauthCallbackRoutes ?? OAUTH_CALLBACK_ROUTES,
       probe: options.probeCallbackPortInUse ?? probeCallbackPortInUse,
+      runtime: () => this.runtime(),
     });
+  }
+
+  /**
+   * This manager's pi providers over its credential store. Built on first
+   * use: it registers every built-in provider.
+   */
+  private runtime(): ModelRuntime {
+    this.modelRuntime ??= new ModelRuntime(authContextFor(this.ambientCredentials), this.credentials);
+    return this.modelRuntime;
   }
 
   // -----------------------------------------------------------------------
@@ -206,6 +243,27 @@ export class ProviderManager implements IProviderManager {
    */
   async listOAuthCapableProviders(): Promise<string[]> {
     return this.oauth.listCapableProviders();
+  }
+
+  // -----------------------------------------------------------------------
+  // Stored credentials
+  // -----------------------------------------------------------------------
+
+  /**
+   * Request auth for a provider from the credential store: the key, auth
+   * headers, and base URL its stored credential yields, refreshing an
+   * expiring OAuth token first under the store's lock. Undefined when
+   * nothing is stored (and, without `ambientCredentials`, nothing else is
+   * consulted). Rejects when a refresh fails; the credential is kept for a
+   * new login. Shaped for AgentLoopConfig.getAuth.
+   */
+  async getAuth(provider: string): Promise<ModelAuth | undefined> {
+    return (await this.runtime().models.getAuth(provider))?.auth;
+  }
+
+  /** Remove a provider's stored credential. */
+  async logout(provider: string): Promise<void> {
+    await this.runtime().models.logout(provider);
   }
 
   // -----------------------------------------------------------------------

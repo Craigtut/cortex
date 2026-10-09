@@ -3,6 +3,8 @@
  * rendering, results, and the structured error.
  */
 
+import type { ModelAuth } from '@earendil-works/pi-ai';
+
 // ---------------------------------------------------------------------------
 // OAuth types
 // ---------------------------------------------------------------------------
@@ -154,8 +156,17 @@ export interface OAuthResult {
 
 /** Result of resolving/refreshing an OAuth API key. */
 export interface OAuthRefreshResult {
-  /** The API key to use for LLM calls. */
-  apiKey: string;
+  /**
+   * The API key to use for LLM calls, when the provider authorizes with one.
+   * Kimi Coding authorizes with a header instead: read `auth`.
+   */
+  apiKey?: string;
+  /**
+   * Everything the provider authorizes a request with: the key, auth
+   * headers, and a per-account base URL (GitHub Copilot). Hand it to
+   * AgentLoopConfig.getAuth.
+   */
+  auth: ModelAuth;
   /**
    * Credential payload (may be updated if refresh occurred).
    * Same format as OAuthResult.credentials.

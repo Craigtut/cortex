@@ -21,6 +21,7 @@ import type {
   AssistantMessageEventStream,
   AuthContext,
   Context,
+  CredentialStore,
   Model,
   ModelAuth,
   MutableModels,
@@ -132,6 +133,15 @@ const ENV_BLIND_AUTH_CONTEXT: AuthContext = {
   fileExists: async () => false,
 };
 
+/**
+ * The auth context for a credential policy: pi's own (env vars, credential
+ * files) when the consumer opted into ambient credentials, else one that
+ * sees neither.
+ */
+export function authContextFor(ambientCredentials: boolean): AuthContext {
+  return ambientCredentials ? defaultProviderAuthContext() : ENV_BLIND_AUTH_CONTEXT;
+}
+
 /** One pi `Models` collection plus the providers Cortex registers on it. */
 export class ModelRuntime {
   readonly models: MutableModels;
@@ -140,8 +150,12 @@ export class ModelRuntime {
   /** Provider ids Cortex registered itself, which serve any model given to them. */
   private readonly cortexProviderIds: ReadonlySet<string>;
 
-  constructor(authContext: AuthContext) {
-    this.models = createModels({ authContext });
+  /**
+   * @param authContext - What pi may read for ambient credentials ({@link authContextFor}).
+   * @param credentials - Where pi reads and refreshes stored credentials; in memory by default.
+   */
+  constructor(authContext: AuthContext, credentials?: CredentialStore) {
+    this.models = createModels({ authContext, ...(credentials ? { credentials } : {}) });
     for (const provider of builtinProviders()) this.models.setProvider(provider);
     const own = [ollamaProvider(), customProvider()];
     for (const provider of own) this.models.setProvider(provider);
@@ -265,10 +279,10 @@ let ambientRuntime: ModelRuntime | null = null;
  */
 export function getModelRuntime(ambientCredentials = false): ModelRuntime {
   if (ambientCredentials) {
-    ambientRuntime ??= new ModelRuntime(defaultProviderAuthContext());
+    ambientRuntime ??= new ModelRuntime(authContextFor(true));
     return ambientRuntime;
   }
-  envBlindRuntime ??= new ModelRuntime(ENV_BLIND_AUTH_CONTEXT);
+  envBlindRuntime ??= new ModelRuntime(authContextFor(false));
   return envBlindRuntime;
 }
 

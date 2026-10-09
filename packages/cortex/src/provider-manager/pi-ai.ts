@@ -23,63 +23,6 @@ export interface PiAiModule {
   getSupportedThinkingLevels?: ((model: unknown) => string[]) | undefined;
 }
 
-/** A pi OAuth credential blob. `expires` is epoch millis. */
-export interface PiOAuthCredential extends Record<string, unknown> {
-  type: 'oauth';
-  access: string;
-  refresh: string;
-  expires: number;
-}
-
-/** Request auth pi derives from a credential. */
-interface PiModelAuth {
-  apiKey?: string;
-  headers?: Record<string, string>;
-  baseUrl?: string;
-}
-
-/**
- * pi's per-provider OAuth implementation, reached through
- * `builtinProviders()`: pi has no global OAuth registry. Nor does it turn a
- * credential into an API key, so OAuthFlows.resolveApiKey derives one from
- * refresh + toAuth.
- */
-export interface PiOAuthAuth {
-  name: string;
-  isSubscription?: boolean;
-  loginLabel?: string;
-  login: (interaction: PiAuthInteraction) => Promise<PiOAuthCredential>;
-  refresh: (credential: PiOAuthCredential, signal: AbortSignal) => Promise<PiOAuthCredential>;
-  toAuth: (credential: PiOAuthCredential) => Promise<PiModelAuth>;
-}
-
-/** pi's login prompt shapes. `select` resolves to the chosen option id. */
-export type PiAuthPrompt = { signal?: AbortSignal } & (
-  | { type: 'text'; message: string; placeholder?: string }
-  | { type: 'secret'; message: string; placeholder?: string }
-  | { type: 'select'; message: string; options: readonly { id: string; label: string; description?: string }[] }
-  | { type: 'manual_code'; message: string; placeholder?: string }
-);
-
-/** pi's login progress events. */
-export type PiAuthEvent =
-  | { type: 'info'; message: string; links?: readonly { url: string; label?: string }[] }
-  | { type: 'auth_url'; url: string; instructions?: string }
-  | { type: 'device_code'; userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }
-  | { type: 'progress'; message: string };
-
-export interface PiAuthInteraction {
-  signal: AbortSignal;
-  prompt: (prompt: PiAuthPrompt) => Promise<string>;
-  notify: (event: PiAuthEvent) => void;
-}
-
-interface PiBuiltinProvider {
-  id: string;
-  name?: string;
-  auth?: { oauth?: PiOAuthAuth };
-}
-
 // ---------------------------------------------------------------------------
 // Pi-ai dynamic import helpers
 // ---------------------------------------------------------------------------
@@ -114,49 +57,4 @@ export async function loadPiAi(): Promise<PiAiModule> {
       'pi-ai is not installed. Install @earendil-works/pi-ai to use ProviderManager.'
     );
   }
-}
-
-/**
- * Load pi's builtin provider list, asserting the symbol we need is really there.
- *
- * The assertion is the point. A dynamic import of a module that exports
- * nothing SUCCEEDS and yields `{}`, so a try/catch around the import cannot
- * detect an emptied entrypoint, and a cast to a hand-written all-optional
- * interface makes `{}` typecheck. Unchecked, a pi release that moves this
- * export reaches users as the false "provider does not support OAuth". Name
- * the missing function so it fails loudly here instead.
- */
-async function loadPiBuiltinProviders(): Promise<PiBuiltinProvider[]> {
-  let mod: Record<string, unknown>;
-  try {
-    const modulePath = '@earendil-works/pi-ai/providers/all';
-    mod = await import(/* @vite-ignore */ modulePath) as Record<string, unknown>;
-  } catch {
-    throw new Error(
-      'pi-ai is not installed. Install @earendil-works/pi-ai to use OAuth features.',
-    );
-  }
-
-  const builtinProviders = mod['builtinProviders'];
-  if (typeof builtinProviders !== 'function') {
-    throw new Error(
-      'pi-ai/providers/all does not export builtinProviders(). The installed ' +
-        'pi-ai is incompatible with this version of Cortex.',
-    );
-  }
-  return (builtinProviders as () => PiBuiltinProvider[])();
-}
-
-/**
- * Resolve one provider's OAuth implementation, or null if it has none.
- */
-export async function loadPiOAuth(providerId: string): Promise<PiOAuthAuth | null> {
-  const providers = await loadPiBuiltinProviders();
-  return providers.find(p => p.id === providerId)?.auth?.oauth ?? null;
-}
-
-/** Provider ids whose pi definition ships an OAuth flow. */
-export async function loadOAuthCapableProviderIds(): Promise<string[]> {
-  const providers = await loadPiBuiltinProviders();
-  return providers.filter(p => p.auth?.oauth).map(p => p.id).sort();
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { ProviderManager, OAuthError } from '../../src/provider-manager.js';
 import { PROVIDER_REGISTRY, OAUTH_PROVIDER_IDS } from '../../src/provider-registry.js';
 import { isCortexModel, unwrapModel } from '../../src/model-wrapper.js';
@@ -14,13 +15,11 @@ const mockGetEnvApiKey = vi.fn();
 const mockGetSupportedThinkingLevels = vi.fn();
 const mockCompleteSimple = vi.fn();
 
-vi.mock('@earendil-works/pi-ai', () => ({
-  getModel: (...args: unknown[]) => mockGetModel(...args),
-  createModel: (...args: unknown[]) => mockCreateModel(...args),
-  getModels: (...args: unknown[]) => mockGetModels(...args),
-  getEnvApiKey: (...args: unknown[]) => mockGetEnvApiKey(...args),
+// The real root (pi's Models and createProvider build ProviderManager's
+// runtime); only the thinking-level helper is substituted.
+vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
   getSupportedThinkingLevels: (...args: unknown[]) => mockGetSupportedThinkingLevels(...args),
-  completeSimple: (...args: unknown[]) => mockCompleteSimple(...args),
 }));
 
 // pi-ai 0.80 split the API across entrypoints; loadPiAi() composes them, so
@@ -35,7 +34,8 @@ vi.mock('@earendil-works/pi-ai/providers/all', () => ({
   builtinProviders: () => mockBuiltinProviders(),
 }));
 
-vi.mock('../../src/model-runtime.js', () => ({
+vi.mock('../../src/model-runtime.js', async (importOriginal) => ({
+  ...await importOriginal<Record<string, unknown>>(),
   streamModel: (...args: unknown[]) => ({ result: () => mockCompleteSimple(...args) }),
   streamModelSimple: (...args: unknown[]) => ({ result: () => mockCompleteSimple(...args) }),
 }));
@@ -817,9 +817,8 @@ describe('ProviderManager', () => {
   });
 
   describe('resolveOAuthApiKey', () => {
-    // pi deleted getOAuthApiKey with no replacement. Cortex reimplements it as
-    // expiry-check -> refresh -> toAuth, which is the path every request by an
-    // already-logged-in user takes.
+    // A caller-held blob: expiry-check -> refresh -> toAuth through the
+    // provider's pi OAuth. getAuth() is the store-backed path.
     const future = () => Date.now() + 3600_000;
     const past = () => Date.now() - 1_000;
 
@@ -858,12 +857,23 @@ describe('ProviderManager', () => {
       expect(result.apiKey).toBe('fresh');
     });
 
-    it('throws when toAuth yields no apiKey', async () => {
+    it('throws when toAuth yields neither a key nor auth headers', async () => {
       mockToAuth.mockResolvedValueOnce({});
 
       await expect(
         pm.resolveOAuthApiKey('anthropic', JSON.stringify({ access: 'x', refresh: 'r', expires: future() })),
       ).rejects.toThrow('OAuth resolution failed');
+    });
+
+    it('refreshes once per call: concurrent calls each spend the blob they hold', async () => {
+      // The positive precondition for the store-backed test below: without
+      // a shared store there is nothing to serialize on.
+      const creds = JSON.stringify({ access: 'stale', refresh: 'r', expires: past(), type: 'oauth' });
+      mockRefresh.mockResolvedValue({ access: 'fresh', refresh: 'r2', expires: future(), type: 'oauth' });
+
+      await Promise.all([1, 2, 3].map(() => pm.resolveOAuthApiKey('anthropic', creds)));
+
+      expect(mockRefresh).toHaveBeenCalledTimes(3);
     });
 
     it('reports a provider with no OAuth support instead of silently failing', async () => {
@@ -872,6 +882,41 @@ describe('ProviderManager', () => {
       await expect(
         pm.resolveOAuthApiKey('openai', JSON.stringify({ access: 'x', refresh: 'r', expires: future() })),
       ).rejects.toThrow(/does not support OAuth/);
+    });
+  });
+
+  describe('getAuth with a credential store', () => {
+    const future = () => Date.now() + 3600_000;
+    const past = () => Date.now() - 1_000;
+
+    it('refreshes an expiring credential once for concurrent requests and stores the rotation', async () => {
+      // A duplex talker, reasoner, and utility call can all ask at once.
+      // Anthropic rotates the refresh token on use, so a second refresh with
+      // the spent token fails with invalid_grant.
+      const credentials = new InMemoryCredentialStore();
+      await credentials.modify('anthropic', async () => ({ type: 'oauth', access: 'stale', refresh: 'r1', expires: past() }));
+      mockRefresh.mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { type: 'oauth', access: 'fresh', refresh: 'r2', expires: future() };
+      });
+      const manager = new ProviderManager({ credentials });
+
+      const auths = await Promise.all([1, 2, 3].map(() => manager.getAuth('anthropic')));
+
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+      expect(auths.map((auth) => auth?.apiKey)).toEqual(['fresh', 'fresh', 'fresh']);
+      expect(await credentials.read('anthropic')).toMatchObject({ access: 'fresh', refresh: 'r2' });
+    });
+
+    it('stores the credential a login obtains', async () => {
+      const credentials = new InMemoryCredentialStore();
+      mockLoginAnthropic.mockResolvedValue({ type: 'oauth', access: 'new', refresh: 'r', expires: future() });
+      const manager = new ProviderManager({ credentials, oauthCallbackRoutes: {} });
+
+      await manager.initiateOAuth('anthropic', { onAuth: vi.fn(), onPrompt: vi.fn() });
+
+      expect(await credentials.read('anthropic')).toMatchObject({ type: 'oauth', access: 'new' });
+      expect(await manager.getAuth('anthropic')).toMatchObject({ apiKey: 'new' });
     });
   });
 

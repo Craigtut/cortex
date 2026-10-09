@@ -5,9 +5,9 @@
  * resolution with refresh. One flow is active at a time per instance.
  */
 
-import { OAUTH_PROVIDER_IDS, PROVIDER_REGISTRY } from '../provider-registry.js';
-import { loadOAuthCapableProviderIds, loadPiOAuth } from './pi-ai.js';
-import type { PiAuthEvent, PiAuthInteraction, PiAuthPrompt, PiOAuthCredential } from './pi-ai.js';
+import type { AuthEvent, AuthInteraction, AuthPrompt, ModelAuth, OAuthAuth, OAuthCredential } from '@earendil-works/pi-ai';
+import type { ModelRuntime } from '../model-runtime.js';
+import { PROVIDER_REGISTRY } from '../provider-registry.js';
 import { OAuthError } from './oauth-types.js';
 import type {
   OAuthAuthInfo,
@@ -175,6 +175,8 @@ export interface OAuthFlowsOptions {
   routes: Record<string, OAuthCallbackRoute>;
   /** Loopback port-in-use probe run before a browser opens. */
   probe: (port: number, host: string) => Promise<boolean>;
+  /** The pi model runtime whose providers log in and whose store keeps the credential. */
+  runtime: () => ModelRuntime;
 }
 
 export class OAuthFlows {
@@ -185,9 +187,17 @@ export class OAuthFlows {
 
   private readonly probeOAuthCallbackPort: (port: number, host: string) => Promise<boolean>;
 
+  private readonly runtime: () => ModelRuntime;
+
   constructor(options: OAuthFlowsOptions) {
     this.oauthCallbackRoutes = options.routes;
     this.probeOAuthCallbackPort = options.probe;
+    this.runtime = options.runtime;
+  }
+
+  /** A provider's pi OAuth implementation, or null if it has none. */
+  private oauthOf(provider: string): OAuthAuth | null {
+    return this.runtime().models.getProvider(provider)?.auth.oauth ?? null;
   }
 
   /**
@@ -220,7 +230,7 @@ export class OAuthFlows {
     callbacks: OAuthCallbacks,
     abort: AbortController,
   ): Promise<OAuthResult> {
-    const oauthProvider = await loadPiOAuth(provider);
+    const oauthProvider = this.oauthOf(provider);
     if (!oauthProvider) {
       throw new OAuthError(
         'unsupported_provider',
@@ -289,9 +299,9 @@ export class OAuthFlows {
     // pi's login takes one interaction object: every out-bound message is
     // notify(AuthEvent) and every in-bound answer is prompt(AuthPrompt).
     // Adapt it to Cortex's consumer-facing OAuthCallbacks.
-    const interaction: PiAuthInteraction = {
+    const interaction: AuthInteraction = {
       signal: abort.signal,
-      notify: (event: PiAuthEvent) => {
+      notify: (event: AuthEvent) => {
         switch (event.type) {
           case 'auth_url':
             callbacks.onAuth(
@@ -314,7 +324,7 @@ export class OAuthFlows {
             return;
         }
       },
-      prompt: async (prompt: PiAuthPrompt): Promise<string> => {
+      prompt: async (prompt: AuthPrompt): Promise<string> => {
         if (prompt.type === 'manual_code' && callbacks.onManualCodeInput) {
           return await callbacks.onManualCodeInput();
         }
@@ -335,7 +345,9 @@ export class OAuthFlows {
       },
     };
 
-    const login = oauthProvider.login(interaction) as Promise<Record<string, unknown>>;
+    // pi runs the provider's login and stores the credential in the
+    // runtime's credential store.
+    const login = this.runtime().models.login(provider, 'oauth', interaction) as Promise<Record<string, unknown>>;
     // Whichever promise loses the race may still settle later (pi-ai's
     // login can hang or settle late; the aux promises can reject after the
     // race is decided). Attach inert handlers so a late rejection never
@@ -372,9 +384,13 @@ export class OAuthFlows {
     }
   }
 
-  /** Derive an API key from stored credentials, refreshing them first when near expiry. */
+  /**
+   * Derive request auth from a stored credential blob, refreshing it first
+   * when near expiry. The blob is the caller's to persist; for a store that
+   * refreshes under a lock, use ProviderManager.getAuth().
+   */
   async resolveApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult> {
-    const oauth = await loadPiOAuth(provider);
+    const oauth = this.oauthOf(provider);
     if (!oauth) {
       throw new OAuthError(
         'unsupported_provider',
@@ -385,7 +401,7 @@ export class OAuthFlows {
 
     const rawCredentials = JSON.parse(credentials) as Record<string, unknown>;
     // Security: spread first so a stored blob cannot override Cortex's 'type'.
-    const current = { ...rawCredentials, type: 'oauth' as const } as PiOAuthCredential;
+    const current = { ...rawCredentials, type: 'oauth' as const } as OAuthCredential;
 
     // pi splits key derivation into refresh (network, may rotate the token)
     // and toAuth (pure derivation).
@@ -404,10 +420,13 @@ export class OAuthFlows {
       }
     }
 
-    const auth = await oauth.toAuth(settled);
-    if (!auth.apiKey) {
+    // A provider may authorize with a key, a header (Kimi Coding), and a base
+    // URL of its own (GitHub Copilot); pass all of it on.
+    const auth: ModelAuth = await oauth.toAuth(settled);
+    const hasHeaders = auth.headers !== undefined && Object.keys(auth.headers).length > 0;
+    if (!auth.apiKey && !hasHeaders) {
       throw new Error(
-        `OAuth resolution failed for provider "${provider}": pi returned no apiKey`,
+        `OAuth resolution failed for provider "${provider}": pi returned neither a key nor auth headers`,
       );
     }
 
@@ -415,7 +434,8 @@ export class OAuthFlows {
     const changed = newSerialized !== credentials;
 
     return {
-      apiKey: auth.apiKey,
+      ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      auth,
       credentials: changed ? newSerialized : credentials,
       meta: buildOAuthMeta(provider, settled),
       changed,
@@ -424,15 +444,13 @@ export class OAuthFlows {
 
   /** OAuth-capable provider ids from the installed pi, limited to providers Cortex models. */
   async listCapableProviders(): Promise<string[]> {
-    let fromPi: string[];
-    try {
-      fromPi = await loadOAuthCapableProviderIds();
-    } catch {
-      return [...OAUTH_PROVIDER_IDS];
-    }
-    // Intersect with what Cortex models. pi ships OAuth for gateways Cortex
-    // has no PROVIDER_REGISTRY entry for (radius today); advertising those
-    // would offer a login the rest of the stack cannot follow through on.
+    const fromPi = this.runtime().models.getProviders()
+      .filter((provider) => provider.auth.oauth)
+      .map((provider) => provider.id)
+      .sort();
+    // Intersect with what Cortex models: a provider without a
+    // PROVIDER_REGISTRY entry would offer a login the rest of the stack
+    // cannot follow through on.
     const known = new Set(PROVIDER_REGISTRY.map(p => p.id));
     return fromPi.filter(id => known.has(id));
   }
