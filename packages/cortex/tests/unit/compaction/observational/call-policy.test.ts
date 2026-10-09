@@ -9,13 +9,13 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ObservationalMemoryEngine } from '../../../../src/compaction/observational/index.js';
 import type { ObservationalMemoryConfig } from '../../../../src/compaction/observational/types.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
-import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
+import type { AgentMessage } from '../../../../src/context-manager.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
 const OBSERVED = '<observations>\n* (10:00) OBSERVED\n</observations>';
 
 function newEngine(complete: CompleteFn, config: Partial<ObservationalMemoryConfig> = {}): ObservationalMemoryEngine {
-  const engine = new ObservationalMemoryEngine(config, 0);
+  const engine = new ObservationalMemoryEngine(config);
   engine.setContextWindow(20_000);
   engine.setUtilityModelContextWindow(200_000);
   engine.setCompleteFn(complete);
@@ -36,13 +36,8 @@ async function activate(
     { role: 'assistant', content: 'v'.repeat(16_000), timestamp: 0 } as AgentMessage,
     userMsg('latest'),
   ];
-  const context: AgentContext = {
-    systemPrompt: '', model: null, messages: [userMsg('slot'), ...source], tools: [], thinkingLevel: 'medium',
-  };
   await engine.applyInTransformContext(
-    context, 0.95, 1,
-    (ctx) => ctx.messages.slice(1),
-    (ctx, history) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...history] }),
+    0.95,
     () => source,
     (history) => { source = history; },
     options,

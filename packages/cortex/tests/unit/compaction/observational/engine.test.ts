@@ -11,7 +11,6 @@ import type {
   ObservationEvent,
   ReflectionEvent,
 } from '../../../../src/compaction/observational/types.js';
-import type { AgentContext } from '../../../../src/context-manager.js';
 import {
   makeUserMsg,
   makeToolCallMsg,
@@ -49,7 +48,6 @@ describe('ObservationalMemoryEngine', () => {
     it('merges partial config with defaults', () => {
       const engine = new ObservationalMemoryEngine(
         { activationThreshold: 0.85 },
-        0,
       );
 
       // Verify the engine works with merged config by checking slot content
@@ -58,7 +56,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('works with empty config', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const slot = engine.buildSlotContent();
       expect(slot).toContain(OBSERVATION_CONTEXT_PREAMBLE);
     });
@@ -70,7 +68,7 @@ describe('ObservationalMemoryEngine', () => {
 
   describe('buildSlotContent', () => {
     it('includes preamble and empty observations', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const slot = engine.buildSlotContent();
 
       expect(slot).toContain(OBSERVATION_CONTEXT_PREAMBLE);
@@ -85,7 +83,6 @@ describe('ObservationalMemoryEngine', () => {
             search: vi.fn().mockResolvedValue([]),
           },
         },
-        0,
       );
 
       const slot = engine.buildSlotContent();
@@ -93,13 +90,13 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('excludes recall instructions when recall is not configured', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const slot = engine.buildSlotContent();
       expect(slot).not.toContain('Recall Tool');
     });
 
     it('includes continuation hints when present', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -114,7 +111,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('includes observations after they are generated', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -131,7 +128,7 @@ describe('ObservationalMemoryEngine', () => {
 
   describe('getState / restoreState', () => {
     it('returns initial empty state', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const state = engine.getState();
 
       expect(state.observations).toBe('');
@@ -142,7 +139,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('round-trips state through save and restore', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -150,7 +147,7 @@ describe('ObservationalMemoryEngine', () => {
       const savedState = engine.getState();
 
       // Create a new engine and restore state
-      const newEngine = new ObservationalMemoryEngine({}, 0);
+      const newEngine = new ObservationalMemoryEngine({});
       newEngine.restoreState(savedState);
 
       const restoredState = newEngine.getState();
@@ -161,7 +158,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('restored engine produces same slot content', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -169,14 +166,14 @@ describe('ObservationalMemoryEngine', () => {
       const originalSlot = engine.getSlotContent();
       const savedState = engine.getState();
 
-      const newEngine = new ObservationalMemoryEngine({}, 0);
+      const newEngine = new ObservationalMemoryEngine({});
       newEngine.restoreState(savedState);
 
       expect(newEngine.getSlotContent()).toBe(originalSlot);
     });
 
     it('includes the buffer watermark in initial state', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       expect(engine.getState().bufferWatermark).toBe(0);
     });
 
@@ -187,7 +184,7 @@ describe('ObservationalMemoryEngine', () => {
         bufferMinTokens: 1_000,
         bufferTargetCycles: 4,
         bufferTokenCap: 30_000,
-      }, 0);
+      });
       engine.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
       engine.setContextWindow(100_000);
       engine.setUtilityModelContextWindow(200_000);
@@ -205,7 +202,7 @@ describe('ObservationalMemoryEngine', () => {
       expect(savedState.bufferedChunks).toHaveLength(1);
       expect(savedState.bufferWatermark).toBe(1);
 
-      const newEngine = new ObservationalMemoryEngine({}, 0);
+      const newEngine = new ObservationalMemoryEngine({});
       newEngine.restoreState(savedState, 1);
 
       const restored = newEngine.getState();
@@ -221,7 +218,7 @@ describe('ObservationalMemoryEngine', () => {
       // After JSON round-trip, createdAt is a string on the wire.
       expect(typeof persisted.bufferedChunks[0]!.createdAt).toBe('string');
 
-      const newEngine = new ObservationalMemoryEngine({}, 0);
+      const newEngine = new ObservationalMemoryEngine({});
       newEngine.restoreState(persisted, 1);
 
       expect(newEngine.getState().bufferedChunks[0]!.createdAt).toBeInstanceOf(Date);
@@ -234,7 +231,7 @@ describe('ObservationalMemoryEngine', () => {
       delete (legacyState as { bufferWatermark?: number }).bufferWatermark;
       expect(legacyState.bufferedChunks).toHaveLength(1);
 
-      const newEngine = new ObservationalMemoryEngine({}, 0);
+      const newEngine = new ObservationalMemoryEngine({});
       newEngine.restoreState(legacyState);
 
       const restored = newEngine.getState();
@@ -247,7 +244,7 @@ describe('ObservationalMemoryEngine', () => {
       const savedState = engine.getState();
       savedState.bufferWatermark = 99; // stale: history only has 1 message
 
-      const newEngine = new ObservationalMemoryEngine({}, 0);
+      const newEngine = new ObservationalMemoryEngine({});
       newEngine.restoreState(savedState, 1);
 
       expect(newEngine.getState().bufferWatermark).toBe(1);
@@ -260,7 +257,7 @@ describe('ObservationalMemoryEngine', () => {
         bufferMinTokens: 1_000,
         bufferTargetCycles: 4,
         bufferTokenCap: 30_000,
-      }, 0);
+      });
       engine.setCompleteFn(mockComplete);
       engine.setContextWindow(100_000);
       engine.setUtilityModelContextWindow(200_000);
@@ -298,7 +295,7 @@ describe('ObservationalMemoryEngine', () => {
 
   describe('onObservation / onReflection', () => {
     it('fires observation handler with correct payload on observeNow', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -318,7 +315,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('supports multiple observation handlers', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -334,7 +331,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('isolates handler errors so one does not break others', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
       engine.setLogger({ warn: vi.fn(), info: vi.fn() });
@@ -365,7 +362,7 @@ describe('ObservationalMemoryEngine', () => {
         bufferMinTokens: 1_000,
         bufferTargetCycles: 4,
         bufferTokenCap: 30_000,
-      }, 0);
+      });
 
       mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
@@ -414,7 +411,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('does not trigger when completeFn is not set', () => {
-      const noCompleteEngine = new ObservationalMemoryEngine({}, 0);
+      const noCompleteEngine = new ObservationalMemoryEngine({});
       noCompleteEngine.setContextWindow(100_000);
       noCompleteEngine.setUtilityModelContextWindow(200_000);
 
@@ -431,7 +428,7 @@ describe('ObservationalMemoryEngine', () => {
 
   describe('digestPendingBuffers', () => {
     it('reports false when the coordinator is aborted and no observer launches', async () => {
-      const engine = new ObservationalMemoryEngine({ bufferMinTokens: 10 }, 0);
+      const engine = new ObservationalMemoryEngine({ bufferMinTokens: 10 });
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
       engine.abort();
@@ -450,14 +447,14 @@ describe('ObservationalMemoryEngine', () => {
 
   describe('miscellaneous', () => {
     it('hasRecall returns false when not configured', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       expect(engine.hasRecall()).toBe(false);
     });
 
     it('hasRecall returns true when configured', () => {
       const engine = new ObservationalMemoryEngine({
         recall: { search: vi.fn().mockResolvedValue([]) },
-      }, 0);
+      });
       expect(engine.hasRecall()).toBe(true);
     });
 
@@ -465,7 +462,7 @@ describe('ObservationalMemoryEngine', () => {
       const search = vi.fn().mockResolvedValue([]);
       const engine = new ObservationalMemoryEngine({
         recall: { search },
-      }, 0);
+      });
 
       const config = engine.getRecallConfig();
       expect(config).toBeDefined();
@@ -473,22 +470,22 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('getRecallConfig returns undefined when not configured', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       expect(engine.getRecallConfig()).toBeUndefined();
     });
 
     it('abort does not throw', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       expect(() => engine.abort()).not.toThrow();
     });
 
     it('getObservations returns empty string initially', () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       expect(engine.getObservations()).toBe('');
     });
 
     it('getObservations returns observations after trigger', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
@@ -497,14 +494,14 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('observeNow fails without a memory model and leaves the log empty', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const result = await observeNow(engine, [userMsg('Hello')]);
       expect(result.status).toBe('failed');
       expect(engine.getObservations()).toBe('');
     });
 
     it('observeNow has nothing to observe with empty history', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       const mockComplete = vi.fn<CompleteFn>();
       engine.setCompleteFn(mockComplete);
 
@@ -513,7 +510,7 @@ describe('ObservationalMemoryEngine', () => {
     });
 
     it('appends only what is new on a later observeNow', async () => {
-      const engine = new ObservationalMemoryEngine({}, 0);
+      const engine = new ObservationalMemoryEngine({});
       let callCount = 0;
       const mockComplete = vi.fn<CompleteFn>().mockImplementation(async () => {
         callCount++;
@@ -571,7 +568,7 @@ describe('ObservationalMemoryEngine', () => {
         bufferMinTokens: 1_000,
         bufferTargetCycles: 4,
         bufferTokenCap: 30_000,
-      }, 0);
+      });
       engine.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
       engine.setContextWindow(100_000);
       engine.setUtilityModelContextWindow(200_000);
@@ -586,25 +583,12 @@ describe('ObservationalMemoryEngine', () => {
     async function activate(
       engine: ObservationalMemoryEngine,
     ): Promise<AgentMessage[]> {
-      const slotCount = 1;
       let source: AgentMessage[] = [...postTrimSource];
-      const context: AgentContext = {
-        systemPrompt: '',
-        model: {},
-        messages: [makeUserMsg('<observation-slot>')],
-        tools: [],
-        thinkingLevel: 'none',
-      };
-      const getHistory = (ctx: AgentContext) => ctx.messages.slice(slotCount);
-      const setHistory = (ctx: AgentContext, hist: AgentMessage[]): AgentContext => ({
-        ...ctx,
-        messages: [...ctx.messages.slice(0, slotCount), ...hist],
-      });
       const getSourceHistory = () => source;
       const setSourceHistory = (h: AgentMessage[]) => { source = h; };
 
       await engine.applyInTransformContext(
-        context, 0.95, slotCount, getHistory, setHistory, getSourceHistory, setSourceHistory,
+        0.95, getSourceHistory, setSourceHistory,
       );
       return source;
     }

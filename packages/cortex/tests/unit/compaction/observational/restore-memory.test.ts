@@ -38,7 +38,7 @@ const SAVED: ObservationalMemoryState = {
 
 describe('restoring observational state', () => {
   it('an observer in flight from before the restore does not land', async () => {
-    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100 }, 0);
+    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100 });
     engine.setContextWindow(100_000);
     engine.setUtilityModelContextWindow(200_000);
     const pending = deferred();

@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { ObservationalMemoryEngine } from '../../../../src/compaction/observational/index.js';
 import { runObserver } from '../../../../src/compaction/observational/observer.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
-import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
+import type { AgentMessage } from '../../../../src/context-manager.js';
 import { makeToolCallMsg, makeToolResultMsg } from '../helpers.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
@@ -27,7 +27,7 @@ function deferred(): { promise: Promise<string>; resolve: (value: string) => voi
 
 describe('an observer in flight during a swap', () => {
   it('lands at its shifted range instead of being discarded', async () => {
-    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100 }, 0);
+    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100 });
     engine.setContextWindow(20_000);
     engine.setUtilityModelContextWindow(200_000);
     const pending = deferred();
@@ -49,10 +49,7 @@ describe('an observer in flight during a swap', () => {
     // ...and while it runs, activation swaps out m0 and m1 (no in-band call).
     let source = [...history];
     await engine.applyInTransformContext(
-      { systemPrompt: '', model: null, messages: [userMsg('slot'), ...source], tools: [], thinkingLevel: 'medium' } as AgentContext,
-      0.95, 1,
-      (ctx) => ctx.messages.slice(1),
-      (ctx, h) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...h] }),
+      0.95,
       () => source,
       (h) => { source = h; },
       { allowSync: false },
@@ -71,7 +68,7 @@ describe('an observer in flight during a swap', () => {
 
 describe('observer input', () => {
   it('buffers one piece within the input cap, ending on a unit boundary', async () => {
-    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100, bufferTokenCap: 1_000 }, 0);
+    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100, bufferTokenCap: 1_000 });
     engine.setContextWindow(100_000);
     engine.setUtilityModelContextWindow(200_000);
     engine.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVED));
@@ -107,7 +104,7 @@ describe('observer input', () => {
 
 describe('buffering past the activation threshold', () => {
   it('keeps observing, so a pass that cannot observe in-band has chunks to swap in', () => {
-    const engine = new ObservationalMemoryEngine({}, 0);
+    const engine = new ObservationalMemoryEngine({});
     engine.setContextWindow(100_000);
     engine.setUtilityModelContextWindow(200_000);
     const complete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVED);
@@ -121,7 +118,7 @@ describe('buffering past the activation threshold', () => {
 
 describe('restoring older state', () => {
   it('merges chunks saved without ranges into one chunk ending at the watermark', () => {
-    const engine = new ObservationalMemoryEngine({}, 0);
+    const engine = new ObservationalMemoryEngine({});
     engine.restoreState({
       observations: '',
       continuationHint: null,

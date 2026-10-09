@@ -97,6 +97,13 @@ export interface TransformPassOptions {
    * drops them, and drops every other message before the tail whole.
    */
   injections?: ReadonlySet<AgentMessage>;
+  /**
+   * Re-derive the request's view after a swap rewrote the source: the
+   * rewritten history with the caller's injections and the current
+   * observation slot. Omitted, the view becomes the source history as it
+   * stands, which suits a caller that adds nothing to it.
+   */
+  rebuildView?: () => { context: AgentContext; injections: ReadonlySet<AgentMessage> };
 }
 
 export const DEFAULT_COMPACTION_CONFIG: CortexCompactionConfig = {
@@ -207,11 +214,7 @@ export class CompactionManager {
     this.config = config;
     this.historyStart = historyStart;
     this.microcompaction = new MicrocompactionEngine(config.microcompaction);
-    // The observation slot is the last slot, right before history.
-    this.observationalEngine = new ObservationalMemoryEngine(
-      config.observational ?? {},
-      historyStart - 1,
-    );
+    this.observationalEngine = new ObservationalMemoryEngine(config.observational ?? {});
   }
 
   // -----------------------------------------------------------------------
@@ -831,14 +834,23 @@ export class CompactionManager {
       return landed;
     };
     const utilization = currentTokens / this._contextWindow;
-    context = await this.observationalEngine.applyInTransformContext(
-      context, utilization, this.historyStart, getHistory, setHistory, getSourceHistory, writeSource,
+    const rewritten = await this.observationalEngine.applyInTransformContext(
+      utilization, getSourceHistory, writeSource,
       {
         allowSync: allowBlocking,
         ...(isStale ? { isStale } : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
       },
     );
+    // A swap rewrote the source under the view: re-derive it. Without one
+    // the view stands as the caller built it, injections included.
+    let injections = options?.injections ?? NO_INJECTIONS;
+    if (rewritten) {
+      const rebuilt = options?.rebuildView?.()
+        ?? { context: setHistory(context, getSourceHistory()), injections: NO_INJECTIONS };
+      context = rebuilt.context;
+      injections = rebuilt.injections;
+    }
     history = getHistory(context);
 
     // Layer 1 on the surviving history. Cache-aware gating trims only when
@@ -864,7 +876,7 @@ export class CompactionManager {
     const ceiling = this._contextWindow * this.config.failsafe.threshold;
     if (slotTokens + this.estimateHistoryTokens(history) >= ceiling) {
       const truncated = this.observationalEngine.truncateView(
-        history, options?.injections ?? NO_INJECTIONS, Math.max(0, ceiling - slotTokens),
+        history, injections, Math.max(0, ceiling - slotTokens),
       );
       if (truncated) {
         this.logger.warn('[Compaction] context over the emergency ceiling; older messages are not shown this request', {

@@ -10,7 +10,7 @@ import { BufferingCoordinator } from '../../../../src/compaction/observational/b
 import { parseObserverOutput } from '../../../../src/compaction/observational/observer.js';
 import { parseReflectorOutput } from '../../../../src/compaction/observational/reflector.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
-import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
+import type { AgentMessage } from '../../../../src/context-manager.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
 
@@ -18,14 +18,10 @@ function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function context(messages: AgentMessage[]): AgentContext {
-  return { systemPrompt: '', model: null, messages, tools: [], thinkingLevel: 'medium' };
-}
-
 const LOG = '* (10:00) a fact worth keeping\n'.repeat(700); // ~5,250 tokens
 
 function engineOverReflectionThreshold(complete: CompleteFn): ObservationalMemoryEngine {
-  const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
+  const engine = new ObservationalMemoryEngine({ maxAttempts: 1 });
   engine.setContextWindow(20_000); // reflection threshold: 4,000 tokens
   engine.setUtilityModelContextWindow(200_000);
   engine.restoreState({
@@ -43,11 +39,7 @@ function engineOverReflectionThreshold(complete: CompleteFn): ObservationalMemor
 async function activate(engine: ObservationalMemoryEngine, options?: { allowSync?: boolean }): Promise<void> {
   let source = [userMsg('hello')];
   await engine.applyInTransformContext(
-    context([userMsg('slot'), ...source]),
     0.95,
-    1,
-    (ctx) => ctx.messages.slice(1),
-    (ctx, history) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...history] }),
     () => source,
     (history) => { source = history; },
     options,

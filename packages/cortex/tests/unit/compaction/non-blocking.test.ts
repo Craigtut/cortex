@@ -76,7 +76,7 @@ describe('observational strategy under nonBlocking', () => {
 
 describe('ObservationalMemoryEngine allowSync', () => {
   function buildEngine(): { engine: ObservationalMemoryEngine; complete: ReturnType<typeof vi.fn> } {
-    const engine = new ObservationalMemoryEngine({ activationThreshold: 0.5 }, 1);
+    const engine = new ObservationalMemoryEngine({ activationThreshold: 0.5 });
     engine.setContextWindow(100_000);
     engine.setUtilityModelContextWindow(100_000);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
@@ -90,13 +90,8 @@ describe('ObservationalMemoryEngine allowSync', () => {
     allowSync: boolean,
   ): Promise<AgentMessage[]> {
     let sourceHistory = [...source];
-    const context = makeContext([makeUserMsg('slot'), ...sourceHistory]);
     await engine.applyInTransformContext(
-      context,
       0.95,
-      1,
-      (ctx) => ctx.messages.slice(1),
-      (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...hist] }),
       () => sourceHistory,
       (h) => { sourceHistory = h; },
       { allowSync },
@@ -155,14 +150,9 @@ describe('ObservationalMemoryEngine allowSync', () => {
 
     const source = buildHistory(2);
     let sourceHistory = [...source];
-    const context = makeContext([makeUserMsg('slot'), ...sourceHistory]);
 
     const apply = engine.applyInTransformContext(
-      context,
       0.95,
-      1,
-      (ctx) => ctx.messages.slice(1),
-      (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...hist] }),
       () => sourceHistory,
       (h) => { sourceHistory = h; },
       { allowSync: false },

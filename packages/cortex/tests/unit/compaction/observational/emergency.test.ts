@@ -120,7 +120,10 @@ describe('the view cut with tool-result trimming (L1) active', () => {
 });
 
 describe('the view cut in a loop', () => {
-  it('keeps the injected context, drops whole units, and keeps the real latest user message', async () => {
+  it.each([
+    ['memory out of reach', { observational: { activationThreshold: 2 } }],
+    ['memory model failing at the activation threshold', { observational: { maxAttempts: 1 } }],
+  ])('keeps the injected context, drops whole units, and keeps the real latest user message (%s)', async (_label, compaction) => {
     const piAgent = {
       state: { messages: [] as AgentMessage[], systemPrompt: '', tools: [] },
       subscribe() { return () => {}; },
@@ -144,12 +147,13 @@ describe('the view cut in a loop', () => {
         initialBasePrompt: 'Test prompt',
         slots: [],
         contextWindowLimit: 20_000,
-        // Activation never fires: L1 (a cold cache) and L3 act alone.
-        compaction: { observational: { activationThreshold: 2 } },
+        // L1 trims (the cache is cold), then L3 cuts the view.
+        compaction,
       },
       [],
       { enableSubAgentTool: false, enableLoadSkillTool: false },
     );
+    loop.getCompactionManager().setObservationalCompleteFn(vi.fn<CompleteFn>().mockRejectedValue(new Error('529 overloaded')));
     const ask = userMsg('do the task');
     const messages = (piAgent as unknown as { state: { messages: AgentMessage[] } }).state.messages;
     messages.push(ask);
@@ -236,7 +240,7 @@ describe('provider overflow', () => {
 
 describe('gap notes and reflection', () => {
   it('a reflection that drops a gap line gets it back', async () => {
-    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
+    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 });
     engine.setContextWindow(20_000); // reflection threshold 4,000 tokens
     engine.setUtilityModelContextWindow(200_000);
     const gap = '* \u{1F534} (2:02 PM to 2:40 PM) GAP: 7 messages from 2:02 PM to 2:40 PM left context before memory recorded them (test). Details from that span are missing.';
@@ -255,10 +259,7 @@ describe('gap notes and reflection', () => {
 
     let source = [userMsg('hello')];
     await engine.applyInTransformContext(
-      { systemPrompt: '', model: null, messages: [userMsg('slot'), ...source], tools: [], thinkingLevel: 'medium' } as AgentContext,
-      0.95, 1,
-      (ctx) => ctx.messages.slice(1),
-      (ctx, h) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...h] }),
+      0.95,
       () => source,
       (h) => { source = h; },
     );

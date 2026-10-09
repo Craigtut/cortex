@@ -274,21 +274,17 @@ export class ContextPipeline {
         isStale: passIsStale,
         signal: this.ports.runSignal(),
         injections: view.injections,
+        // A swap rewrote the source: the view is this pipeline's to
+        // re-derive, so the injections and the current slot come with it.
+        rebuildView: () => {
+          this.writeObservationSlot(sourceMessages);
+          return this.injectedSnapshot(context, this.ports.boundary());
+        },
       },
     );
     if (passIsStale()) return result;
 
-    // The slot carries the log once there is one; until then it stays
-    // empty rather than holding a preamble about nothing.
-    if (this.ports.compaction().hasObservations()) {
-      const slotContent = this.ports.compaction().getObservationSlotContent();
-      this.ports.slots.setSlot('_observations', slotContent);
-      // The observation slot is the last one, right before history.
-      const obsSlotIndex = this.ports.slots.historyStart - 1;
-      if (obsSlotIndex >= 0 && obsSlotIndex < result.messages.length) {
-        result.messages[obsSlotIndex] = { role: 'user', content: slotContent, timestamp: Date.now() };
-      }
-    }
+    this.writeObservationSlot(result.messages);
 
     // Step 3: BP3 covers old history plus the stable injections; volatile
     // injections sit after it, outside the cached prefix.
@@ -391,7 +387,7 @@ export class ContextPipeline {
         (history) => this.writeSource(history),
         { ...options, tokensBefore: this.estimateTokens() },
       );
-      this.refreshObservationSlot();
+      this.writeObservationSlot();
       return result;
     });
   }
@@ -406,16 +402,26 @@ export class ContextPipeline {
         () => this.ports.agentState().messages.slice(historyStart),
         { ...options, tokensBefore: this.estimateTokens() },
       );
-      this.refreshObservationSlot();
+      this.writeObservationSlot();
       return result;
     });
   }
 
-  /** Point the observation slot at the log, once there is one. */
-  private refreshObservationSlot(): void {
+  /**
+   * Point the observation slot at the log, once there is one; until then
+   * it stays empty rather than holding a preamble about nothing. Written
+   * to the loop's state and, when given, into `messages` (a request's view
+   * or pi's run array), where the slot is the last one, right before
+   * history.
+   */
+  private writeObservationSlot(messages?: AgentMessage[]): void {
     const compaction = this.ports.compaction();
-    if (compaction.hasObservations()) {
-      this.ports.slots.setSlot('_observations', compaction.getObservationSlotContent());
+    if (!compaction.hasObservations()) return;
+    const content = compaction.getObservationSlotContent();
+    this.ports.slots.setSlot('_observations', content);
+    const index = this.ports.slots.historyStart - 1;
+    if (messages && index >= 0 && index < messages.length) {
+      messages[index] = { role: 'user', content, timestamp: Date.now() };
     }
   }
 

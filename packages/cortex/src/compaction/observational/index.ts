@@ -17,7 +17,7 @@
  */
 
 import type { CompleteFn } from './types.js';
-import type { AgentMessage, AgentContext } from '../../context-manager.js';
+import type { AgentMessage } from '../../context-manager.js';
 import type {
   ObservationalMemoryConfig,
   ObservationalMemoryState,
@@ -134,15 +134,13 @@ export class ObservationalMemoryEngine {
   private readonly overflow: OverflowDrop;
   private contextWindow: number = 0;
   private utilityModelContextWindow: number = 0;
-  private slotIndex: number;
   private logger: { warn: (msg: string) => void; info: (msg: string) => void } | null = null;
   private readonly health = new MemoryHealth((message) => this.logger?.warn(message));
 
   // Event handler arrays (method-level registration, multiple handlers)
   private observationHandlers: Array<(event: ObservationEvent) => void> = [];
 
-  constructor(config: Partial<ObservationalMemoryConfig>, slotIndex: number) {
-    this.slotIndex = slotIndex;
+  constructor(config: Partial<ObservationalMemoryConfig>) {
     this.buffering = new BufferingCoordinator({
       policy: () => this.callPolicy(),
       outcomes: this.health,
@@ -264,44 +262,38 @@ export class ObservationalMemoryEngine {
   // -------------------------------------------------------------------------
 
   /**
-   * Core method called from CompactionManager during transformContext.
+   * Activation, called from CompactionManager during transformContext: at
+   * or past the activation threshold, swap observed messages out of the
+   * source for their observations, then reflect if the log is due.
    *
-   * Handles observation activation and reflection when context utilization
-   * exceeds the activation threshold. Updates the observation slot and
-   * trims observed messages from history.
+   * The engine never builds the request's view. It reports whether the
+   * source was rewritten, and the caller re-derives the view from the
+   * source when it was (its own injections included) and otherwise sends
+   * the view it had. The observation slot follows the log (getSlotContent).
    *
-   * @param context - The AgentContext from transformContext
    * @param utilization - Current total context utilization (0-1)
-   * @param historyStart - Index of the first history message (past the system head and slots)
-   * @param getHistory - Get conversation history from the context (post-slot)
-   * @param setHistory - Set conversation history in the context (post-slot)
-   * @param getSourceHistory - Get the original transcript history (agent.state.messages post-slot)
-   * @param setSourceHistory - Replace the original transcript history
-   * @param options - allowSync (default true): whether synchronous LLM
-   *   calls may run inline. When false (the non-blocking posture),
-   *   activation only consumes already-buffered chunks, the Step 2 forced
-   *   observer is skipped, and reflection never runs inline.
+   * @param getSourceHistory - Get the transcript history (post-slot)
+   * @param setSourceHistory - Replace the transcript history; false when the
+   *   owner discarded the rewrite
+   * @param options - allowSync (default true): whether memory calls may run
+   *   while the request waits. When false (the non-blocking posture), a swap
+   *   merges only what is already buffered and reflection never runs inline.
    *   isStale reports whether the pass has been abandoned (a timed-out
    *   idle digestion); a stale pass's observation and reflection events
-   *   are suppressed, since its history rewrite is discarded by the
-   *   owner's setSourceHistory guard and reporting it would tell a
-   *   consumer about work that never landed.
+   *   are suppressed, since its rewrite is discarded by the owner and
+   *   reporting it would tell a consumer about work that never landed.
    *   signal is the run's abort: aborting ends the pass's memory calls at
    *   once and the pass applies nothing.
-   * @returns Modified context with updated observations and trimmed history
+   * @returns whether a rewrite of the source landed
    */
   async applyInTransformContext(
-    context: AgentContext,
     utilization: number,
-    historyStart: number,
-    getHistory: (ctx: AgentContext) => AgentMessage[],
-    setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory: () => AgentMessage[],
     setSourceHistory: (history: AgentMessage[]) => boolean | void,
     options?: { allowSync?: boolean; isStale?: () => boolean; signal?: AbortSignal },
-  ): Promise<AgentContext> {
+  ): Promise<boolean> {
     if (utilization < this.config.activationThreshold) {
-      return context;
+      return false;
     }
     // A degraded memory model gets no in-band calls: the pass blocks a
     // request once per failure episode, not on every LLM call.
@@ -313,7 +305,7 @@ export class ObservationalMemoryEngine {
     const passSignal = runSignal ? AbortSignal.any([deadline.signal, runSignal]) : deadline.signal;
     try {
       return await this.activate(
-        context, utilization, historyStart, setHistory, getSourceHistory, setSourceHistory,
+        utilization, getSourceHistory, setSourceHistory,
         { allowSync, passSignal, ...(isStale ? { isStale } : {}), ...(runSignal ? { runSignal } : {}) },
       );
     } finally {
@@ -322,14 +314,11 @@ export class ObservationalMemoryEngine {
   }
 
   private async activate(
-    context: AgentContext,
     utilization: number,
-    historyStart: number,
-    setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory: () => AgentMessage[],
     setSourceHistory: (history: AgentMessage[]) => boolean | void,
     pass: { allowSync: boolean; passSignal: AbortSignal; isStale?: () => boolean; runSignal?: AbortSignal },
-  ): Promise<AgentContext> {
+  ): Promise<boolean> {
     const { allowSync, passSignal, isStale, runSignal } = pass;
 
     // --- Activation ---
@@ -355,14 +344,15 @@ export class ObservationalMemoryEngine {
     // An abandoned or aborted pass applies nothing: its rewrite would be
     // discarded by the owner (or its request never sent); what it observed
     // stays buffered.
-    if (isStale?.() || runSignal?.aborted) return context;
+    if (isStale?.() || runSignal?.aborted) return false;
 
     // Step 2: Swap, synchronously: cut, merge, rewrite.
     const swap = swapCut(sourceHistory, tail, this.buffering.getWatermark());
+    let rewritten = false;
     if (removesAny(swap)) {
       const before = this.log.tokenCount;
       const applied = applySwap(sourceHistory, swap, this.buffering.ledger, this.log);
-      setSourceHistory(applied.kept);
+      rewritten = setSourceHistory(applied.kept) !== false;
 
       // Step 3: Report it (the pass is known live: stale returned above).
       const tokensBefore = Math.round(utilization * this.contextWindow);
@@ -383,35 +373,7 @@ export class ObservationalMemoryEngine {
     // Step 4: Handle reflection (may condense the log)
     await this.reflection.reflectIfDue({ allowSync, ...(isStale ? { isStale } : {}), signal: passSignal, trigger: 'activation' });
 
-    // Step 5: Build slot content AFTER reflection so it contains post-reflection
-    // observations. Previously this was captured before reflection, requiring
-    // an external patch in agent-loop.ts to correct stale content.
-    const slotContent = this.buildSlotContent();
-
-    // Step 6: Rebuild context with updated observations and trimmed history
-    const updatedSourceHistory = getSourceHistory();
-
-    // Build new message array: slot region + observation slot + remaining source messages
-    const slotRegion = context.messages.slice(0, this.slotIndex);
-    const observationSlotMessage: AgentMessage = {
-      role: 'user',
-      content: slotContent,
-      timestamp: Date.now(),
-    };
-    // Messages after the slot region that are not part of the observation slot
-    const postSlotMessages = updatedSourceHistory;
-
-    const newMessages: AgentMessage[] = [
-      ...slotRegion,
-      observationSlotMessage,
-      ...context.messages.slice(this.slotIndex + 1, historyStart),
-      ...postSlotMessages,
-    ];
-
-    return setHistory(
-      { ...context, messages: newMessages },
-      postSlotMessages,
-    );
+    return rewritten;
   }
 
   /** Tokens the verbatim tail may hold: a share of the window, capped. */

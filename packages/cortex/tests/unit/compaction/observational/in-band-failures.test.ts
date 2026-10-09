@@ -28,11 +28,7 @@ async function activate(
 ): Promise<AgentMessage[]> {
   let current = [...source];
   await engine.applyInTransformContext(
-    context([userMsg('slot'), ...current]),
     utilization,
-    1,
-    (ctx) => ctx.messages.slice(1),
-    (ctx, history) => ({ ...ctx, messages: [...ctx.messages.slice(0, 1), ...history] }),
     () => current,
     (history) => { current = history; },
   );
@@ -41,7 +37,7 @@ async function activate(
 
 describe('in-band observer failure after chunk activation', () => {
   it('keeps the chunk text and removes only the messages the chunk covered', async () => {
-    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
+    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 });
     engine.setContextWindow(20_000);
     engine.setUtilityModelContextWindow(200_000);
     const covered = userMsg('covered by the chunk');
@@ -73,7 +69,7 @@ describe('in-band observer failure after chunk activation', () => {
 
 describe('in-band reflector failure', () => {
   it('keeps the current observations', async () => {
-    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
+    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 });
     engine.setContextWindow(20_000); // reflection threshold: 4,000 tokens
     engine.setUtilityModelContextWindow(200_000);
     const log = '* (10:00) a fact worth keeping\n'.repeat(700);
