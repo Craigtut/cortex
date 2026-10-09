@@ -27,23 +27,19 @@ import type {
   ContinuationHint,
   RecallConfig,
   ObserverOutput,
-  ReflectorOutput,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
 } from './types.js';
-import {
-  OBSERVATIONAL_MEMORY_DEFAULTS,
-  OBSERVATION_CONTEXT_PREAMBLE,
-  OBSERVATION_RECALL_INSTRUCTIONS,
-} from './constants.js';
+import { OBSERVATIONAL_MEMORY_DEFAULTS } from './constants.js';
 import { runObserver } from './observer.js';
-import { runReflector, computeEffectiveReflectionThreshold, applyReflection } from './reflector.js';
+import { Reflection } from './reflection.js';
 import { BufferingCoordinator, chunkFromOutput } from './buffering.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { MemoryCallError, RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
 import { pieceEnd } from './units.js';
+import { ObservationLog } from './log.js';
 import type { MemoryCallTrigger } from './health.js';
 
 // ---------------------------------------------------------------------------
@@ -84,6 +80,12 @@ export type {
  */
 export const DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS = 60_000;
 
+/** The continuation hint an observer output carries, if it carries one. */
+function hintOf(output: ObserverOutput): ContinuationHint | null {
+  if (!output.currentTask && !output.suggestedResponse) return null;
+  return { currentTask: output.currentTask ?? '', suggestedResponse: output.suggestedResponse ?? '' };
+}
+
 /**
  * Rehydrate buffered chunks loaded from persistence. `createdAt` survives
  * JSON serialization as an ISO string; convert it back to a `Date` so the
@@ -115,10 +117,8 @@ export class ObservationalMemoryEngine {
   };
   private buffering: BufferingCoordinator;
   private completeFn: CompleteFn | null = null;
-  private observations: string = '';
-  private continuationHint: ContinuationHint | null = null;
-  private observationTokenCount: number = 0;
-  private generationCount: number = 0;
+  private readonly log: ObservationLog;
+  private readonly reflection: Reflection;
   private contextWindow: number = 0;
   private utilityModelContextWindow: number = 0;
   private slotIndex: number;
@@ -127,7 +127,6 @@ export class ObservationalMemoryEngine {
 
   // Event handler arrays (method-level registration, multiple handlers)
   private observationHandlers: Array<(event: ObservationEvent) => void> = [];
-  private reflectionHandlers: Array<(event: ReflectionEvent) => void> = [];
 
   constructor(config: Partial<ObservationalMemoryConfig>, slotIndex: number) {
     this.slotIndex = slotIndex;
@@ -142,6 +141,17 @@ export class ObservationalMemoryEngine {
       ...OBSERVATIONAL_MEMORY_DEFAULTS,
       ...config,
     };
+    this.log = new ObservationLog(this.config.recall !== undefined);
+    this.reflection = new Reflection({
+      log: this.log,
+      buffering: this.buffering,
+      health: this.health,
+      completeFn: () => this.completeFn,
+      policy: () => this.callPolicy(),
+      windows: () => ({ contextWindow: this.contextWindow, utilityModelContextWindow: this.utilityModelContextWindow }),
+      config: () => this.config,
+      logger: () => this.logger,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -191,7 +201,7 @@ export class ObservationalMemoryEngine {
    * Register a reflection event handler.
    */
   onReflection(handler: (event: ReflectionEvent) => void): void {
-    this.reflectionHandlers.push(handler);
+    this.reflection.onReflection(handler);
   }
 
   /** Register a handler for observer or reflector calls that failed after all attempts. */
@@ -283,7 +293,7 @@ export class ObservationalMemoryEngine {
     // removed whose observations were not recorded.
     const sourceHistory = getSourceHistory();
     const { chunks, watermark } = this.buffering.getCompletedChunks();
-    const merged = chunks.length > 0 ? this.mergeChunks(chunks) : null;
+    const merged = chunks.length > 0 ? this.log.merge(chunks) : null;
     const observedMessages = sourceHistory.slice(0, watermark);
     const unbufferedMessages = sourceHistory.slice(watermark);
 
@@ -295,7 +305,7 @@ export class ObservationalMemoryEngine {
       observedMessages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n'),
     );
     const slotOverheadTokens = merged
-      ? estimateTokens(this.buildSlotContentForEstimate(merged.observations))
+      ? estimateTokens(this.log.slotContent(merged.observations))
       : 0;
     const netTokenReduction = trimmedMessageTokens - slotOverheadTokens;
     const postChunkUtilization = utilization - (this.contextWindow > 0 ? netTokenReduction / this.contextWindow : 0);
@@ -326,34 +336,22 @@ export class ObservationalMemoryEngine {
       cut = sourceHistory.length;
     }
     let compactedMessages: AgentMessage[] = [];
-    let newObservationText = '';
     if (cut > 0) {
       const consumed = this.buffering.ledger.removePrefix(cut);
       if (consumed.length > 0) {
-        const swapped = this.mergeChunks(consumed);
-        newObservationText = swapped.observations;
-        if (swapped.hint) this.continuationHint = swapped.hint;
+        const swapped = this.log.merge(consumed);
+        this.log.append(swapped.observations, swapped.hint);
       }
       compactedMessages = sourceHistory.slice(0, cut);
       setSourceHistory(sourceHistory.slice(cut));
     }
     const activatedSync = syncOutput !== null;
 
-    // Merge new observations into existing
-    if (newObservationText) {
-      if (this.observations) {
-        this.observations += '\n\n' + newObservationText;
-      } else {
-        this.observations = newObservationText;
-      }
-      this.observationTokenCount = estimateTokens(this.observations);
-    }
-
     // Fire the observation event (the pass is known live: stale returned above).
     if (compactedMessages.length > 0) {
       this.fireObservationEvent({
         compactedMessages,
-        observations: this.observations,
+        observations: this.log.text,
         contextUtilization: utilization,
         sync: activatedSync,
         timestamp: new Date(),
@@ -361,7 +359,7 @@ export class ObservationalMemoryEngine {
     }
 
     // Step 4: Handle reflection (may replace this.observations with condensed version)
-    await this.handleReflection(allowSync, isStale, passSignal);
+    await this.reflection.reflectIfDue(allowSync, isStale, passSignal);
 
     // Step 5: Build slot content AFTER reflection so it contains post-reflection
     // observations. Previously this was captured before reflection, requiring
@@ -461,7 +459,7 @@ export class ObservationalMemoryEngine {
       this.completeFn,
       history.slice(watermark, end),
       end,
-      this.observations || null,
+      this.log.text || null,
       this.buildObserverConfig(),
       this.logger ?? undefined,
       trigger,
@@ -561,50 +559,11 @@ export class ObservationalMemoryEngine {
   // -------------------------------------------------------------------------
 
   /**
-   * Build the full observation slot content.
-   *
-   * Assembles the preamble, optional recall instructions, observation block,
-   * and optional continuation hints into a single string.
+   * Build the full observation slot content: preamble, optional recall
+   * instructions, the observation log, and the continuation hint.
    */
   buildSlotContent(): string {
-    let content = OBSERVATION_CONTEXT_PREAMBLE;
-
-    if (this.config.recall) {
-      content += OBSERVATION_RECALL_INSTRUCTIONS;
-    }
-
-    content += '\n\n<observations>\n' + this.observations + '\n</observations>';
-
-    if (this.continuationHint) {
-      content += '\n\n<current-task>\n' + this.continuationHint.currentTask + '\n</current-task>';
-      content += '\n\n<suggested-response>\n' + this.continuationHint.suggestedResponse + '\n</suggested-response>';
-    }
-
-    return content;
-  }
-
-  /**
-   * Estimate the full slot content size for a given observation text.
-   *
-   * Used by the post-chunk utilization estimate to account for slot
-   * overhead (preamble, XML wrappers, continuation hints) rather than
-   * just the raw observation text.
-   */
-  private buildSlotContentForEstimate(observationText: string): string {
-    let content = OBSERVATION_CONTEXT_PREAMBLE;
-
-    if (this.config.recall) {
-      content += OBSERVATION_RECALL_INSTRUCTIONS;
-    }
-
-    content += '\n\n<observations>\n' + observationText + '\n</observations>';
-
-    if (this.continuationHint) {
-      content += '\n\n<current-task>\n' + this.continuationHint.currentTask + '\n</current-task>';
-      content += '\n\n<suggested-response>\n' + this.continuationHint.suggestedResponse + '\n</suggested-response>';
-    }
-
-    return content;
+    return this.log.slotContent();
   }
 
   // -------------------------------------------------------------------------
@@ -632,7 +591,7 @@ export class ObservationalMemoryEngine {
       output = await runObserver(
         this.completeFn,
         history,
-        this.observations || null,
+        this.log.text || null,
         this.buildObserverConfig(),
         { policy: this.callPolicy() },
       );
@@ -642,26 +601,12 @@ export class ObservationalMemoryEngine {
       throw err instanceof MemoryCallError ? err.lastError : err;
     }
 
-    // Merge observations
-    if (this.observations) {
-      this.observations += '\n\n' + output.observations;
-    } else {
-      this.observations = output.observations;
-    }
-
-    if (output.currentTask || output.suggestedResponse) {
-      this.continuationHint = {
-        currentTask: output.currentTask ?? '',
-        suggestedResponse: output.suggestedResponse ?? '',
-      };
-    }
-
-    this.observationTokenCount = estimateTokens(this.observations);
+    this.log.append(output.observations, hintOf(output));
 
     // Fire observation event
     this.fireObservationEvent({
       compactedMessages: history,
-      observations: this.observations,
+      observations: this.log.text,
       contextUtilization: 0, // manual trigger, utilization unknown
       sync: true,
       timestamp: new Date(),
@@ -678,10 +623,10 @@ export class ObservationalMemoryEngine {
   getState(): ObservationalMemoryState {
     const buffering = this.buffering.getState();
     return {
-      observations: this.observations,
-      continuationHint: this.continuationHint,
-      observationTokenCount: this.observationTokenCount,
-      generationCount: this.generationCount,
+      observations: this.log.text,
+      continuationHint: this.log.continuationHint,
+      observationTokenCount: this.log.tokenCount,
+      generationCount: this.log.generationCount,
       bufferedChunks: buffering.chunks,
       bufferWatermark: buffering.watermark,
       observedPrefix: buffering.observedPrefix,
@@ -711,10 +656,7 @@ export class ObservationalMemoryEngine {
    *   to it. Omitted: no clamp.
    */
   restoreState(state: ObservationalMemoryState, historyLength?: number): void {
-    this.observations = state.observations;
-    this.continuationHint = state.continuationHint;
-    this.observationTokenCount = state.observationTokenCount;
-    this.generationCount = state.generationCount;
+    this.log.restore(state);
     this.buffering.restoreState(
       {
         chunks: rehydrateChunks(state.bufferedChunks ?? []),
@@ -731,10 +673,7 @@ export class ObservationalMemoryEngine {
    * with it, which no previous log or watermark describes.
    */
   reset(): void {
-    this.observations = '';
-    this.continuationHint = null;
-    this.observationTokenCount = 0;
-    this.generationCount = 0;
+    this.log.reset();
     this.buffering.reset();
   }
 
@@ -775,21 +714,21 @@ export class ObservationalMemoryEngine {
    * Returns the current slot content string.
    */
   getSlotContent(): string {
-    return this.buildSlotContent();
+    return this.log.slotContent();
   }
 
   /**
    * Returns just the observation text.
    */
   getObservations(): string {
-    return this.observations;
+    return this.log.text;
   }
 
   /**
    * Token count of activated observations only.
    */
   getObservationTokenCount(): number {
-    return this.observationTokenCount;
+    return this.log.tokenCount;
   }
 
 
@@ -836,137 +775,6 @@ export class ObservationalMemoryEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Private: Reflection handling
-  // -------------------------------------------------------------------------
-
-  /**
-   * Check and handle reflection after observation activation.
-   *
-   * Determines whether reflection should run (sync, async, or none) based
-   * on the current observation token count relative to the effective
-   * reflection threshold.
-   *
-   * @param allowSync - When false (non-blocking posture), the sync branch
-   *   consumes a buffered reflection if one is ready (instant) but never
-   *   runs the reflector inline; it launches one asynchronously instead.
-   */
-  private async handleReflection(
-    allowSync = true,
-    isStale?: () => boolean,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    if (!this.completeFn) return;
-
-    const effectiveThreshold = computeEffectiveReflectionThreshold(
-      this.contextWindow,
-      this.config.reflectionThreshold,
-      this.utilityModelContextWindow,
-    );
-
-    const reflectionAction = this.buffering.shouldReflect(
-      this.observationTokenCount,
-      effectiveThreshold,
-      this.config.reflectionBufferActivation,
-    );
-
-    if (reflectionAction === 'none') return;
-
-    if (reflectionAction === 'sync') {
-      const previousObservations = this.observations;
-
-      // Check for a ready buffered reflection first. It condensed the log as
-      // it was when the reflector launched; what was appended since stays.
-      const buffered = this.buffering.consumeBufferedReflection();
-      const rebased = buffered
-        ? applyReflection(this.observations, buffered.input, buffered.observations)
-        : null;
-      if (buffered && rebased !== null) {
-        this.observations = rebased;
-        this.observationTokenCount = estimateTokens(this.observations);
-        this.generationCount++;
-
-        // Suppressed for an abandoned pass: the swap-in above keeps the
-        // engine coherent, but the event must not report it as landed work.
-        if (!isStale?.()) {
-          this.fireReflectionEvent({
-            previousObservations,
-            newObservations: this.observations,
-            generationCount: this.generationCount,
-            compressionLevel: buffered.compressionLevel,
-            timestamp: new Date(),
-          });
-        }
-        return;
-      }
-
-      // No buffered reflection ready. Under the non-blocking posture the
-      // inline call is forbidden: launch (or keep) an async reflector so
-      // the condensed result buffers for a later swap-in instead.
-      if (!allowSync) {
-        if (!this.buffering.isReflectorInFlight()) {
-          this.buffering.launchReflector(
-            this.completeFn,
-            this.observations,
-            this.buildReflectorConfig(effectiveThreshold),
-            this.logger ?? undefined,
-          );
-        }
-        return;
-      }
-
-      // Run synchronously. A failed reflection keeps the current log: it is
-      // larger than ideal, which costs tokens, not memory.
-      const input = this.observations;
-      let output: ReflectorOutput;
-      try {
-        output = await runReflector(
-          this.completeFn,
-          input,
-          this.buildReflectorConfig(effectiveThreshold),
-          { policy: this.callPolicy(), ...(signal ? { signal } : {}) },
-        );
-        this.health.succeeded();
-      } catch (err) {
-        this.recordInBandFailure('reflect', 'activation', err);
-        return;
-      }
-      const reflected = applyReflection(this.observations, input, output.observations);
-      if (reflected === null) return;
-
-      this.observations = reflected;
-      this.observationTokenCount = estimateTokens(this.observations);
-      this.generationCount++;
-
-      if (!isStale?.()) {
-        this.fireReflectionEvent({
-          previousObservations,
-          newObservations: this.observations,
-          generationCount: this.generationCount,
-          compressionLevel: output.compressionLevel,
-          timestamp: new Date(),
-        });
-      }
-      return;
-    }
-
-    if (reflectionAction === 'async') {
-      // Launch async reflector
-      const effectiveThresholdForReflector = computeEffectiveReflectionThreshold(
-        this.contextWindow,
-        this.config.reflectionThreshold,
-        this.utilityModelContextWindow,
-      );
-
-      this.buffering.launchReflector(
-        this.completeFn,
-        this.observations,
-        this.buildReflectorConfig(effectiveThresholdForReflector),
-        this.logger ?? undefined,
-      );
-    }
-  }
-
-  // -------------------------------------------------------------------------
   // Private: In-band calls
   // -------------------------------------------------------------------------
 
@@ -994,7 +802,7 @@ export class ObservationalMemoryEngine {
       const output = await runObserver(
         this.completeFn,
         messages,
-        this.observations || null,
+        this.log.text || null,
         this.buildObserverConfig(),
         { policy: this.callPolicy(), signal },
       );
@@ -1042,70 +850,6 @@ export class ObservationalMemoryEngine {
     return config;
   }
 
-  /**
-   * Build the reflector config object without assigning undefined to optional
-   * properties (exactOptionalPropertyTypes is enabled).
-   */
-  private buildReflectorConfig(threshold: number): { reflectionThreshold: number; reflectorInstruction?: string } {
-    const config: { reflectionThreshold: number; reflectorInstruction?: string } = {
-      reflectionThreshold: threshold,
-    };
-    if (this.config.reflectorInstruction !== undefined) {
-      config.reflectorInstruction = this.config.reflectorInstruction;
-    }
-    return config;
-  }
-
-  // -------------------------------------------------------------------------
-  // Private: Chunk merging
-  // -------------------------------------------------------------------------
-
-  /**
-   * Merge buffered observation chunks into a single observation text.
-   *
-   * Concatenates all chunk observation texts with double newlines. Uses
-   * the latest chunk's currentTask and suggestedResponse (latest wins).
-   */
-  private mergeChunks(
-    chunks: ObservationChunk[],
-  ): { observations: string; hint: ContinuationHint | null } {
-    const observationParts: string[] = [];
-
-    // Find the latest chunk that produced at least one meaningful hint field.
-    // Each observer only sees its own batch of messages, so the latest chunk
-    // reflects the most recent state of the conversation. We do NOT mix fields
-    // across chunks: that would risk injecting a stale currentTask from an
-    // earlier chunk when the conversation has since moved on to something else.
-    //
-    // The parser already rejects placeholder-only content, so an observer that
-    // echoed the prompt template without filling it in will have undefined
-    // hint fields (not empty strings).
-    let latestHintChunk: ObservationChunk | null = null;
-
-    for (const chunk of chunks) {
-      observationParts.push(chunk.observations);
-      if (chunk.currentTask || chunk.suggestedResponse) {
-        latestHintChunk = chunk;
-      }
-    }
-
-    // If no chunk produced hints, preserve the existing hint from prior
-    // activation cycles. That hint is still more relevant than nothing, since
-    // it came from the observer that ran at the end of the previous cycle
-    // (itself more recent than anything older in this cycle).
-    const hint: ContinuationHint | null = latestHintChunk
-      ? {
-          currentTask: latestHintChunk.currentTask ?? '',
-          suggestedResponse: latestHintChunk.suggestedResponse ?? '',
-        }
-      : this.continuationHint;
-
-    return {
-      observations: observationParts.join('\n\n'),
-      hint,
-    };
-  }
-
   // -------------------------------------------------------------------------
   // Private: Event firing
   // -------------------------------------------------------------------------
@@ -1121,21 +865,6 @@ export class ObservationalMemoryEngine {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger?.warn(`Observation handler threw: ${message}`);
-      }
-    }
-  }
-
-  /**
-   * Fire all reflection handlers. Each handler is individually try/catch
-   * wrapped to prevent one handler from breaking others.
-   */
-  private fireReflectionEvent(event: ReflectionEvent): void {
-    for (const handler of this.reflectionHandlers) {
-      try {
-        handler(event);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger?.warn(`Reflection handler threw: ${message}`);
       }
     }
   }
