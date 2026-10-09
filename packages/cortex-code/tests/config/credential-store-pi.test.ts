@@ -17,7 +17,7 @@ import * as path from 'node:path';
 const execFile = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({ execFile }));
 
-import { CredentialStore } from '../../src/config/credentials.js';
+import { CredentialFileError, CredentialStore } from '../../src/config/credentials.js';
 import type { CredentialFile } from '../../src/config/credentials.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -136,6 +136,40 @@ describe('CredentialStore as pi-ai CredentialStore', () => {
 
     expect(result).toEqual({ type: 'api_key', key: 'sk-openai' });
     expect(fs.readFileSync(file, 'utf8')).toBe(before);
+  });
+
+  it('refuses to read or write over a torn file, which would wipe every other provider', async () => {
+    const full = JSON.stringify({
+      version: 1,
+      defaultModel: 'claude-opus-5-5',
+      providers: {
+        anthropic: { provider: 'anthropic', method: 'oauth', oauthCredentials: JSON.stringify({ type: 'oauth', access: 'a', refresh: 'r', expires: Date.now() + HOUR }), addedAt: 1 },
+        openai: { provider: 'openai', method: 'api_key', apiKey: 'sk-openai', addedAt: 1 },
+      },
+    }, null, 2);
+    // A crash in the middle of an in-place write.
+    fs.writeFileSync(file, full.slice(0, Math.floor(full.length / 2)));
+    const torn = fs.readFileSync(file, 'utf8');
+    const store = new CredentialStore(file);
+
+    await expect(store.read('anthropic')).rejects.toBeInstanceOf(CredentialFileError);
+    await expect(store.modify('xai', async () => ({ type: 'api_key', key: 'sk-xai' })))
+      .rejects.toThrow(/not valid JSON.*Fix or remove the file/);
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(torn);
+  });
+
+  it('replaces the file whole rather than rewriting it in place', async () => {
+    writeFixture({ providers: { openai: { provider: 'openai', method: 'api_key', apiKey: 'sk-openai', addedAt: 1 } } });
+    const before = fs.statSync(file).ino;
+
+    await new CredentialStore(file).modify('anthropic', async () => ({ type: 'oauth', access: 'a', refresh: 'r', expires: 5 }));
+
+    // A rename leaves a new inode; truncating in place keeps the old one.
+    expect(fs.statSync(file).ino).not.toBe(before);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(Object.keys(readBack().providers).sort()).toEqual(['anthropic', 'openai']);
   });
 
   it('waits for a lock another process holds through a slow refresh', async () => {

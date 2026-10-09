@@ -16,6 +16,11 @@ const mockWriteFile = vi.mocked(fs.writeFile);
 const mockMkdir = vi.mocked(fs.mkdir);
 const mockChmod = vi.mocked(fs.chmod);
 
+/** What node's fs rejects with when the file does not exist. */
+function missingFile(): NodeJS.ErrnoException {
+  return Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+}
+
 describe('CredentialStore', () => {
   let store: CredentialStore;
 
@@ -28,7 +33,7 @@ describe('CredentialStore', () => {
 
   describe('load', () => {
     it('returns empty credential file when no file exists', async () => {
-      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      mockReadFile.mockRejectedValue(missingFile());
       const file = await store.load();
       expect(file.version).toBe(1);
       expect(file.defaultProvider).toBeNull();
@@ -61,7 +66,7 @@ describe('CredentialStore', () => {
 
   describe('getProvider', () => {
     it('returns null for unknown provider', async () => {
-      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      mockReadFile.mockRejectedValue(missingFile());
       const entry = await store.getProvider('unknown');
       expect(entry).toBeNull();
     });
@@ -118,7 +123,7 @@ describe('CredentialStore', () => {
 
   describe('hasProviders', () => {
     it('returns false when no providers configured', async () => {
-      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      mockReadFile.mockRejectedValue(missingFile());
       expect(await store.hasProviders()).toBe(false);
     });
 
@@ -135,7 +140,7 @@ describe('CredentialStore', () => {
 
   describe('getDefaults / setDefaults', () => {
     it('returns null defaults when no file exists', async () => {
-      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      mockReadFile.mockRejectedValue(missingFile());
       const defaults = await store.getDefaults();
       expect(defaults.provider).toBeNull();
       expect(defaults.model).toBeNull();

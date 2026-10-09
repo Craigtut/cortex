@@ -1,4 +1,5 @@
-import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, chmod, rename, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -66,29 +67,66 @@ async function ensureDir(filePath: string): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
 }
 
-async function readCredentialFile(path: string): Promise<CredentialFile> {
-  try {
-    const content = await readFile(path, 'utf-8');
-    const file = JSON.parse(content) as Partial<CredentialFile>;
-    return {
-      version: 1,
-      defaultProvider: file.defaultProvider ?? null,
-      defaultModel: file.defaultModel ?? null,
-      defaultEffort: file.defaultEffort ?? null,
-      defaultUtilityModels: file.defaultUtilityModels ?? {},
-      providers: file.providers ?? {},
-    };
-  } catch {
-    return emptyCredentialFile();
+/**
+ * The credentials file cannot be read or does not parse. Nothing is written
+ * over it: a store that read it as empty would replace every other
+ * provider's credential with its own one change.
+ */
+export class CredentialFileError extends Error {
+  constructor(path: string, reason: string) {
+    super(`Cannot read ${path}: ${reason}. Fix or remove the file, then run cortex again to sign in.`);
+    this.name = 'CredentialFileError';
   }
 }
 
+function isMissing(error: unknown): boolean {
+  return (error as { code?: unknown }).code === 'ENOENT';
+}
+
+/** The file's contents: empty only when there is no file; anything unreadable throws. */
+async function readCredentialFile(path: string): Promise<CredentialFile> {
+  let content: string;
+  try {
+    content = await readFile(path, 'utf-8');
+  } catch (error) {
+    if (isMissing(error)) return emptyCredentialFile();
+    throw new CredentialFileError(path, (error as Error).message);
+  }
+  let file: Partial<CredentialFile>;
+  try {
+    file = JSON.parse(content) as Partial<CredentialFile>;
+  } catch {
+    throw new CredentialFileError(path, 'it is not valid JSON');
+  }
+  if (typeof file !== 'object' || file === null || Array.isArray(file)) {
+    throw new CredentialFileError(path, 'it is not a credentials object');
+  }
+  return {
+    version: 1,
+    defaultProvider: file.defaultProvider ?? null,
+    defaultModel: file.defaultModel ?? null,
+    defaultEffort: file.defaultEffort ?? null,
+    defaultUtilityModels: file.defaultUtilityModels ?? {},
+    providers: file.providers ?? {},
+  };
+}
+
+/**
+ * Replace the file whole: write a private temp file beside it, then rename
+ * it over the original. A crash leaves the old file or the new one, never a
+ * torn one, and a reader without the lock never sees a half-written file.
+ */
 async function writeCredentialFile(path: string, data: CredentialFile): Promise<void> {
   await ensureDir(path);
-  await writeFile(path, JSON.stringify(data, null, 2), {
-    mode: 0o600,
-  });
-  await chmod(path, 0o600);
+  const temp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await writeFile(temp, JSON.stringify(data, null, 2), { mode: 0o600, flag: 'wx' });
+    await chmod(temp, 0o600);
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
 }
 
 /**
@@ -100,7 +138,8 @@ async function withFileLock<T>(path: string, fn: () => Promise<T>, signal?: Abor
   await ensureDir(path);
   try {
     await readFile(path);
-  } catch {
+  } catch (error) {
+    if (!isMissing(error)) throw new CredentialFileError(path, (error as Error).message);
     await writeCredentialFile(path, emptyCredentialFile());
   }
   const deadline = Date.now() + LOCK_WAIT_MS;
@@ -214,8 +253,9 @@ export class CredentialStore implements PiCredentialStore {
   async removeProvider(providerId: string): Promise<void> {
     try {
       await readFile(this.path);
-    } catch {
-      return; // No file, nothing to remove
+    } catch (error) {
+      if (isMissing(error)) return; // No file, nothing to remove
+      throw new CredentialFileError(this.path, (error as Error).message);
     }
     await withFileLock(this.path, async () => {
       const file = await readCredentialFile(this.path);

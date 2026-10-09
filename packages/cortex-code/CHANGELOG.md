@@ -4,6 +4,7 @@ All notable changes to `@animus-labs/cortex-code` are documented here.
 
 ## Unreleased
 
+- Fix a torn or corrupt `~/.cortex/credentials.json` wiping every other provider: it read as empty, and the next write (a token refresh, a login) replaced the file with only its own change. The file is now replaced whole (a temp file renamed over it), so a crash or a concurrent reader never sees half of it, and a file that does not parse is an error that names it rather than an empty store.
 - An out-of-credits error (OpenAI `insufficient_quota`, Anthropic "credit balance is too low", OpenRouter's 402) shows an "Out of credits" notice with the provider's own sentence and a pointer to `/model`, instead of the generic error box with the raw JSON body. The session activity file reports its category as `billing`.
 - `/compact` compacts now through Cortex's `compactNow()`, whatever the context usage, keeping the most recent messages verbatim, and says what each loop did; a failure changes nothing. `/model`'s "compact first" does the same.
 - Show memory health in the transcript: one notice when the memory model starts failing, one when it recovers, and one when messages were dropped before memory recorded them.
