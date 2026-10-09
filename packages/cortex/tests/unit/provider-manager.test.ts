@@ -863,78 +863,32 @@ describe('ProviderManager', () => {
     });
   });
 
-  describe('resolveOAuthApiKey', () => {
-    // A caller-held blob: expiry-check -> refresh -> toAuth through the
-    // provider's pi OAuth. getAuth() is the store-backed path.
+  describe('getAuth with a credential store', () => {
     const future = () => Date.now() + 3600_000;
     const past = () => Date.now() - 1_000;
 
-    it('derives the key via toAuth without refreshing a live credential', async () => {
-      const creds = { access: 'live-token', refresh: 'r', expires: future(), type: 'oauth' };
+    it('derives auth from a live credential without refreshing it', async () => {
+      const credentials = new InMemoryCredentialStore();
+      await credentials.modify('anthropic', async () => ({ type: 'oauth', access: 'live-token', refresh: 'r', expires: future() }));
 
-      const result = await pm.resolveOAuthApiKey('anthropic', JSON.stringify(creds));
+      const auth = await new ProviderManager({ credentials }).getAuth('anthropic');
 
-      expect(result.apiKey).toBe('live-token');
+      expect(auth?.apiKey).toBe('live-token');
       expect(mockRefresh).not.toHaveBeenCalled();
       expect(mockToAuth).toHaveBeenCalledTimes(1);
-      expect(result.changed).toBe(false);
-      expect(result.meta.provider).toBe('anthropic');
-    });
-
-    it('refreshes an expired credential and reports the new blob', async () => {
-      const creds = { access: 'stale', refresh: 'r', expires: past(), type: 'oauth' };
-      mockRefresh.mockResolvedValueOnce({ access: 'fresh', refresh: 'r2', expires: future(), type: 'oauth' });
-
-      const result = await pm.resolveOAuthApiKey('anthropic', JSON.stringify(creds));
-
-      expect(mockRefresh).toHaveBeenCalledTimes(1);
-      expect(result.apiKey).toBe('fresh');
-      expect(result.changed).toBe(true);
-      expect(JSON.parse(result.credentials).access).toBe('fresh');
     });
 
     it('refreshes a credential that is close to expiry, not just a dead one', async () => {
       // A token expiring mid-request fails the request it was fetched for.
-      const creds = { access: 'nearly', refresh: 'r', expires: Date.now() + 30_000, type: 'oauth' };
-      mockRefresh.mockResolvedValueOnce({ access: 'fresh', refresh: 'r', expires: future(), type: 'oauth' });
+      const credentials = new InMemoryCredentialStore();
+      await credentials.modify('anthropic', async () => ({ type: 'oauth', access: 'nearly', refresh: 'r', expires: Date.now() + 30_000 }));
+      mockRefresh.mockResolvedValueOnce({ type: 'oauth', access: 'fresh', refresh: 'r', expires: future() });
 
-      const result = await pm.resolveOAuthApiKey('anthropic', JSON.stringify(creds));
+      const auth = await new ProviderManager({ credentials }).getAuth('anthropic');
 
       expect(mockRefresh).toHaveBeenCalledTimes(1);
-      expect(result.apiKey).toBe('fresh');
+      expect(auth?.apiKey).toBe('fresh');
     });
-
-    it('throws when toAuth yields neither a key nor auth headers', async () => {
-      mockToAuth.mockResolvedValueOnce({});
-
-      await expect(
-        pm.resolveOAuthApiKey('anthropic', JSON.stringify({ access: 'x', refresh: 'r', expires: future() })),
-      ).rejects.toThrow('OAuth resolution failed');
-    });
-
-    it('refreshes once per call: concurrent calls each spend the blob they hold', async () => {
-      // The positive precondition for the store-backed test below: without
-      // a shared store there is nothing to serialize on.
-      const creds = JSON.stringify({ access: 'stale', refresh: 'r', expires: past(), type: 'oauth' });
-      mockRefresh.mockResolvedValue({ access: 'fresh', refresh: 'r2', expires: future(), type: 'oauth' });
-
-      await Promise.all([1, 2, 3].map(() => pm.resolveOAuthApiKey('anthropic', creds)));
-
-      expect(mockRefresh).toHaveBeenCalledTimes(3);
-    });
-
-    it('reports a provider with no OAuth support instead of silently failing', async () => {
-      // The regression that shipped: an emptied pi entrypoint made every
-      // provider look OAuth-less. Only a genuinely OAuth-less provider should.
-      await expect(
-        pm.resolveOAuthApiKey('openai', JSON.stringify({ access: 'x', refresh: 'r', expires: future() })),
-      ).rejects.toThrow(/does not support OAuth/);
-    });
-  });
-
-  describe('getAuth with a credential store', () => {
-    const future = () => Date.now() + 3600_000;
-    const past = () => Date.now() - 1_000;
 
     it('refreshes an expiring credential once for concurrent requests and stores the rotation', async () => {
       // A duplex talker, reasoner, and utility call can all ask at once.

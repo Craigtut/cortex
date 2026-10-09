@@ -25,7 +25,6 @@ import type { OllamaModelConfig } from './providers/ollama/runtime.js';
 import type {
   OAuthCallbacks,
   OAuthResult,
-  OAuthRefreshResult,
 } from './provider-manager/oauth-types.js';
 import { OAUTH_CALLBACK_ROUTES } from './provider-manager/oauth-callback-page.js';
 import type { OAuthCallbackRoute } from './provider-manager/oauth-callback-page.js';
@@ -53,7 +52,6 @@ export type {
   OAuthCallbackPageRenderer,
   OAuthMeta,
   OAuthResult,
-  OAuthRefreshResult,
   OAuthErrorCode,
 } from './provider-manager/oauth-types.js';
 export type { OAuthCallbackRoute } from './provider-manager/oauth-callback-page.js';
@@ -80,7 +78,6 @@ export interface IProviderManager {
   // OAuth
   initiateOAuth(provider: string, callbacks: OAuthCallbacks): Promise<OAuthResult>;
   cancelOAuth(): void;
-  resolveOAuthApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult>;
 
   // Stored credentials
   getAuth(provider: string): Promise<ModelAuth | undefined>;
@@ -207,18 +204,6 @@ export class ProviderManager implements IProviderManager {
    */
   cancelOAuth(): void {
     this.oauth.cancel();
-  }
-
-  /**
-   * Resolve an API key from stored OAuth credentials, refreshing if needed.
-   *
-   * @param provider - The OAuth provider
-   * @param credentials - Serialized credential blob from initiateOAuth()
-   * @returns The API key and potentially updated credentials
-   * @throws Error if pi-ai is not installed or resolution fails
-   */
-  async resolveOAuthApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult> {
-    return this.oauth.resolveApiKey(provider, credentials);
   }
 
   /**

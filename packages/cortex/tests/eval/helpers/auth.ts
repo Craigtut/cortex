@@ -10,14 +10,16 @@
  *   3. Interactive OAuth flow (opens browser, caches result)
  *
  * The credentials file is gitignored and stored in the cortex package root.
- * OAuth credentials are auto-refreshed on subsequent runs. If the refresh
- * token expires, the interactive flow runs again.
+ * It backs ProviderManager's credential store: a login writes to it, and
+ * an expiring OAuth token is refreshed and written back on later runs. If
+ * the refresh token has expired, the interactive flow runs again.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import type { Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai';
 import { ProviderManager } from '../../../src/provider-manager.js';
 
 // ---------------------------------------------------------------------------
@@ -64,7 +66,7 @@ const CREDENTIALS_PATH = path.resolve(__dirname, '..', '..', '..', '.eval-creden
 
 interface CachedProviderCredentials {
   type: 'oauth' | 'api_key';
-  /** Serialized OAuth credentials blob (opaque, for getOAuthApiKey). */
+  /** Serialized OAuth credential (pi's OAuthCredential as JSON). */
   oauthCredentials?: string;
   /** Direct API key (only for type: 'api_key'). */
   apiKey?: string;
@@ -96,17 +98,70 @@ function saveCredentialsCache(cache: CredentialsCache): void {
 // OAuth through Cortex's ProviderManager
 // ---------------------------------------------------------------------------
 
+/** A cached entry as pi's credential, or undefined when it holds none. */
+function toCredential(entry: CachedProviderCredentials | undefined): Credential | undefined {
+  if (entry?.type === 'api_key' && entry.apiKey) return { type: 'api_key', key: entry.apiKey };
+  if (entry?.type === 'oauth' && entry.oauthCredentials) {
+    // Spread first so a cached blob cannot change the credential's type.
+    return { ...(JSON.parse(entry.oauthCredentials) as object), type: 'oauth' } as Credential;
+  }
+  return undefined;
+}
+
+function toCacheEntry(credential: Credential): CachedProviderCredentials {
+  return credential.type === 'oauth'
+    ? { type: 'oauth', oauthCredentials: JSON.stringify(credential), lastUsed: Date.now() }
+    : { type: 'api_key', apiKey: credential.key, lastUsed: Date.now() };
+}
+
 /**
- * pi-ai 0.80 removed the global OAuth helpers this file used to import from
- * `@earendil-works/pi-ai/oauth` (`getOAuthProvider`, `getOAuthApiKey`); the
- * subpath now exports types only. Evals go through ProviderManager, the
- * same OAuth surface Cortex consumers use.
+ * The credentials file as pi's CredentialStore. ProviderManager refreshes an
+ * expiring OAuth token inside `modify`, so a rotation lands in the file.
+ * There is no cross-process lock: an eval run is one process.
  */
+class EvalCredentialStore implements CredentialStore {
+  async read(providerId: string): Promise<Credential | undefined> {
+    return toCredential(loadCredentialsCache()[providerId]);
+  }
+
+  async list(): Promise<readonly CredentialInfo[]> {
+    return Object.entries(loadCredentialsCache()).flatMap(([providerId, entry]): CredentialInfo[] => {
+      const credential = toCredential(entry);
+      return credential ? [{ providerId, type: credential.type }] : [];
+    });
+  }
+
+  async modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+  ): Promise<Credential | undefined> {
+    const cache = loadCredentialsCache();
+    const current = toCredential(cache[providerId]);
+    const next = await fn(current);
+    if (next === undefined) return current;
+    cache[providerId] = toCacheEntry(next);
+    saveCredentialsCache(cache);
+    return next;
+  }
+
+  async delete(providerId: string): Promise<void> {
+    const cache = loadCredentialsCache();
+    delete cache[providerId];
+    saveCredentialsCache(cache);
+  }
+}
+
 let providerManager: ProviderManager | null = null;
 
+/** Evals use the OAuth surface Cortex consumers use, over the credentials file. */
 function getProviderManager(): ProviderManager {
-  providerManager ??= new ProviderManager();
+  providerManager ??= new ProviderManager({ credentials: new EvalCredentialStore() });
   return providerManager;
+}
+
+/** The API key a stored credential yields, refreshing an expiring OAuth token first. */
+async function storedApiKey(provider: string): Promise<string | undefined> {
+  return (await getProviderManager().getAuth(provider))?.apiKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,34 +201,17 @@ export async function resolveEvalApiKey(providerName: string = DEFAULT_EVAL_PROV
     return envKey;
   }
 
-  // 3. Cached OAuth credentials
-  const credCache = loadCredentialsCache();
-  const providerCreds = credCache[config.provider];
-
-  if (providerCreds) {
-    if (providerCreds.type === 'api_key' && providerCreds.apiKey) {
-      resolvedKeys.set(providerName, providerCreds.apiKey);
-      return providerCreds.apiKey;
-    }
-
-    if (providerCreds.type === 'oauth' && providerCreds.oauthCredentials) {
-      try {
-        const apiKey = await refreshOAuthKey(config.provider, providerCreds.oauthCredentials);
-        if (apiKey) {
-          providerCreds.lastUsed = Date.now();
-          saveCredentialsCache(credCache);
-          resolvedKeys.set(providerName, apiKey.key);
-          // Update cached credentials if they were refreshed
-          if (apiKey.updatedCredentials) {
-            providerCreds.oauthCredentials = apiKey.updatedCredentials;
-            saveCredentialsCache(credCache);
-          }
-          return apiKey.key;
-        }
-      } catch (err) {
-        console.log(`  Cached OAuth credentials expired or invalid: ${err instanceof Error ? err.message : String(err)}`);
-        console.log('  Falling through to interactive login...');
+  // 3. Cached credentials (an OAuth token is refreshed if it is expiring)
+  if (loadCredentialsCache()[config.provider]) {
+    try {
+      const apiKey = await storedApiKey(config.provider);
+      if (apiKey) {
+        resolvedKeys.set(providerName, apiKey);
+        return apiKey;
       }
+    } catch (err) {
+      console.log(`  Cached OAuth credentials expired or invalid: ${err instanceof Error ? err.message : String(err)}`);
+      console.log('  Falling through to interactive login...');
     }
   }
 
@@ -186,18 +224,9 @@ export async function resolveEvalApiKey(providerName: string = DEFAULT_EVAL_PROV
   }
 
   console.log(`\n  No credentials found for ${providerName}. Starting OAuth login...`);
-  const result = await runInteractiveOAuth(config.provider);
-
-  // Cache the credentials
-  credCache[config.provider] = {
-    type: 'oauth',
-    oauthCredentials: result.credentials,
-    lastUsed: Date.now(),
-  };
-  saveCredentialsCache(credCache);
-
-  resolvedKeys.set(providerName, result.apiKey);
-  return result.apiKey;
+  const apiKey = await runInteractiveOAuth(config.provider);
+  resolvedKeys.set(providerName, apiKey);
+  return apiKey;
 }
 
 /**
@@ -239,28 +268,12 @@ export function canRunEvals(providerName: string = DEFAULT_EVAL_PROVIDER): boole
 // OAuth helpers
 // ---------------------------------------------------------------------------
 
-interface RefreshResult {
-  key: string;
-  updatedCredentials?: string;
-}
-
-async function refreshOAuthKey(provider: string, credentials: string): Promise<RefreshResult | null> {
-  const result = await getProviderManager().resolveOAuthApiKey(provider, credentials);
-  return result.changed
-    ? { key: result.apiKey, updatedCredentials: result.credentials }
-    : { key: result.apiKey };
-}
-
-interface OAuthLoginResult {
-  apiKey: string;
-  credentials: string;
-}
-
-async function runInteractiveOAuth(provider: string): Promise<OAuthLoginResult> {
+/** Log in through the browser; the login writes its credential to the credentials file. */
+async function runInteractiveOAuth(provider: string): Promise<string> {
   const manager = getProviderManager();
   console.log('');
 
-  const login = await manager.initiateOAuth(provider, {
+  await manager.initiateOAuth(provider, {
     onAuth: ({ url, instructions }) => {
       console.log('  ╔══════════════════════════════════════════════════╗');
       console.log('  ║  OAuth Authorization Required                   ║');
@@ -300,13 +313,10 @@ async function runInteractiveOAuth(provider: string): Promise<OAuthLoginResult> 
     },
   });
 
-  const keyResult = await manager.resolveOAuthApiKey(provider, login.credentials);
+  const apiKey = await storedApiKey(provider);
+  if (!apiKey) throw new Error(`OAuth login for "${provider}" stored no credential that yields an API key`);
   console.log('  OAuth login successful! Credentials cached.\n');
-
-  return {
-    apiKey: keyResult.apiKey,
-    credentials: keyResult.credentials,
-  };
+  return apiKey;
 }
 
 // ---------------------------------------------------------------------------

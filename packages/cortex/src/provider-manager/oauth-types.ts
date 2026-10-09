@@ -3,8 +3,6 @@
  * rendering, results, and the structured error.
  */
 
-import type { ModelAuth } from '@earendil-works/pi-ai';
-
 // ---------------------------------------------------------------------------
 // OAuth types
 // ---------------------------------------------------------------------------
@@ -150,37 +148,14 @@ export interface OAuthMeta {
 /** Result of a successful OAuth login. */
 export interface OAuthResult {
   /**
-   * Serialized credential payload. The consumer stores this (encrypted)
-   * and passes it back to resolveOAuthApiKey() for refresh.
-   * Treat as an opaque blob: encrypt, store, decrypt, pass back. Never parse.
+   * Serialized credential payload. The login has already written it to the
+   * manager's credential store, where getAuth() reads and refreshes it; this
+   * copy is for a consumer that files it with metadata of its own. Treat as
+   * an opaque blob. Never parse.
    */
   credentials: string;
   /** Display-safe metadata extracted at login time. */
   meta: OAuthMeta;
-}
-
-/** Result of resolving/refreshing an OAuth API key. */
-export interface OAuthRefreshResult {
-  /**
-   * The API key to use for LLM calls, when the provider authorizes with one.
-   * Kimi Coding authorizes with a header instead: read `auth`.
-   */
-  apiKey?: string;
-  /**
-   * Everything the provider authorizes a request with: the key, auth
-   * headers, and a per-account base URL (GitHub Copilot). Hand it to
-   * AgentLoopConfig.getAuth.
-   */
-  auth: ModelAuth;
-  /**
-   * Credential payload (may be updated if refresh occurred).
-   * Same format as OAuthResult.credentials.
-   */
-  credentials: string;
-  /** Updated metadata. */
-  meta: OAuthMeta;
-  /** Whether the credentials were actually refreshed (true) or reused as-is (false). */
-  changed: boolean;
 }
 
 /**

@@ -3,8 +3,8 @@
  * credential store. Run against the installed pi-ai, with no network: every
  * credential here is unexpired, so nothing refreshes.
  *
- * Before pi's Models backed it, resolveOAuthApiKey() kept only a key. Kimi
- * Coding's OAuth authorizes with a header (so it threw "pi returned no
+ * Before pi's Models backed it, Cortex's OAuth resolution kept only a key.
+ * Kimi Coding's OAuth authorizes with a header (so it threw "pi returned no
  * apiKey"), and GitHub Copilot's per-account base URL was dropped.
  */
 
@@ -18,23 +18,30 @@ function oauthBlob(access: string, extra: Record<string, unknown> = {}): string 
   return JSON.stringify({ type: 'oauth', access, refresh: 'refresh-token', expires: Date.now() + HOUR, ...extra });
 }
 
+/** A manager whose store holds one unexpired OAuth credential. */
+async function managerWith(provider: string, blob: string): Promise<ProviderManager> {
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify(provider, async () => JSON.parse(blob));
+  return new ProviderManager({ credentials });
+}
+
 describe('ProviderManager request auth', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it('passes on Kimi Coding OAuth auth, which is a header rather than a key', async () => {
-    const result = await new ProviderManager().resolveOAuthApiKey('kimi-coding', oauthBlob('kimi-access'));
+    const auth = await (await managerWith('kimi-coding', oauthBlob('kimi-access'))).getAuth('kimi-coding');
 
-    expect(result.auth.headers).toEqual({ Authorization: 'Bearer kimi-access' });
-    expect(result.apiKey).toBeUndefined();
+    expect(auth?.headers).toEqual({ Authorization: 'Bearer kimi-access' });
+    expect(auth?.apiKey).toBeUndefined();
   });
 
   it("passes on GitHub Copilot's per-account base URL", async () => {
     const token = 'tid=abc;exp=9999999999;proxy-ep=proxy.business.githubcopilot.com;st=dotcom';
 
-    const result = await new ProviderManager().resolveOAuthApiKey('github-copilot', oauthBlob(token));
+    const auth = await (await managerWith('github-copilot', oauthBlob(token))).getAuth('github-copilot');
 
-    expect(result.apiKey).toBe(token);
-    expect(result.auth.baseUrl).toBe('https://api.business.githubcopilot.com');
+    expect(auth?.apiKey).toBe(token);
+    expect(auth?.baseUrl).toBe('https://api.business.githubcopilot.com');
   });
 
   it('reads request auth from the credential store it was given', async () => {

@@ -19,6 +19,7 @@ import type {
   CortexAgentStateV2,
   CortexModel,
   CortexToolPermissionResult,
+  CredentialStore,
   PersistResultFn,
   ProviderManager,
   SessionLogEntry,
@@ -45,25 +46,14 @@ export declare const config: Parameters<typeof CortexAgent.create>[0];
 
 // --- Credential storage -----------------------------------------------------
 
-/**
- * A saved credential is either a raw API key or an OAuth blob the provider
- * manager refreshes. The guide's `getApiKey` examples discriminate on `type`.
- */
-export type SavedCredential =
-  | { type: 'apiKey'; apiKey: string }
-  | { type: 'oauth'; apiKey: string; credentials: string };
-
-export declare const credentialStore: {
-  load(provider: string): Promise<SavedCredential>;
-  update(provider: string, credentials: string): Promise<void>;
-  saveEncrypted(credentials: string): Promise<void>;
-};
+/** The consumer's own storage, behind pi's credential store interface. */
+export declare const credentialStore: CredentialStore;
 
 /**
  * The plain "give me a key" path, for the minimal example. Deliberately a
- * separate helper from `credentialStore.load`: the guide once used that one
- * name for both a bare string and a discriminated credential union, which no
- * single real implementation can satisfy.
+ * separate helper from `credentialStore`: the guide once used one name for
+ * both a bare string and a discriminated credential union, which no single
+ * real implementation can satisfy.
  */
 export declare function loadApiKey(provider: string): Promise<string | null>;
 

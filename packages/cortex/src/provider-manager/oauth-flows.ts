@@ -1,11 +1,12 @@
 /**
  * OAuth flows: login (the race between pi's login, cancellation, the
  * timeout, and a failed browser callback, plus the adapter from pi's
- * interaction object to Cortex's callbacks), cancellation, and API key
- * resolution with refresh. One flow is active at a time per instance.
+ * interaction object to Cortex's callbacks) and cancellation. One flow is
+ * active at a time per instance. Request auth and token refresh are pi's
+ * Models.getAuth, over the manager's credential store.
  */
 
-import type { AuthEvent, AuthInteraction, AuthPrompt, ModelAuth, OAuthAuth, OAuthCredential } from '@earendil-works/pi-ai';
+import type { AuthEvent, AuthInteraction, AuthPrompt, OAuthAuth } from '@earendil-works/pi-ai';
 import type { ModelRuntime } from '../model-runtime.js';
 import { PROVIDER_REGISTRY } from '../provider-registry.js';
 import { OAuthError } from './oauth-types.js';
@@ -17,7 +18,6 @@ import type {
   OAuthFlowType,
   OAuthMeta,
   OAuthPromptInfo,
-  OAuthRefreshResult,
   OAuthResult,
 } from './oauth-types.js';
 import { loopbackCallbackOf, maybeInstallOAuthCallbackShim } from './oauth-callback-page.js';
@@ -27,16 +27,6 @@ const DEVICE_CODE_INSTRUCTIONS_RE = /\benter\s+code:\s*([A-Z0-9-]+)/i;
 
 /** Default overall OAuth flow timeout (pi-ai hangs without this). */
 const DEFAULT_OAUTH_FLOW_TIMEOUT_MS = 5 * 60_000;
-
-/**
- * Refresh this far ahead of expiry. A token that expires while the request
- * it was fetched for is still in flight fails that request, so treat
- * nearly-expired as expired.
- */
-const OAUTH_REFRESH_SKEW_MS = 5 * 60_000;
-
-/** Cap a token refresh so a stalled provider cannot wedge a turn. */
-const OAUTH_REFRESH_TIMEOUT_MS = 15_000;
 
 function normalizeOAuthPromptInfo(prompt: unknown): OAuthPromptInfo {
   if (typeof prompt === 'string') {
@@ -393,64 +383,6 @@ export class OAuthFlows {
       this.activeOAuthAbort.abort();
       this.activeOAuthAbort = null;
     }
-  }
-
-  /**
-   * Derive request auth from a stored credential blob, refreshing it first
-   * when near expiry. The blob is the caller's to persist; for a store that
-   * refreshes under a lock, use ProviderManager.getAuth().
-   */
-  async resolveApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult> {
-    const oauth = this.oauthOf(provider);
-    if (!oauth) {
-      throw new OAuthError(
-        'unsupported_provider',
-        provider,
-        `Provider "${provider}" does not support OAuth`,
-      );
-    }
-
-    const rawCredentials = JSON.parse(credentials) as Record<string, unknown>;
-    // Security: spread first so a stored blob cannot override Cortex's 'type'.
-    const current = { ...rawCredentials, type: 'oauth' as const } as OAuthCredential;
-
-    // pi splits key derivation into refresh (network, may rotate the token)
-    // and toAuth (pure derivation).
-    // Refresh slightly early: a token that expires mid-flight fails the
-    // request it was fetched for.
-    let settled = current;
-    if (typeof current.expires === 'number'
-      && Date.now() >= current.expires - OAUTH_REFRESH_SKEW_MS) {
-      const abort = new AbortController();
-      const timer = setTimeout(() => abort.abort(), OAUTH_REFRESH_TIMEOUT_MS);
-      timer.unref?.();
-      try {
-        settled = await oauth.refresh(current, abort.signal);
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-
-    // A provider may authorize with a key, a header (Kimi Coding), and a base
-    // URL of its own (GitHub Copilot); pass all of it on.
-    const auth: ModelAuth = await oauth.toAuth(settled);
-    const hasHeaders = auth.headers !== undefined && Object.keys(auth.headers).length > 0;
-    if (!auth.apiKey && !hasHeaders) {
-      throw new Error(
-        `OAuth resolution failed for provider "${provider}": pi returned neither a key nor auth headers`,
-      );
-    }
-
-    const newSerialized = JSON.stringify(settled);
-    const changed = newSerialized !== credentials;
-
-    return {
-      ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-      auth,
-      credentials: changed ? newSerialized : credentials,
-      meta: buildOAuthMeta(provider, settled),
-      changed,
-    };
   }
 
   /** OAuth-capable provider ids from the installed pi, limited to providers Cortex models. */

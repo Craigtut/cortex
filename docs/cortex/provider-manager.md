@@ -48,7 +48,6 @@ interface IProviderManager {
   // ── OAuth ──
   initiateOAuth(provider: string, callbacks: OAuthCallbacks): Promise<OAuthResult>; // one flow at a time
   cancelOAuth(): void;
-  resolveOAuthApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult>;
 
   // ── Stored credentials ──
   getAuth(provider: string): Promise<ModelAuth | undefined>;
@@ -226,11 +225,11 @@ interface OAuthCallbackPageContext {
 
 interface OAuthResult {
   /**
-   * Serialized credential payload. The consumer stores this (encrypted)
-   * and passes it back to resolveOAuthApiKey() for refresh.
+   * Serialized credential payload. The login has already written it to the
+   * manager's credential store, where getAuth() reads and refreshes it; this
+   * copy is for a consumer that files it with metadata of its own.
    *
-   * This is a JSON string. The consumer should treat it as an opaque blob:
-   * encrypt it, store it, decrypt it, pass it back. Never parse or inspect.
+   * This is a JSON string. Treat it as an opaque blob. Never parse or inspect.
    */
   credentials: string;
 
@@ -251,23 +250,6 @@ interface OAuthMeta {
   expiresAt?: number;
   /** Whether the credential supports automatic refresh */
   refreshable: boolean;
-}
-
-interface OAuthRefreshResult {
-  /** The API key to use for LLM calls */
-  apiKey: string;
-
-  /**
-   * Credential payload (may be updated if refresh occurred).
-   * Same format as OAuthResult.credentials.
-   */
-  credentials: string;
-
-  /** Updated metadata */
-  meta: OAuthMeta;
-
-  /** Whether the credentials were actually refreshed (true) or reused as-is (false) */
-  changed: boolean;
 }
 ```
 
@@ -426,31 +408,6 @@ class ProviderManager implements IProviderManager {
       this.activeOAuthAbort.abort();
       this.activeOAuthAbort = null;
     }
-  }
-
-  async resolveOAuthApiKey(provider: string, credentials: string): Promise<OAuthRefreshResult> {
-    const oauthModule = await loadPiAiOAuth();
-    const getOAuthApiKeyFn = oauthModule['getOAuthApiKey'];
-    if (typeof getOAuthApiKeyFn !== 'function') {
-      throw new Error('getOAuthApiKey not found in pi-ai/oauth');
-    }
-
-    const rawCredentials = JSON.parse(credentials);
-    const credMap = { [provider]: { ...rawCredentials, type: 'oauth' as const } };
-
-    const result = await getOAuthApiKeyFn(provider, credMap);
-    if (!result) throw new Error(`OAuth resolution failed for provider "${provider}"`);
-
-    const newSerialized = JSON.stringify(result.newCredentials);
-    const changed = newSerialized !== credentials;
-    const meta = buildOAuthMeta(provider, result.newCredentials);
-
-    return {
-      apiKey: result.apiKey,
-      credentials: changed ? newSerialized : credentials,
-      meta,
-      changed,
-    };
   }
 
   async validateApiKey(
@@ -702,9 +659,8 @@ Providers not listed in `LEGACY_MODEL_PREFIXES` (e.g., Mistral, Groq) have no fi
 
 ProviderManager runs on pi-ai's `Models` collection, with every built-in provider plus Cortex's `ollama` and `custom` providers. Pass `credentials`, a pi-ai `CredentialStore` (`read`, `list`, `modify`, `delete`, keyed by provider id), to keep credentials in your own storage; the default is in memory.
 
-- `initiateOAuth()` stores the credential the login obtains, and still returns it as `OAuthResult.credentials` for consumers that keep the blob themselves.
-- `getAuth(provider)` returns the request auth a stored credential yields (pi's `ModelAuth`: `apiKey`, `headers`, `baseUrl`). It refreshes an expiring OAuth token inside the store's `modify`, so concurrent requests refresh a rotating token once. Implement `modify` with a cross-process lock when several processes share the store.
-- `resolveOAuthApiKey(provider, blob)` works on a caller-held blob and returns `auth` alongside `apiKey`, which Kimi Coding (a header) and GitHub Copilot (a per-account base URL) need. It cannot serialize concurrent refreshes; prefer `getAuth`.
+- `initiateOAuth()` stores the credential the login obtains, and also returns it as `OAuthResult.credentials` for a consumer that files it with metadata of its own.
+- `getAuth(provider)` returns the request auth a stored credential yields (pi's `ModelAuth`: `apiKey`, `headers`, `baseUrl`), which Kimi Coding (a header) and GitHub Copilot (a per-account base URL) need. It refreshes an expiring OAuth token inside the store's `modify`, so concurrent requests refresh a rotating token once. Implement `modify` with a cross-process lock when several processes share the store. It is the only OAuth refresh path: there is no call that refreshes a credential the caller holds outside a store.
 - `getAuth` ignores provider env vars and credential files unless `ambientCredentials: true` is passed.
 
 ## AgentLoop Integration
@@ -762,7 +718,7 @@ packages/cortex/
       pi-ai.ts                # Dynamic pi-ai loading and the pi shapes Cortex reads
       oauth-types.ts          # OAuth contract types and OAuthError
       oauth-callback-page.ts  # Callback page shim and preferred callback routes
-      oauth-flows.ts          # OAuthFlows: login race, cancellation, API key refresh
+      oauth-flows.ts          # OAuthFlows: login race and cancellation
       model-catalog.ts        # listModels mapping and legacy filtering
       api-key-validation.ts   # validateApiKey and its result classification
       model-factory.ts        # resolveModel, createCustomModel, createOllamaModel, CustomModelConfig

@@ -483,7 +483,6 @@ export type {
   OAuthCallbackPageStatus,
   OAuthMeta,
   OAuthResult,
-  OAuthRefreshResult,
   CustomModelConfig,
   ApiKeyValidationStatus,
   ApiKeyValidationResult,

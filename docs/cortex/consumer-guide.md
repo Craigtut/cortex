@@ -141,10 +141,12 @@ if (!validation.valid) {
 const model = await providers.resolveModel('anthropic', models[0]!.id);
 ```
 
-OAuth providers use callbacks supplied by your UI:
+OAuth credentials live in a credential store: pi's `CredentialStore` interface (`read`, `list`, `modify`, `delete`, keyed by provider id), implemented over your own storage. Encrypt what it writes, and if several processes share the store, take a cross-process lock in `modify`. Give it to `ProviderManager`, and a login writes the credential it obtains there. OAuth providers use callbacks supplied by your UI:
 
 ```typescript
-const result = await providers.initiateOAuth('github-copilot', {
+const providers = new ProviderManager({ credentials: credentialStore });
+
+await providers.initiateOAuth('github-copilot', {
   onAuth: ({ url, instructions }) => {
     openBrowser(url);
     if (instructions) showInstructions(instructions);
@@ -153,30 +155,20 @@ const result = await providers.initiateOAuth('github-copilot', {
   onProgress: (message) => showStatus(message),
   onSelect: async ({ message, options }) => chooseOption(message, options),
 });
-
-await credentialStore.saveEncrypted(result.credentials);
 ```
 
-Store OAuth credentials as opaque encrypted strings. Later, resolve them inside your `getAuth` callback. An OAuth credential can authorize with more than a key (Kimi Coding sends a header, GitHub Copilot a per-account base URL), so return the whole `auth`:
+Then resolve request auth through the manager. `getAuth` reads the stored credential and refreshes an expiring OAuth token inside the store's `modify`, so a duplex talker, reasoner, and sub-agents asking at once refresh a rotating token once. An OAuth credential can authorize with more than a key (Kimi Coding sends a header, GitHub Copilot a per-account base URL), and `getAuth` carries all of it:
 
 ```typescript
 const agent = await CortexAgent.create({
   model,
   workingDirectory,
   initialBasePrompt,
-  getAuth: async (provider) => {
-    const saved = await credentialStore.load(provider);
-    if (saved.type === 'oauth') {
-      const refreshed = await providers.resolveOAuthApiKey(provider, saved.credentials);
-      if (refreshed.changed) await credentialStore.update(provider, refreshed.credentials);
-      return refreshed.auth;
-    }
-    return { apiKey: saved.apiKey };
-  },
+  getAuth: (provider) => providers.getAuth(provider),
 });
 ```
 
-`getAuth` and `getApiKey` are shared: both loops and every sub-agent resolve credentials through them. A callback like this one refreshes once per call, so a duplex talker and reasoner starting together can both refresh a rotating token. To refresh once, give `ProviderManager` a `credentials` store and pass `getAuth: (provider) => providers.getAuth(provider)` (see `provider-manager.md`).
+`getAuth` and `getApiKey` are shared: both loops and every sub-agent resolve credentials through them. Without a `credentials` option, `ProviderManager` keeps credentials in memory (`InMemoryCredentialStore`), which lasts as long as the process (see `provider-manager.md`).
 
 ## Core Configuration
 
