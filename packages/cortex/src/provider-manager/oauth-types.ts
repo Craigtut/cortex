@@ -60,14 +60,19 @@ export interface OAuthCallbacks {
   onProgress?: (message: string) => void;
 
   /**
-   * Called when a callback-server OAuth flow needs the user to paste a
-   * manual authorization code.
+   * Called when a callback-server OAuth flow offers the user to paste a
+   * manual authorization code or redirect URL. pi races this against the
+   * browser callback: the returned promise is the paste, and resolving it
+   * ends the race (an empty string abandons the callback). `signal` aborts
+   * when the callback wins, so the prompt can close; leave it pending
+   * otherwise.
    */
-  onManualCodeInput?: () => Promise<string>;
+  onManualCodeInput?: (signal?: AbortSignal) => Promise<string>;
 
   /**
    * Called when the OAuth flow needs the user to choose from provider-specific
-   * options, such as a Copilot organization or endpoint.
+   * options, such as Anthropic's login method or a Copilot endpoint. Without
+   * it, the flow takes the first option, the provider's default.
    */
   onSelect?: (prompt: {
     message: string;
@@ -183,14 +188,13 @@ export interface OAuthRefreshResult {
  * UX instead of parsing error strings.
  *
  * - `unsupported_provider`: provider has no OAuth support.
- * - `callback_port_in_use`: the provider's fixed loopback callback port is
- *   already bound (e.g. another Anthropic app on 53692, or a leftover flow).
- *   Detected before the browser opens.
+ * - `callback_port_in_use`: pi-ai could not bind a login's fixed loopback
+ *   callback port and had no fallback for it. Anthropic falls back to a free
+ *   port and Codex to a pasted redirect URL, so neither reports it.
  * - `cancelled`: the flow was cancelled via `cancelOAuth()`.
- * - `timed_out`: the flow exceeded its timeout (pi-ai's callback servers do
- *   not honor an abort signal, so this is the backstop against hangs).
+ * - `timed_out`: the flow exceeded its timeout (`OAuthCallbacks.timeoutMs`).
  * - `callback_failed`: the browser callback fired but the provider reported
- *   an error (e.g. state mismatch). Surfaced immediately instead of hanging.
+ *   an error (e.g. state mismatch), surfaced as soon as the browser shows it.
  */
 export type OAuthErrorCode =
   | 'unsupported_provider'

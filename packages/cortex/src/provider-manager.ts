@@ -27,7 +27,7 @@ import type {
   OAuthResult,
   OAuthRefreshResult,
 } from './provider-manager/oauth-types.js';
-import { OAUTH_CALLBACK_ROUTES, probeCallbackPortInUse } from './provider-manager/oauth-callback-page.js';
+import { OAUTH_CALLBACK_ROUTES } from './provider-manager/oauth-callback-page.js';
 import type { OAuthCallbackRoute } from './provider-manager/oauth-callback-page.js';
 import { OAuthFlows } from './provider-manager/oauth-flows.js';
 import type { CredentialStore, ModelAuth } from '@earendil-works/pi-ai';
@@ -101,29 +101,17 @@ export interface IProviderManager {
 // ---------------------------------------------------------------------------
 
 /**
- * Construction options for {@link ProviderManager}.
- *
- * Both fields are testing seams, not part of the product contract. Production
- * consumers construct `new ProviderManager()` with no arguments and get the
- * real fixed callback routes and a real TCP loopback probe. Tests inject these
- * to keep the OAuth callback flow deterministic under parallel execution: the
- * fixed production callback ports (e.g. 53692, 1455) are a shared, finite
- * resource that collides across workers, and the real probe reads live machine
- * port state that another worker can perturb.
+ * Construction options for {@link ProviderManager}. Production consumers
+ * pass `credentials` (and `ambientCredentials` to opt into env vars);
+ * `oauthCallbackRoutes` is a testing seam.
  */
 export interface ProviderManagerOptions {
   /**
-   * Override the fixed loopback OAuth callback routes (provider -> path/port).
-   * Lets a test point a provider at an OS-assigned ephemeral port so the
-   * callback-page shim can be exercised without binding a fixed port.
+   * Override the preferred loopback OAuth callback routes (provider ->
+   * path/port), which seed the callback-page shim's path match before the
+   * authorization URL names the real callback.
    */
   oauthCallbackRoutes?: Record<string, OAuthCallbackRoute> | undefined;
-  /**
-   * Override the "is this loopback port already bound" probe. Production does a
-   * real TCP connect; a test stubs it so `callback_port_in_use` behavior never
-   * depends on real, worker-shared port state.
-   */
-  probeCallbackPortInUse?: ((port: number, host: string) => Promise<boolean>) | undefined;
   /**
    * Where provider credentials live: pi's `CredentialStore`, keyed by
    * provider id (`read`, `list`, `modify`, `delete`). `initiateOAuth()`
@@ -153,7 +141,6 @@ export class ProviderManager implements IProviderManager {
     this.ambientCredentials = options.ambientCredentials === true;
     this.oauth = new OAuthFlows({
       routes: options.oauthCallbackRoutes ?? OAUTH_CALLBACK_ROUTES,
-      probe: options.probeCallbackPortInUse ?? probeCallbackPortInUse,
       runtime: () => this.runtime(),
     });
   }

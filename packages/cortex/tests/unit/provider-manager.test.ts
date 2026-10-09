@@ -148,16 +148,12 @@ async function startLocalOAuthServer(options: {
   };
 }
 
-/** A ProviderManager whose OAuth port probe never touches a real socket, so
- *  unrelated OAuth tests can never be poisoned by real, worker-shared port
- *  state. Optionally points a provider's callback route at an ephemeral port. */
+/** A ProviderManager, optionally with a provider's preferred callback route
+ *  pointed at a test server. */
 function makeProviderManager(
   routes?: Record<string, { path: string; port: number }>,
 ): ProviderManager {
-  return new ProviderManager({
-    probeCallbackPortInUse: async () => false,
-    ...(routes ? { oauthCallbackRoutes: routes } : {}),
-  });
+  return new ProviderManager(routes ? { oauthCallbackRoutes: routes } : {});
 }
 
 // ---------------------------------------------------------------------------
@@ -168,10 +164,6 @@ describe('ProviderManager', () => {
   let pm: ProviderManager;
 
   beforeEach(() => {
-    // Stub the loopback port probe so OAuth tests never do a real TCP connect
-    // to the fixed callback ports. Under parallel execution another worker may
-    // legitimately hold 53692/1455, which would otherwise poison every
-    // anthropic/codex flow with a spurious `callback_port_in_use`.
     pm = makeProviderManager();
     vi.clearAllMocks();
     mockGetSupportedThinkingLevels.mockReturnValue([]);
@@ -403,6 +395,81 @@ describe('ProviderManager', () => {
 
       expect(onManualCodeInput).toHaveBeenCalled();
       expect(code).toBe('pasted-code');
+    });
+
+    it("hands onManualCodeInput the prompt's signal, which pi aborts when the browser callback wins", async () => {
+      const promptAbort = new AbortController();
+      let seen: AbortSignal | undefined;
+      mockLoginAnthropic.mockImplementation(async (interaction) => {
+        const pending = interaction.prompt({ type: 'manual_code', message: 'Paste the code', signal: promptAbort.signal })
+          .catch(() => '');
+        promptAbort.abort();
+        await pending;
+        return { type: 'oauth', access: 'a', refresh: 'r', expires: Date.now() + 3600_000 };
+      });
+      const onManualCodeInput = vi.fn((signal?: AbortSignal) => {
+        seen = signal;
+        return new Promise<string>((_, reject) => signal?.addEventListener('abort', () => reject(new Error('closed'))));
+      });
+
+      await pm.initiateOAuth('anthropic', { onAuth: vi.fn(), onPrompt: vi.fn(), onManualCodeInput });
+
+      expect(seen).toBe(promptAbort.signal);
+      expect(seen?.aborted).toBe(true);
+    });
+
+    it('takes the first option of a select prompt when there is no onSelect', async () => {
+      // pi 1.x Anthropic login starts by asking for a login method.
+      let chosen: string | undefined;
+      mockLoginAnthropic.mockImplementation(async (interaction) => {
+        chosen = await interaction.prompt({
+          type: 'select',
+          message: 'Select Anthropic login method:',
+          options: [{ id: 'browser', label: 'Browser login (default)' }, { id: 'copy_code', label: 'Copy code login' }],
+        });
+        return { type: 'oauth', access: 'a', refresh: 'r', expires: Date.now() + 3600_000 };
+      });
+      const onPrompt = vi.fn(async () => 'typed');
+
+      await pm.initiateOAuth('anthropic', { onAuth: vi.fn(), onPrompt });
+
+      expect(chosen).toBe('browser');
+      expect(onPrompt).not.toHaveBeenCalled();
+    });
+
+    it('renders the custom callback page on whatever port the authorization URL names', async () => {
+      // pi 1.1 binds Anthropic's callback to a free port when 53692 is taken,
+      // and OpenRouter always uses an ephemeral port and a random path. The
+      // flow reads the real callback from the authorization URL.
+      const server = await startLocalOAuthServer();
+      const renderCallbackPage = vi.fn(() => '<html><body>Branded</body></html>');
+      let body = '';
+      mockLoginAnthropic.mockImplementation(async (interaction) => {
+        const redirect = encodeURIComponent(`http://localhost:${server.port}/fallback-callback`);
+        interaction.notify({ type: 'auth_url', url: `https://claude.ai/oauth/authorize?redirect_uri=${redirect}` });
+        body = await server.request('/fallback-callback');
+        return { type: 'oauth', access: 'a', refresh: 'r', expires: Date.now() + 3600_000 };
+      });
+      const onAuth = vi.fn();
+      try {
+        // No preferred route for the provider at all: only the URL says where.
+        const routeless = makeProviderManager({});
+        await routeless.initiateOAuth('anthropic', { onAuth, onPrompt: vi.fn(), renderCallbackPage });
+      } finally {
+        await server.close();
+      }
+
+      expect(body).toContain('Branded');
+      expect(renderCallbackPage).toHaveBeenCalledWith(expect.objectContaining({
+        callbackPort: server.port,
+        callbackPath: '/fallback-callback',
+        status: 'success',
+      }));
+      expect(onAuth).toHaveBeenCalledWith(expect.objectContaining({
+        flowType: 'localhost_callback',
+        callbackPort: server.port,
+        callbackPath: '/fallback-callback',
+      }));
     });
 
     it('annotates localhost callback OAuth auth URLs', async () => {
@@ -668,33 +735,6 @@ describe('ProviderManager', () => {
       expect(mockLoginCodex).toHaveBeenCalledTimes(1);
     });
 
-    it('never starts the login when cancelled during the port probe', async () => {
-      let releaseProbe!: () => void;
-      const probeGate = new Promise<void>((resolve) => {
-        releaseProbe = resolve;
-      });
-      let probed!: () => void;
-      const probeStarted = new Promise<void>((resolve) => {
-        probed = resolve;
-      });
-      const slowPm = new ProviderManager({
-        probeCallbackPortInUse: async () => {
-          probed();
-          await probeGate;
-          return false;
-        },
-      });
-      mockLoginCodex.mockResolvedValue({ accessToken: 'token' });
-
-      const flow = slowPm.initiateOAuth('openai-codex', { onAuth: vi.fn(), onPrompt: vi.fn() });
-      await probeStarted;
-      slowPm.cancelOAuth();
-      releaseProbe();
-
-      await expect(flow).rejects.toMatchObject({ name: 'OAuthError', code: 'cancelled' });
-      expect(mockLoginCodex).not.toHaveBeenCalled();
-    });
-
     it('releases the flow slot after a failed login, so the next flow runs and is cancellable', async () => {
       mockLoginCodex.mockRejectedValueOnce(new Error('Login failed'));
       await expect(pm.initiateOAuth('openai-codex', { onAuth: vi.fn(), onPrompt: vi.fn() }))
@@ -757,23 +797,30 @@ describe('ProviderManager', () => {
       expect(mockLoginCodex).not.toHaveBeenCalled();
     });
 
-    it('fails fast with callback_port_in_use before opening a browser', async () => {
-      // openai-codex callback port is 1455 (fixed in OAUTH_CALLBACK_ROUTES).
-      // Stub the probe to report that port occupied instead of binding a real
-      // socket, so the assertion is deterministic under parallel execution.
-      const busyPm = new ProviderManager({
-        probeCallbackPortInUse: async (port) => port === 1455,
-      });
-      await expect(
-        busyPm.initiateOAuth('openai-codex', { onAuth: vi.fn(), onPrompt: vi.fn() }),
-      ).rejects.toMatchObject({
-        name: 'OAuthError',
-        code: 'callback_port_in_use',
-        provider: 'openai-codex',
-        port: 1455,
-      });
-      // The browser/login must never start when the port is taken.
-      expect(mockLoginCodex).not.toHaveBeenCalled();
+    it('starts the login even when a preferred callback port is taken', async () => {
+      // pi handles a taken port itself: Anthropic binds a free port instead,
+      // Codex asks for the pasted redirect URL. A Cortex pre-check that
+      // refused the flow would block both fallbacks.
+      const { createServer } = await import('node:http');
+      const squatter = createServer();
+      await new Promise<void>((resolve) => squatter.listen(0, '127.0.0.1', resolve));
+      const address = squatter.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      mockLoginCodex.mockResolvedValue({ type: 'oauth', access: 'a', refresh: 'r', expires: Date.now() + 3600_000 });
+      try {
+        const busyPm = makeProviderManager({ 'openai-codex': { path: '/auth/callback', port } });
+        await busyPm.initiateOAuth('openai-codex', { onAuth: vi.fn(), onPrompt: vi.fn() });
+        expect(mockLoginCodex).toHaveBeenCalledTimes(1);
+      } finally {
+        await new Promise<void>((resolve) => squatter.close(() => resolve()));
+      }
+    });
+
+    it("reports pi's port-in-use login failure as callback_port_in_use", async () => {
+      mockLoginCodex.mockRejectedValueOnce(new Error('Port 1455 is in use, probably by an unfinished login. Cancel that login and try again.'));
+
+      await expect(pm.initiateOAuth('openai-codex', { onAuth: vi.fn(), onPrompt: vi.fn() }))
+        .rejects.toMatchObject({ name: 'OAuthError', code: 'callback_port_in_use', provider: 'openai-codex', port: 1455 });
     });
 
     it('times out a hung flow with OAuthError(timed_out)', async () => {

@@ -20,8 +20,8 @@ import type {
   OAuthRefreshResult,
   OAuthResult,
 } from './oauth-types.js';
-import { assertOAuthCallbackPortAvailable, maybeInstallOAuthCallbackShim } from './oauth-callback-page.js';
-import type { OAuthCallbackRoute } from './oauth-callback-page.js';
+import { loopbackCallbackOf, maybeInstallOAuthCallbackShim } from './oauth-callback-page.js';
+import type { LoopbackCallback, OAuthCallbackRoute } from './oauth-callback-page.js';
 
 const DEVICE_CODE_INSTRUCTIONS_RE = /\benter\s+code:\s*([A-Z0-9-]+)/i;
 
@@ -67,6 +67,7 @@ function normalizeOAuthAuthInfo(
   info: unknown,
   legacyInstructions: string | undefined,
   routes: Record<string, OAuthCallbackRoute>,
+  callback: LoopbackCallback | null,
 ): OAuthAuthInfo {
   const raw = typeof info === 'string'
     ? { url: info, instructions: legacyInstructions }
@@ -76,7 +77,9 @@ function normalizeOAuthAuthInfo(
   const instructions = typeof raw?.['instructions'] === 'string'
     ? raw['instructions']
     : legacyInstructions;
-  const callbackRoute = routes[provider];
+  // Where pi's callback server really listens, from the authorization
+  // URL; the provider's preferred route when the URL does not say.
+  const callbackRoute = callback ?? routes[provider];
   const deviceCode = typeof raw?.['deviceCode'] === 'string'
     ? raw['deviceCode']
     : instructions?.match(DEVICE_CODE_INSTRUCTIONS_RE)?.[1];
@@ -166,15 +169,21 @@ function buildOAuthMeta(
   return meta;
 }
 
+/** pi's "Port N is in use" login failure as Cortex's typed error, else null. */
+function portInUseError(provider: string, err: unknown): OAuthError | null {
+  const message = err instanceof Error ? err.message : String(err);
+  const match = /\bport (\d+) is in use\b/i.exec(message);
+  if (!match) return null;
+  return new OAuthError('callback_port_in_use', provider, message, { port: Number(match[1]) });
+}
+
 function cancelledError(provider: string): OAuthError {
   return new OAuthError('cancelled', provider, `OAuth flow for "${provider}" was cancelled.`);
 }
 
 export interface OAuthFlowsOptions {
-  /** Fixed loopback callback routes (provider to path/port). */
+  /** Preferred loopback callback routes (provider to path/port). */
   routes: Record<string, OAuthCallbackRoute>;
-  /** Loopback port-in-use probe run before a browser opens. */
-  probe: (port: number, host: string) => Promise<boolean>;
   /** The pi model runtime whose providers log in and whose store keeps the credential. */
   runtime: () => ModelRuntime;
 }
@@ -185,13 +194,10 @@ export class OAuthFlows {
 
   private readonly oauthCallbackRoutes: Record<string, OAuthCallbackRoute>;
 
-  private readonly probeOAuthCallbackPort: (port: number, host: string) => Promise<boolean>;
-
   private readonly runtime: () => ModelRuntime;
 
   constructor(options: OAuthFlowsOptions) {
     this.oauthCallbackRoutes = options.routes;
-    this.probeOAuthCallbackPort = options.probe;
     this.runtime = options.runtime;
   }
 
@@ -239,20 +245,12 @@ export class OAuthFlows {
       );
     }
 
-    // Fail fast, before opening a browser, if the provider's fixed
-    // callback port is already taken. Otherwise pi-ai binds the other
-    // stack, the browser hits the wrong listener, and pi-ai waits forever.
-    await assertOAuthCallbackPortAvailable(
-      provider,
-      this.oauthCallbackRoutes,
-      this.probeOAuthCallbackPort,
-    );
-    // cancel() can land during the awaits above; never open a browser after it.
-    if (abort.signal.aborted) throw cancelledError(provider);
+    // A taken callback port is pi's to handle: Anthropic falls back to a
+    // free port and Codex to a pasted redirect URL.
 
-    // pi-ai only settles its callback wait on success; on a failed
-    // callback (e.g. state mismatch) it hangs. The render shim already sees
-    // that response, so use it to fail the flow immediately with the reason.
+    // The render shim sees a failed callback (a state mismatch, a provider
+    // error redirect) as the browser does: fail the flow with Cortex's typed
+    // error right away. pi rejects its own login too, with its own message.
     let failFromCallback!: (err: OAuthError) => void;
     const callbackFailure = new Promise<never>((_, reject) => {
       failFromCallback = reject;
@@ -270,7 +268,7 @@ export class OAuthFlows {
       ));
     };
 
-    const releaseShim = maybeInstallOAuthCallbackShim(
+    const shim = maybeInstallOAuthCallbackShim(
       provider,
       oauthProvider.name,
       callbacks.renderCallbackPage,
@@ -278,8 +276,9 @@ export class OAuthFlows {
       this.oauthCallbackRoutes,
     );
 
-    // pi-ai callback servers ignore the abort signal, so cancellation
-    // and timeout are enforced here. Without this the flow hangs forever.
+    // pi stops a login on the interaction's abort signal; the timeout is
+    // Cortex's (pi's Anthropic login sets none), and both reject with
+    // Cortex's typed errors.
     const timeoutMs = callbacks.timeoutMs ?? DEFAULT_OAUTH_FLOW_TIMEOUT_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -303,11 +302,14 @@ export class OAuthFlows {
       signal: abort.signal,
       notify: (event: AuthEvent) => {
         switch (event.type) {
-          case 'auth_url':
+          case 'auth_url': {
+            const callback = loopbackCallbackOf(event.url);
+            if (callback) shim.expect(callback);
             callbacks.onAuth(
-              normalizeOAuthAuthInfo(provider, event, event.instructions, this.oauthCallbackRoutes),
+              normalizeOAuthAuthInfo(provider, event, event.instructions, this.oauthCallbackRoutes, callback),
             );
             return;
+          }
           case 'device_code':
             // pi hands us the code as structured data, so pass it straight
             // through rather than re-deriving it from a prose instruction.
@@ -326,7 +328,8 @@ export class OAuthFlows {
       },
       prompt: async (prompt: AuthPrompt): Promise<string> => {
         if (prompt.type === 'manual_code' && callbacks.onManualCodeInput) {
-          return await callbacks.onManualCodeInput();
+          // pi aborts this signal when the browser callback wins the race.
+          return await callbacks.onManualCodeInput(prompt.signal);
         }
         if (prompt.type === 'select' && callbacks.onSelect) {
           const chosen = await callbacks.onSelect({
@@ -341,13 +344,21 @@ export class OAuthFlows {
           }
           return chosen;
         }
+        if (prompt.type === 'select') {
+          // No chooser: take the provider's first, default option (browser
+          // login for Anthropic) rather than asking for an option id as text.
+          const first = prompt.options[0];
+          if (first) return first.id;
+        }
         return await callbacks.onPrompt(normalizeOAuthPromptInfo(prompt));
       },
     };
 
     // pi runs the provider's login and stores the credential in the
     // runtime's credential store.
-    const login = this.runtime().models.login(provider, 'oauth', interaction) as Promise<Record<string, unknown>>;
+    const login = this.runtime().models.login(provider, 'oauth', interaction).catch((err: unknown) => {
+      throw portInUseError(provider, err) ?? err;
+    }) as Promise<Record<string, unknown>>;
     // Whichever promise loses the race may still settle later (pi-ai's
     // login can hang or settle late; the aux promises can reject after the
     // race is decided). Attach inert handlers so a late rejection never
@@ -372,7 +383,7 @@ export class OAuthFlows {
       return { credentials, meta };
     } finally {
       if (timer) clearTimeout(timer);
-      releaseShim();
+      shim.release();
     }
   }
 

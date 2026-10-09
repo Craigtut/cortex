@@ -2,12 +2,12 @@
  * The OAuth callback page shim: the one process-global patch of
  * `http.ServerResponse.prototype.end` that lets a consumer render pi-ai's
  * localhost callback page and lets a flow observe the callback's outcome,
- * plus the fixed callback routes and the loopback port probe.
+ * plus the providers' preferred callback routes. pi-ai has no page renderer
+ * hook, so Cortex keeps this patch.
  */
 
 import { createRequire } from 'node:module';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { OAuthError } from './oauth-types.js';
 import type {
   OAuthCallbackPageContext,
   OAuthCallbackPageRenderer,
@@ -21,101 +21,92 @@ const nodeRequire = createRequire(import.meta.url);
 // ---------------------------------------------------------------------------
 
 /**
- * A provider's fixed loopback OAuth callback route. In production these are the
- * real ports pi-ai binds ({@link OAUTH_CALLBACK_ROUTES}); tests can override
- * them via {@link ProviderManagerOptions} to bind an OS-assigned ephemeral port
- * instead, so parallel runs never collide on a shared socket.
+ * A provider's preferred loopback OAuth callback route. pi-ai binds it when
+ * it can: Anthropic falls back to a free port and Codex to a pasted redirect
+ * URL when it is taken, and OpenRouter always picks an ephemeral port and a
+ * random path. The flow learns the real one from the authorization URL's
+ * redirect parameter.
  */
 export interface OAuthCallbackRoute {
   readonly path: string;
   readonly port: number;
 }
 
-interface ActiveOAuthCallbackPageShim {
-  readonly provider: string;
-  readonly providerName: string;
-  readonly route: OAuthCallbackRoute;
-  readonly render: OAuthCallbackPageRenderer | undefined;
-  /**
-   * Notified exactly once when the browser callback fires and its status
-   * (success/error) is known. Lets the flow react immediately instead of
-   * waiting on pi-ai (which hangs on non-success callbacks).
-   */
-  readonly onResult?: ((status: OAuthCallbackPageStatus, context: OAuthCallbackPageContext) => void) | undefined;
-}
-
-type ServerResponseEnd = ServerResponse['end'];
-
 export const OAUTH_CALLBACK_ROUTES: Record<string, OAuthCallbackRoute> = {
   anthropic: { path: '/callback', port: 53692 },
   'openai-codex': { path: '/auth/callback', port: 1455 },
 };
 
+interface ActiveOAuthCallbackPageShim {
+  readonly provider: string;
+  readonly providerName: string;
+  /** The callback path the flow is waiting on; null until known. */
+  callbackPath: string | null;
+  readonly render: OAuthCallbackPageRenderer | undefined;
+  /**
+   * Notified exactly once when the browser callback fires and its status
+   * (success/error) is known, so the flow can fail with Cortex's typed
+   * error as soon as the browser shows the failure.
+   */
+  readonly onResult?: ((status: OAuthCallbackPageStatus, context: OAuthCallbackPageContext) => void) | undefined;
+}
+
+/** A flow's handle on the installed shim. */
+export interface OAuthCallbackShim {
+  /** Match callbacks on the loopback URL the authorization request redirects to. */
+  expect(callback: LoopbackCallback): void;
+  /** Uninstall the shim. Safe to call more than once. */
+  release(): void;
+}
+
+/** Where pi's callback server is listening for this flow. */
+export interface LoopbackCallback {
+  port: number;
+  path: string;
+}
+
+type ServerResponseEnd = ServerResponse['end'];
+
 let activeOAuthCallbackPageShim: ActiveOAuthCallbackPageShim | null = null;
 /** Ensures `onResult` fires at most once per installed shim. */
 let oauthCallbackResultNotified = false;
 
-/**
- * Probe whether something is already listening on a loopback port. Used to
- * fail an OAuth flow fast (before opening a browser) when the provider's
- * fixed callback port is occupied. Otherwise pi-ai binds the other stack,
- * the browser hits the wrong listener, and the user gets a dead page while
- * pi-ai waits forever.
- */
-export function probeCallbackPortInUse(port: number, host: string): Promise<boolean> {
-  const net = nodeRequire('node:net') as typeof import('node:net');
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (inUse: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(inUse);
-    };
-    const socket = net.connect({ port, host });
-    socket.once('connect', () => finish(true));
-    socket.once('error', () => finish(false));
-    socket.setTimeout(600, () => finish(false));
-  });
-}
+const NO_SHIM: OAuthCallbackShim = { expect: () => {}, release: () => {} };
 
 /**
- * Throw an `OAuthError('callback_port_in_use')` if the provider's fixed
- * callback port is occupied on either IPv4 or IPv6 loopback. No-op for
- * providers without a known callback route (manual/device-code flows).
+ * The loopback callback an authorization URL redirects to (its
+ * `redirect_uri` or `callback_url` parameter), or null when it redirects
+ * elsewhere (a copy-code login, a device code page).
  */
-export async function assertOAuthCallbackPortAvailable(
-  provider: string,
-  routes: Record<string, OAuthCallbackRoute>,
-  probe: (port: number, host: string) => Promise<boolean>,
-): Promise<void> {
-  const route = routes[provider];
-  if (!route) return;
-
-  for (const host of ['127.0.0.1', '::1']) {
-    if (await probe(route.port, host)) {
-      throw new OAuthError(
-        'callback_port_in_use',
-        provider,
-        `OAuth callback port ${route.port} for "${provider}" is already in use ` +
-        `(detected on ${host}). This is a fixed port: another application is ` +
-        `holding it, or a previous sign-in did not finish. Close that ` +
-        `application (or restart the host process), then try again.`,
-        { port: route.port },
-      );
+export function loopbackCallbackOf(authorizationUrl: string): LoopbackCallback | null {
+  let params: URLSearchParams;
+  try {
+    params = new URL(authorizationUrl).searchParams;
+  } catch {
+    return null;
+  }
+  for (const name of ['redirect_uri', 'callback_url']) {
+    const value = params.get(name);
+    if (!value) continue;
+    try {
+      const target = new URL(value);
+      if (target.protocol !== 'http:' || !isLoopbackHostname(target.hostname)) continue;
+      return { port: target.port ? Number(target.port) : 80, path: target.pathname };
+    } catch {
+      continue;
     }
   }
+  return null;
 }
 
 /**
- * Install the callback-page shim for a flow when there is a known callback
- * route AND something to do with it (a custom renderer and/or a result
- * observer). Returns a release function (a no-op when no shim was installed).
+ * Install the callback-page shim for a flow when there is something to do
+ * with the callback (a custom renderer and/or a result observer). Matching
+ * starts on the provider's preferred route path and follows
+ * {@link OAuthCallbackShim.expect} once the flow knows the real callback.
  *
  * Unlike a `try/finally` wrapper around pi-ai's `login()`, the caller owns
- * the release lifecycle: pi-ai's callback-server flows hang forever on a
- * non-success callback, so cleanup must be tied to the flow's own
- * race/timeout, not to awaiting the (possibly never-settling) login promise.
+ * the release lifecycle, tied to the flow's own race and timeout.
  */
 export function maybeInstallOAuthCallbackShim(
   provider: string,
@@ -123,19 +114,23 @@ export function maybeInstallOAuthCallbackShim(
   render: OAuthCallbackPageRenderer | undefined,
   onResult: ActiveOAuthCallbackPageShim['onResult'],
   routes: Record<string, OAuthCallbackRoute>,
-): () => void {
-  const route = routes[provider];
-  if (!route || (!render && !onResult)) {
-    return () => {};
-  }
+): OAuthCallbackShim {
+  if (!render && !onResult) return NO_SHIM;
 
-  return installOAuthCallbackPageShim({
+  const shim: ActiveOAuthCallbackPageShim = {
     provider,
     providerName,
-    route,
+    callbackPath: routes[provider]?.path ?? null,
     render,
     onResult,
-  });
+  };
+  const release = installOAuthCallbackPageShim(shim);
+  return {
+    expect: (callback) => {
+      shim.callbackPath = callback.path;
+    },
+    release,
+  };
 }
 
 function installOAuthCallbackPageShim(shim: ActiveOAuthCallbackPageShim): () => void {
@@ -175,23 +170,24 @@ function installOAuthCallbackPageShim(shim: ActiveOAuthCallbackPageShim): () => 
 
 function maybeRenderOAuthCallbackPage(response: ServerResponse, chunk: unknown): string | null {
   const shim = activeOAuthCallbackPageShim;
-  if (!shim) return null;
+  if (!shim?.callbackPath) return null;
 
   const request = (response as ServerResponse & { req?: IncomingMessage | undefined }).req;
   if (!request || request.method !== 'GET' || !request.url) return null;
 
-  const localPort = response.socket?.localPort;
-  if (localPort !== shim.route.port) return null;
+  // The port pi bound: its preferred one, a fallback, or an ephemeral one.
+  const port = response.socket?.localPort;
+  if (port === undefined) return null;
 
   let url: URL;
   try {
-    url = new URL(request.url, `http://localhost:${shim.route.port}`);
+    url = new URL(request.url, `http://localhost:${port}`);
   } catch {
     return null;
   }
 
-  if (url.pathname !== shim.route.path) return null;
-  if (!isExpectedLocalCallbackHost(request.headers.host, shim.route.port)) return null;
+  if (url.pathname !== shim.callbackPath) return null;
+  if (!isExpectedLocalCallbackHost(request.headers.host, port)) return null;
 
   const contentType = response.getHeader('content-type');
   if (typeof contentType === 'string' && !contentType.toLowerCase().includes('text/html')) {
@@ -212,17 +208,14 @@ function maybeRenderOAuthCallbackPage(response: ServerResponse, chunk: unknown):
     title: extractHtmlTagText(defaultHtml, 'title') ?? defaultOAuthCallbackTitle(status),
     heading: extractHtmlTagText(defaultHtml, 'h1') ?? defaultOAuthCallbackTitle(status),
     message: extractHtmlTagText(defaultHtml, 'p') ?? defaultOAuthCallbackMessage(status),
-    callbackPath: shim.route.path,
-    callbackPort: shim.route.port,
+    callbackPath: shim.callbackPath,
+    callbackPort: port,
     defaultHtml,
   };
   if (details !== undefined) {
     context.details = details;
   }
 
-  // Notify the flow that the browser callback fired (once). This lets
-  // initiateOAuth react to a failed callback immediately rather than
-  // waiting on pi-ai, which hangs on non-success callbacks.
   if (!oauthCallbackResultNotified && shim.onResult) {
     oauthCallbackResultNotified = true;
     try {
@@ -239,6 +232,11 @@ function maybeRenderOAuthCallbackPage(response: ServerResponse, chunk: unknown):
   } catch {
     return null;
   }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase();
+  return name === 'localhost' || name === '127.0.0.1' || name === '[::1]' || name === '::1';
 }
 
 function isExpectedLocalCallbackHost(host: string | undefined, port: number): boolean {

@@ -637,13 +637,13 @@ Pi-ai owns the localhost callback server for browser-based OAuth providers. It c
 The shim is intentionally narrow:
 
 - It only runs when `renderCallbackPage` is provided.
-- It only matches known pi-ai callback routes: Anthropic `/callback` on port `53692`, and OpenAI Codex `/auth/callback` on port `1455`.
+- It matches the loopback callback the authorization URL names (its `redirect_uri` or `callback_url`), on whatever port pi bound: Anthropic's preferred `53692` or the free port it falls back to, OpenRouter's ephemeral port and random path. Before the URL is known it matches the provider's preferred path (Anthropic `/callback`, OpenAI Codex `/auth/callback`).
 - It requires a local host header (`localhost`, `127.0.0.1`, or `::1`) and a pi-ai authentication page title.
 - It passes only safe page metadata to the renderer. Query parameters such as OAuth `code` and `state` are never exposed.
 - It is installed only for the duration of the OAuth login and restored in `finally`.
 - It rejects concurrent customized callback-page flows in the same process.
 
-One flow runs per `ProviderManager` at a time. A second `initiateOAuth()` while one is in progress rejects with `OAuthError` code `flow_in_progress` and leaves the first untouched, so `cancelOAuth()` still cancels it; the fixed callback ports mean two flows could not both complete anyway. A `cancelOAuth()` that lands while the flow is still checking its callback port rejects it with `cancelled` before any browser opens.
+One flow runs per `ProviderManager` at a time. A second `initiateOAuth()` while one is in progress rejects with `OAuthError` code `flow_in_progress` and leaves the first untouched, so `cancelOAuth()` still cancels it. A taken callback port is pi-ai's to handle (Anthropic binds a free port, Codex asks for the pasted redirect URL); a login pi-ai fails with "Port N is in use" rejects with `callback_port_in_use`. Without `onSelect`, a `select` prompt (Anthropic's login method) takes the first option. `onManualCodeInput` receives the prompt's abort signal, which pi aborts when the browser callback wins the race.
 
 GitHub Copilot uses device-code OAuth and does not show a localhost callback page, so this renderer is not used for that provider.
 
@@ -761,7 +761,7 @@ packages/cortex/
     provider-manager/
       pi-ai.ts                # Dynamic pi-ai loading and the pi shapes Cortex reads
       oauth-types.ts          # OAuth contract types and OAuthError
-      oauth-callback-page.ts  # Callback page shim, fixed callback routes, loopback port probe
+      oauth-callback-page.ts  # Callback page shim and preferred callback routes
       oauth-flows.ts          # OAuthFlows: login race, cancellation, API key refresh
       model-catalog.ts        # listModels mapping and legacy filtering
       api-key-validation.ts   # validateApiKey and its result classification
