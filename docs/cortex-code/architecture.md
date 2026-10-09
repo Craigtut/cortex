@@ -383,7 +383,7 @@ The credential store is also pi-ai's `CredentialStore` (`read`, `list`, `modify`
 
 `cortex -p` uses the same resolver.
 
-**File locking**: credential and session files are protected with `proper-lockfile` to prevent corruption from concurrent Cortex Code instances. The library uses atomic `mkdir`-based locks with stale-lock detection and automatic cleanup on crash. Locks are acquired for writes only; reads do not lock. The dependency cost is minimal (~30KB, 3 transitive deps).
+**File locking**: credential and session files are protected with `proper-lockfile` to prevent corruption from concurrent Cortex Code instances. The library uses atomic `mkdir`-based locks with stale-lock detection and automatic cleanup on crash. Locks are acquired for writes only; reads do not lock. `credentials.json` is replaced whole (a temp file renamed over it), so a lock-free reader or a crash never sees half a file, and a file that does not parse is an error rather than an empty store. The dependency cost is minimal (~30KB, 3 transitive deps).
 
 ### Project Context Discovery
 
