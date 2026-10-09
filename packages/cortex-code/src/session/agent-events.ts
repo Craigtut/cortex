@@ -12,13 +12,13 @@
 import type {
   AgentTextOutput,
   ClassifiedError,
-  CompactionResult,
   CortexAgent,
   CortexEvent,
   LoopOriginContext,
   MemoryErrorInfo,
   MemoryGapInfo,
   MemoryRecoveredInfo,
+  ObservationEvent,
   RetryExhaustedInfo,
   RetryScheduledInfo,
   RetrySucceededInfo,
@@ -192,55 +192,22 @@ export function wireAgentEvents(agent: CortexAgent, app: AgentEventApp, ports: A
     ports.retry.stopFor(origin.loopPath);
   });
 
-  // Compaction notification. The reasoner's only: the footer this updates
-  // reads the reasoner's context window, so a talker compaction would
-  // announce numbers that do not correspond to anything the user can see,
-  // about a context they do not own.
-  agent.onPostCompaction((result: CompactionResult, origin: LoopOriginContext) => {
+  // Observational memory events. The work loop's only: the footer they
+  // refresh reads the reasoner's context window and compaction manager, so
+  // a talker swap would announce numbers that do not correspond to anything
+  // the user can see, about a context they do not own.
+  agent.onObservation((event: ObservationEvent, origin: LoopOriginContext) => {
     if (!ports.routing.isWorkLoop(origin)) return;
-    const beforeK = (result.tokensBefore / 1000).toFixed(1);
-    const afterK = (result.tokensAfter / 1000).toFixed(1);
-    // Mark in the durable transcript where context was summarized away. The
-    // full pre-compaction turns remain earlier in this transcript.
-    ports.transcriptWriter.addCompaction({
-      beforeTokens: result.tokensBefore,
-      afterTokens: result.tokensAfter,
-    });
-    app.transcript.addNotification(
-      'Context Compacted',
-      `Reduced from ${beforeK}k to ${afterK}k tokens`,
-    );
-    ports.status.refreshContextUsage();
-  });
-
-  // The two failure notifications below deliberately fire for ANY loop,
-  // unlike the informational one above. A talker whose compaction degrades
-  // or runs out of layers is a conversation about to break, which the user
-  // needs to know even though the remedy text is written for the reasoner's
-  // context. A duplicated warning beats a swallowed one.
-
-  // Compaction degraded (Layer 2 failed, Layer 3 used as fallback)
-  agent.onCompactionDegraded((info) => {
-    app.transcript.addNotification(
-      'Compaction Degraded',
-      `Layer 2 summarization failed (${info.layer2Failures} attempts). Emergency truncation dropped ${info.turnsDropped} turns.`,
-    );
-  });
-
-  // Compaction exhausted (all layers failed)
-  agent.onCompactionExhausted(() => {
-    app.transcript.addNotification(
-      'Context Limit Reached',
-      'All compaction layers have failed. Use /context-window to increase the limit or /clear to start fresh.',
-    );
-  });
-
-  // Observational memory events (only fire when strategy is 'observational').
-  // The status they refresh is read off the reasoner's compaction manager,
-  // so a talker generation would only trigger a redundant re-read of a
-  // number that did not change.
-  agent.onObservation((_event, origin: LoopOriginContext) => {
-    if (!ports.routing.isWorkLoop(origin)) return;
+    if (event.removedMessages.length > 0) {
+      // Mark in the durable transcript where messages left context for
+      // memory. The full turns remain earlier in this transcript.
+      ports.transcriptWriter.addCompaction({
+        reason: event.trigger,
+        beforeTokens: event.tokensBefore,
+        afterTokens: event.tokensAfter,
+      });
+      ports.status.refreshContextUsage();
+    }
     ports.status.refreshObservationalMemory();
   });
   agent.onReflection((_event, origin: LoopOriginContext) => {
@@ -248,8 +215,9 @@ export function wireAgentEvents(agent: CortexAgent, app: AgentEventApp, ports: A
     ports.status.refreshObservationalMemory();
   });
 
-  // Memory health, for ANY loop, like the compaction failures above. One
-  // notice per degraded episode: the call that starts it says so, the
+  // Memory health, for ANY loop: a talker whose memory fails is a
+  // conversation about to lose detail, and a duplicated warning beats a
+  // swallowed one. One notice per degraded episode: the call that starts it says so, the
   // first success after it says it is over, and the failures between
   // repeat nothing the user does not already know.
   agent.onMemoryError((info: MemoryErrorInfo, origin: LoopOriginContext) => {

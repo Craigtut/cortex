@@ -334,7 +334,7 @@ async function showModelSwitchWarning(
  * if it fails; the switch happens either way.
  */
 export async function applySwitchWarningChoice(
-  session: Pick<CommandSession, 'getAgent' | 'getApp' | 'getCompactionStrategy' | 'getProvider' | 'switchModel' | 'switchProvider'>,
+  session: Pick<CommandSession, 'getAgent' | 'getApp' | 'getProvider' | 'switchModel' | 'switchProvider'>,
   choice: string,
   provider: string,
   modelId: string,

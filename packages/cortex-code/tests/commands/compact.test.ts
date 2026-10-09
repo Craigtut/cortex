@@ -21,12 +21,10 @@ function fakeSession(result: CortexCompactNowResult) {
   const app = createFakeApp();
   const agent = {
     compactNow: vi.fn(async () => result),
-    checkAndRunCompaction: vi.fn(async () => null),
   };
   const session = {
     getAgent: () => agent as never,
     getApp: () => app as never,
-    getCompactionStrategy: () => 'observational' as const,
     getProvider: () => 'anthropic',
     switchModel: vi.fn(async () => {}),
     switchProvider: vi.fn(async () => {}),
@@ -71,7 +69,6 @@ describe('/compact', () => {
     await compactContext(session);
 
     expect(agent.compactNow).toHaveBeenCalledOnce();
-    expect(agent.checkAndRunCompaction).not.toHaveBeenCalled();
     expect(app.spinnerVisible).toBe(false);
     expect(app.transcript['addNotification']).toHaveBeenCalledWith(
       'Compaction',
@@ -88,7 +85,6 @@ describe("/model's compact first", () => {
     await applySwitchWarningChoice(session, 'compact-first', 'anthropic', 'claude-haiku-4-5');
 
     expect(agent.compactNow).toHaveBeenCalledOnce();
-    expect(agent.checkAndRunCompaction).not.toHaveBeenCalled();
     expect(session.switchModel).toHaveBeenCalledWith('claude-haiku-4-5');
   });
 

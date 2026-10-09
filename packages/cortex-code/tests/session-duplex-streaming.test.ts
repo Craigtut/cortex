@@ -24,14 +24,14 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, homedir: () => currentHome() };
 });
 
+import type { TranscriptWriter } from '../src/persistence/transcript-writer.js';
 import {
-  compactionResult,
   createDuplexSession,
   destroyHarnessAgents,
   fireRetryScheduled,
   fireRetrySucceeded,
-  firePostCompaction,
   retryScheduledInfo,
+  seedObservedExchange,
   startHeldReasonerWork,
   waitUntil,
   settle,
@@ -155,17 +155,22 @@ describe('duplex: fan-out callbacks are keyed on the loop they came from', () =>
     expect(app.calls).toContain('transcript.clearRetryStatus');
   });
 
-  it('announces only the compaction whose numbers match the footer', async () => {
-    const { app, harness } = await createDuplexSession(cwd);
+  it("marks only the work loop's swaps in the transcript", async () => {
+    const { session, harness } = await createDuplexSession(cwd);
+    const writer = (session as unknown as { transcriptWriter: TranscriptWriter }).transcriptWriter;
+    const addCompaction = vi.spyOn(writer, 'addCompaction');
+    seedObservedExchange(harness.talkerLoop);
+    seedObservedExchange(harness.reasonerLoop);
 
-    firePostCompaction(harness.talkerLoop, compactionResult(90_000, 20_000));
+    expect((await harness.talkerLoop.compactNow({ observe: false })).status).toBe('compacted');
     await settle();
-    expect(app.calls).not.toContain('transcript.addNotification');
+    expect(addCompaction).not.toHaveBeenCalled();
 
-    // Positive control: the reasoner's does announce, so the absence above is
-    // the origin filter rather than a notification path that never runs.
-    firePostCompaction(harness.reasonerLoop, compactionResult(120_000, 40_000));
+    // Positive control: the reasoner's swap is marked, so the absence above
+    // is the origin filter rather than a marker path that never runs.
+    expect((await harness.reasonerLoop.compactNow({ observe: false })).status).toBe('compacted');
     await settle();
-    expect(app.calls).toContain('transcript.addNotification');
+    expect(addCompaction).toHaveBeenCalledOnce();
+    expect(addCompaction.mock.calls[0]![0]).toMatchObject({ reason: 'compact-now' });
   });
 });

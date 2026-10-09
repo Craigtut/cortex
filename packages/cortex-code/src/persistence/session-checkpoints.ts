@@ -49,7 +49,6 @@ export type SessionDescription = Pick<SessionMeta, 'mode' | 'provider' | 'model'
 export interface SessionCheckpointsDeps {
   sessionId: string;
   agentMode: NonNullable<CortexAgentConfig['mode']>;
-  compactionStrategy: 'observational' | 'classic';
   getAgent: () => CheckpointAgent | null;
   describe: () => SessionDescription;
 }
@@ -72,14 +71,12 @@ export class SessionCheckpoints {
   private createdAt = Date.now();
   private readonly sessionId: string;
   private readonly agentMode: SessionCheckpointsDeps['agentMode'];
-  private readonly compactionStrategy: 'observational' | 'classic';
   private readonly getAgent: () => CheckpointAgent | null;
   private readonly describe: () => SessionDescription;
 
   constructor(deps: SessionCheckpointsDeps) {
     this.sessionId = deps.sessionId;
     this.agentMode = deps.agentMode;
-    this.compactionStrategy = deps.compactionStrategy;
     this.getAgent = deps.getAgent;
     this.describe = deps.describe;
     this.saver = createDebouncedStateSaver(deps.sessionId, 150);
@@ -230,7 +227,6 @@ export class SessionCheckpoints {
       ...this.describe(),
       createdAt: this.createdAt,
       updatedAt: Date.now(),
-      compactionStrategy: this.compactionStrategy,
     };
     const agent = this.getAgent();
     if (agent) {
@@ -266,10 +262,8 @@ export class SessionCheckpoints {
     // Observational memory state, loaded before the restore because history
     // and memory now go in together (the buffer watermark indexes into the
     // history, so the facade orders them itself rather than trusting the
-    // caller to).
-    const omState = this.compactionStrategy === 'observational'
-      ? await loadObservationalState(sessionId)
-      : null;
+    // caller to). A session saved by a classic build has none.
+    const omState = await loadObservationalState(sessionId);
 
     return {
       artifact: {

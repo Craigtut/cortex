@@ -21,8 +21,6 @@ export interface StatusBarState {
   gitBranch: string;
   yoloMode: boolean;
   effortLevel: string;
-  /** Whether observational memory compaction is the active strategy. */
-  observationalMode: boolean;
   /** Token count of the observational memory slot. */
   observationTokenCount: number;
   /** Whether the observer is currently running in the background. */
@@ -123,7 +121,6 @@ export class StatusBar implements Component {
     gitBranch: '',
     yoloMode: false,
     effortLevel: '',
-    observationalMode: false,
     observationTokenCount: 0,
     observerActive: false,
     reflectorActive: false,
@@ -328,9 +325,6 @@ export class StatusBar implements Component {
 
   private buildMemSegment(): string {
     const s = this.state;
-    // Always show in observational mode, hide in classic mode
-    if (!s.observationalMode) return '';
-
     const countStr = s.observationTokenCount >= 1000
       ? `${(s.observationTokenCount / 1000).toFixed(1)}k`
       : String(s.observationTokenCount);

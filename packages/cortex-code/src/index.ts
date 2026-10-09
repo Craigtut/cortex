@@ -164,7 +164,6 @@ async function main(): Promise<void> {
       initialUtilityModelId,
       resumeSessionId,
       updateInfo,
-      ...(args.compaction ? { compactionStrategy: args.compaction } : {}),
     });
     activeSession = session;
     uninstallSignalHandlers = installActivitySignalHandlers(session);

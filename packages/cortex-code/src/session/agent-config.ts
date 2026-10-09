@@ -25,7 +25,6 @@ export interface AgentConfigInput {
   mode: Mode;
   config: CortexCodeConfig;
   sessionId: string;
-  compactionStrategy: 'observational' | 'classic';
   sandbox: SandboxOptions | undefined;
   resolvePermission: NonNullable<CortexAgentConfig['resolvePermission']>;
   /**
@@ -61,7 +60,6 @@ export function buildAgentConfig(input: AgentConfigInput): CortexAgentConfig {
     ...(input.sandbox ? { sandbox: input.sandbox } : {}),
     getAuth: input.getAuth,
     contextWindowLimit: input.config.contextWindowLimit ?? null,
-    compaction: { strategy: input.compactionStrategy },
     persistResult: createToolResultPersistor(input.sessionId),
     logger: log,
     ...(diagnostics ? { diagnostics } : {}),

@@ -85,7 +85,6 @@ export interface SessionOptions {
   initialEffort: ThinkingLevel;
   initialUtilityModelId?: string | undefined;
   resumeSessionId: string | undefined;
-  compactionStrategy?: 'observational' | 'classic';
   /** Update availability resolved at startup, or null when up to date / disabled. */
   updateInfo?: UpdateInfo | null;
 }
@@ -114,7 +113,6 @@ export class Session {
   private readonly cwd: string;
   private yoloMode: boolean;
   private readonly initialUtilityModelId: string | undefined;
-  private readonly compactionStrategy: 'observational' | 'classic';
   private readonly updateInfo: UpdateInfo | null;
   private readonly sessionId: string;
   /** True when this session was launched to resume a saved one. */
@@ -154,7 +152,6 @@ export class Session {
     this.cwd = options.cwd;
     this.yoloMode = options.yoloMode;
     this.initialUtilityModelId = options.initialUtilityModelId;
-    this.compactionStrategy = options.compactionStrategy ?? 'observational';
     this.updateInfo = options.updateInfo ?? null;
     this.sessionId = options.resumeSessionId ?? generateSessionId();
     this.isResume = options.resumeSessionId !== undefined;
@@ -215,7 +212,6 @@ export class Session {
       cwd: options.cwd,
       modeName: options.mode.name,
       agentMode: this.agentMode,
-      compactionStrategy: this.compactionStrategy,
       models: this.models,
       sandbox: this.sandbox,
       getYoloMode: () => this.yoloMode,
@@ -225,7 +221,6 @@ export class Session {
     this.checkpoints = new SessionCheckpoints({
       sessionId: this.sessionId,
       agentMode: this.agentMode,
-      compactionStrategy: this.compactionStrategy,
       getAgent,
       describe: () => ({
         mode: this.mode.name,
@@ -630,7 +625,6 @@ export class Session {
       mode: this.mode,
       config: this.config,
       sessionId: this.sessionId,
-      compactionStrategy: this.compactionStrategy,
       sandbox: this.sandbox.getAgentOptions(),
       resolvePermission: (toolName, toolArgs, context) =>
         this.permissions.resolvePermission(toolName, toolArgs, context),
@@ -652,7 +646,6 @@ export class Session {
   getYoloMode(): boolean { return this.yoloMode; }
   /** The facade mode in force, resolved at construction. See {@link agentMode}. */
   getAgentMode(): NonNullable<CortexAgentConfig['mode']> { return this.agentMode; }
-  getCompactionStrategy(): 'observational' | 'classic' { return this.compactionStrategy; }
   setYoloMode(enabled: boolean): void {
     this.yoloMode = enabled;
     this.app?.updateStatus({ yoloMode: enabled });

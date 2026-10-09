@@ -40,7 +40,7 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 import { Session } from '../src/session.js';
-import { saveSession, saveObservationalState, type SessionMeta } from '../src/persistence/sessions.js';
+import { listSessions, saveSession, saveObservationalState, type SessionMeta } from '../src/persistence/sessions.js';
 
 let cwd: string;
 const liveAgents: CortexAgent[] = [];
@@ -61,7 +61,6 @@ interface SessionInternals {
   agent: CortexAgent | null;
   app: unknown;
   work: { readonly isRunning: boolean; begin(): void };
-  compactionStrategy: 'observational' | 'classic';
   buildAgentConfig: () => CortexAgentConfig;
 }
 
@@ -176,7 +175,7 @@ describe('Session.resume through the subsumed restore()', () => {
         { role: 'user', content: 'first question' },
         { role: 'assistant', content: 'first answer' },
       ],
-      meta(sessionId, { usage: usage(1.25, 7), compactionStrategy: 'observational' }),
+      meta(sessionId, { usage: usage(1.25, 7) }),
     );
     await saveObservationalState(sessionId, observationalState());
 
@@ -196,25 +195,26 @@ describe('Session.resume through the subsumed restore()', () => {
     );
   });
 
-  it('leaves observational state alone in classic mode', async () => {
+  it('lists and resumes a session a classic build saved', async () => {
     const sessionId = 'resume-classic';
+    // Older builds recorded their compaction strategy in meta.json.
     await saveSession(
       sessionId,
       [{ role: 'user', content: 'hello' }],
-      meta(sessionId, { compactionStrategy: 'classic' }),
+      { ...meta(sessionId), compactionStrategy: 'classic' } as SessionMeta,
     );
-    await saveObservationalState(sessionId, observationalState());
 
-    const { session, internals } = makeSession({ compactionStrategy: 'classic' });
+    expect((await listSessions()).map((listed) => listed.id)).toContain(sessionId);
+
+    const { session, internals } = makeSession();
     internals.agent = await agentFromSessionConfig(internals);
     internals.app = null;
 
     await session.resume(sessionId);
 
     expect(internals.agent.getConversationHistory()).toHaveLength(1);
-    expect(internals.agent.getObservationalMemoryState()?.observations ?? '').not.toContain(
-      'migrating a consumer',
-    );
+    // A classic build saved no memory, so the session resumes with none.
+    expect(internals.agent.getObservationalMemoryState()?.observations).toBe('');
   });
 
   it('restores a session saved without usage', async () => {

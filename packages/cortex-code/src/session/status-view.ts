@@ -29,7 +29,6 @@ export interface SessionStatusViewDeps {
   cwd: string;
   modeName: string;
   agentMode: NonNullable<CortexAgentConfig['mode']>;
-  compactionStrategy: 'observational' | 'classic';
   models: Pick<ModelSelection, 'provider' | 'modelId'>;
   sandbox: Pick<SessionSandbox, 'indicatorState' | 'getRung'>;
   getYoloMode: () => boolean;
@@ -41,7 +40,6 @@ export class SessionStatusView {
   private readonly cwd: string;
   private readonly modeName: string;
   private readonly agentMode: SessionStatusViewDeps['agentMode'];
-  private readonly compactionStrategy: 'observational' | 'classic';
   private readonly models: SessionStatusViewDeps['models'];
   private readonly sandbox: SessionStatusViewDeps['sandbox'];
   private readonly getYoloMode: () => boolean;
@@ -52,7 +50,6 @@ export class SessionStatusView {
     this.cwd = deps.cwd;
     this.modeName = deps.modeName;
     this.agentMode = deps.agentMode;
-    this.compactionStrategy = deps.compactionStrategy;
     this.models = deps.models;
     this.sandbox = deps.sandbox;
     this.getYoloMode = deps.getYoloMode;
@@ -125,7 +122,6 @@ export class SessionStatusView {
       gitBranch: branch,
       yoloMode: this.getYoloMode(),
       effortLevel,
-      observationalMode: this.compactionStrategy === 'observational',
       ...this.sandbox.indicatorState(),
       ...this.resolutionIndicatorState(),
     });
@@ -162,7 +158,6 @@ export class SessionStatusView {
     const agent = this.getAgent();
     const app = this.getApp();
     if (!agent || !app) return;
-    if (this.compactionStrategy !== 'observational') return;
     const cm = agent.getCompactionManager();
     app.updateStatus({
       observationTokenCount: cm.getObservationTokenCount(),

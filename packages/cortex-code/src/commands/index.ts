@@ -27,7 +27,6 @@ export type CommandSession = Pick<Session,
   | 'getAgent'
   | 'getAgentMode'
   | 'getApp'
-  | 'getCompactionStrategy'
   | 'getCredentialStore'
   | 'getCwd'
   | 'getEffectiveEffort'

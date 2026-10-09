@@ -17,8 +17,6 @@ export interface SessionMeta {
   contextTokenCount: number;
   /** Accumulated session usage (cost, turns, tokens). Optional for backward compat. */
   usage?: SessionUsage;
-  /** Compaction strategy used by this session. Optional for backward compat. */
-  compactionStrategy?: 'observational' | 'classic';
 }
 
 export interface SavedSession {
@@ -87,10 +85,9 @@ function parseSessionMeta(v: unknown): SessionMeta | null {
     return null;
   }
 
+  // Fields this build does not know (older builds wrote `compactionStrategy`)
+  // are ignored, so their sessions still list and resume.
   const usage = o['usage'] as SessionUsage | undefined;
-  const compactionStrategy = o['compactionStrategy'] === 'observational' || o['compactionStrategy'] === 'classic'
-    ? o['compactionStrategy']
-    : undefined;
 
   return {
     id: o['id'],
@@ -102,7 +99,6 @@ function parseSessionMeta(v: unknown): SessionMeta | null {
     updatedAt: o['updatedAt'],
     contextTokenCount,
     ...(usage ? { usage } : {}),
-    ...(compactionStrategy ? { compactionStrategy } : {}),
   };
 }
 

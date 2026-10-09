@@ -635,14 +635,6 @@ export function fireRetrySucceeded(loop: AgentLoop, info: Record<string, unknown
   runner.retrySucceeded.emit(info, origin);
 }
 
-/** Runs the loop's own wrapper, which is what applies the origin stamp. */
-export function firePostCompaction(loop: AgentLoop, result: Record<string, unknown>): void {
-  const handlers = (loop.getCompactionManager() as unknown as {
-    postCompactionHandlers: Array<(r: unknown) => void>;
-  }).postCompactionHandlers;
-  for (const handler of handlers) handler(result);
-}
-
 export function retryScheduledInfo(delayMs = 30_000): Record<string, unknown> {
   return {
     category: 'network',
@@ -654,15 +646,25 @@ export function retryScheduledInfo(delayMs = 30_000): Record<string, unknown> {
   };
 }
 
-export function compactionResult(before: number, after: number): Record<string, unknown> {
-  return {
-    tokensBefore: before,
-    tokensAfter: after,
-    turnsCompacted: 4,
-    turnsPreserved: 6,
-    summaryTokens: 500,
-    oldestPreservedTimestamp: null,
-    oldestPreservedIndex: 0,
-    summary: 'summary',
-  };
+/**
+ * Give a loop an older exchange it has already observed (one buffered chunk)
+ * and a short recent one, under a 20,000-token window, so compactNow
+ * swaps the older exchange out without calling the memory model.
+ */
+export function seedObservedExchange(loop: AgentLoop): void {
+  loop.setContextWindowLimit(20_000);
+  loop.restoreConversationHistory([
+    { role: 'user', content: 'a'.repeat(20_000), timestamp: 1 },
+    { role: 'assistant', content: [{ type: 'text', text: 'b'.repeat(20_000) }], timestamp: 2 },
+    { role: 'user', content: 'the latest question', timestamp: 3 },
+    { role: 'assistant', content: [{ type: 'text', text: 'c'.repeat(2_000) }], timestamp: 4 },
+  ] as never);
+  loop.restoreObservationalMemoryState({
+    observations: '',
+    continuationHint: null,
+    observationTokenCount: 0,
+    generationCount: 0,
+    bufferedChunks: [{ observations: '* (10:00) the older exchange', messageTokensObserved: 10_000, createdAt: new Date(), endIndex: 2 }],
+    bufferWatermark: 2,
+  });
 }

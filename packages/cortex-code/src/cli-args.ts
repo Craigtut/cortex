@@ -10,7 +10,6 @@ export interface CliArgs {
   resume: string | true | undefined;
   model: string | undefined;
   yolo: boolean;
-  compaction: 'observational' | 'classic' | undefined;
   updateCheck: boolean;
   /**
    * `--duplex` (true) or `--no-duplex` (false), or undefined when neither was
@@ -25,7 +24,6 @@ export function parseArgs(argv: string[], version: string): CliArgs {
     resume: undefined,
     model: undefined,
     yolo: false,
-    compaction: undefined,
     updateCheck: true,
     duplex: undefined,
   };
@@ -41,15 +39,6 @@ export function parseArgs(argv: string[], version: string): CliArgs {
       case '--model':
         args.model = argv[++i];
         break;
-      case '--compaction': {
-        const value = argv[++i];
-        if (value !== 'observational' && value !== 'classic') {
-          console.error(`Invalid compaction strategy: ${value}. Must be 'observational' or 'classic'.`);
-          process.exit(1);
-        }
-        args.compaction = value;
-        break;
-      }
       case '--yolo':
         args.yolo = true;
         break;
@@ -92,7 +81,6 @@ Usage:
   cortex complete [options] <prompt>        Run one lightweight completion
   cortex --resume [session-id]              Resume last (or specific) session
   cortex --model <model>                    Override default model
-  cortex --compaction <observational|classic>  Compaction strategy (default: observational)
   cortex --yolo                             Start in YOLO mode
   cortex --duplex                           Run the talker/reasoner duplex agent
   cortex --no-duplex                        Force the single-loop agent (default)

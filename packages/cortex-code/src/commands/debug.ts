@@ -17,11 +17,6 @@ export const debugCommand: Command = {
     const app = session.getApp();
     if (!agent || !app) return;
 
-    if (session.getCompactionStrategy() !== 'observational') {
-      app.transcript.addNotification('Debug', 'Observational memory is not active. Start with --compaction observational to use these tools.');
-      return;
-    }
-
     const list = new SelectList(DEBUG_OPTIONS, DEBUG_OPTIONS.length, selectListTheme);
     const overlayBox = new OverlayBox(list, 'Debug Tools');
     const handle = app.tui.showOverlay(overlayBox, {
