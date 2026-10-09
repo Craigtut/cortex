@@ -13,7 +13,7 @@ import { log } from '../logger.js';
 /** What a keyless local endpoint is sent; the OpenAI SDK requires a non-empty key. */
 const NO_KEY = 'sk-no-key-required';
 
-export class ApiKeyResolver {
+export class AuthResolver {
   constructor(
     private readonly credentialStore: CredentialStore,
     private readonly providerManager: Pick<ProviderManager, 'getAuth'>,

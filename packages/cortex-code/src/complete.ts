@@ -11,7 +11,7 @@ import {
 
 import { loadConfig } from './config/config.js';
 import { CredentialStore } from './config/credentials.js';
-import { ApiKeyResolver } from './providers/api-key-resolver.js';
+import { AuthResolver } from './providers/api-key-resolver.js';
 import { defaultModelFor, resolveConfiguredModel } from './providers/model-resolution.js';
 
 interface CompleteArgs {
@@ -63,7 +63,7 @@ export async function runComplete(argv: string[], options: { version: string }):
   // The interactive session's resolver: the same credential attribution, and
   // OAuth refreshed under the store's lock (another `cortex -p` run or an
   // interactive session may be refreshing the same token).
-  const auth = await new ApiKeyResolver(credentialStore, providerManager, () => resolved.provider)
+  const auth = await new AuthResolver(credentialStore, providerManager, () => resolved.provider)
     .getAuth(resolved.model.provider);
 
   const result = await completeWithModel({

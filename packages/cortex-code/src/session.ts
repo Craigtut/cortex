@@ -49,7 +49,7 @@ import { workspaceSettingsPath } from './permissions/rules.js';
 import { SessionCheckpoints } from './persistence/session-checkpoints.js';
 import { generateSessionId } from './persistence/sessions.js';
 import { TranscriptWriter } from './persistence/transcript-writer.js';
-import { ApiKeyResolver } from './providers/api-key-resolver.js';
+import { AuthResolver } from './providers/api-key-resolver.js';
 import { buildAgentConfig } from './session/agent-config.js';
 import { wireAgentEvents } from './session/agent-events.js';
 import { AssistantStream } from './session/assistant-stream.js';
@@ -130,7 +130,7 @@ export class Session {
 
   private readonly routing: LoopRouting;
   private readonly models: ModelSelection;
-  private readonly apiKeys: ApiKeyResolver;
+  private readonly auth: AuthResolver;
   private readonly sandbox: SessionSandbox;
   private readonly permissions: PermissionBroker;
   private readonly status: SessionStatusView;
@@ -194,7 +194,7 @@ export class Session {
       getAgent,
       getApp,
     });
-    this.apiKeys = new ApiKeyResolver(options.credentialStore, options.providerManager, () => this.models.provider);
+    this.auth = new AuthResolver(options.credentialStore, options.providerManager, () => this.models.provider);
     this.sandbox = new SessionSandbox({
       config: options.config,
       cwd: options.cwd,
@@ -636,7 +636,7 @@ export class Session {
         this.permissions.resolvePermission(toolName, toolArgs, context),
       resolveNetworkAccess: (req) => this.permissions.resolveNetworkAccess(req),
       isAutoApprove: () => this.yoloMode,
-      getAuth: (provider) => this.apiKeys.getAuth(provider),
+      getAuth: (provider) => this.auth.getAuth(provider),
     });
   }
 
