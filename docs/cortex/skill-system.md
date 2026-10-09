@@ -413,7 +413,7 @@ The preprocessor identifies all `` !`...` `` patterns, executes each command, an
 
 **Timeout:** Each command has a 10-second timeout. On timeout, the marker is replaced with `[Error: command timed out]`.
 
-**Security:** Shell commands run with the same permissions as the backend process. Plugin-authored skills that use shell commands should be reviewed during plugin installation. The consumer can optionally disable shell execution for untrusted skill sources.
+**Security:** Shell commands use the Bash tool's shell selection and sanitized environment. When the loop has a sandbox provider, each command spawns through its `wrapSpawn`, inside the same OS boundary as the Bash tool; if the provider cannot wrap a command, the marker is replaced with an error and the command does not run. Without a provider they run with the same permissions as the backend process. Plugin-authored skills that use shell commands should be reviewed during plugin installation. The consumer can optionally disable shell execution for untrusted skill sources.
 
 #### 2. Script Execution: `!{script: path}`
 

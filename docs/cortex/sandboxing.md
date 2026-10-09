@@ -75,9 +75,9 @@ The managed session automatically wires shell requests through the same resolver
 
 ## Coverage and limits
 
-Bash, Grep, and framework-owned stdio MCP subprocesses use the shared provider. Built-in file tools receive path checks before execution, even without a consumer permission callback. Symlink targets and not-yet-existing paths are resolved through their existing ancestors. These checks supplement the OS boundary; in-process checks are not a filesystem isolation mechanism for the entire Node process.
+Bash, Grep, skill shell markers (`` !`cmd` ``), and framework-owned stdio MCP subprocesses use the shared provider. Built-in file tools receive path checks before execution, even without a consumer permission callback. Symlink targets and not-yet-existing paths are resolved through their existing ancestors. These checks supplement the OS boundary; in-process checks are not a filesystem isolation mechanism for the entire Node process.
 
-Custom tools, skill preprocessing, direct consumer subprocesses, remote MCP servers, and host-side network clients do not become contained merely because the agent has a sandbox. Custom tools must honor policy or use an isolated execution path. Glob checks its requested search root; it does not hide every denied descendant name from directory listings. Read denial applies when contents are opened by the built-in Read tool or the OS-contained subprocess.
+Custom tools, skill script markers (`!{script: ...}`, which run in-process), direct consumer subprocesses, remote MCP servers, and host-side network clients do not become contained merely because the agent has a sandbox. Custom tools must honor policy or use an isolated execution path. Glob checks its requested search root; it does not hide every denied descendant name from directory listings. Read denial applies when contents are opened by the built-in Read tool or the OS-contained subprocess.
 
 macOS/Linux network control is proxy-oriented, so arbitrary raw socket protocols are not a general supported egress interface. Loopback access and OS-required paths retain the backend's documented exceptions. Windows Tier 1 has the larger limitations described above.
 

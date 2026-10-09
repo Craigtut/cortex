@@ -17,6 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { SkillConfig, SkillEntry } from './types.js';
+import type { SandboxProvider } from './sandbox/types.js';
 import { preprocessSkillBody } from './skill-preprocessor.js';
 
 // ---------------------------------------------------------------------------
@@ -174,7 +175,11 @@ export class SkillRegistry {
     }
   }
 
-  constructor(configs?: SkillConfig[]) {
+  /** OS sandbox that shell markers spawn through (see PreprocessorConfig.sandbox). */
+  private readonly sandbox: SandboxProvider | undefined;
+
+  constructor(configs?: SkillConfig[], options?: { sandbox?: SandboxProvider | undefined }) {
+    this.sandbox = options?.sandbox;
     if (configs) {
       for (const config of configs) {
         this.addSkill(config);
@@ -374,6 +379,7 @@ export class SkillRegistry {
       variables,
       scriptContext: mergedScriptContext,
       skillDir: entry.dir,
+      sandbox: this.sandbox,
     });
   }
 

@@ -94,7 +94,7 @@ To begin uncontained but allow later activation, use `{ rung: 'off' }`. This kee
 
 Use trusted host configuration for writable roots, secrets, and settings. Add product-specific credential files to `denyRead` and product configuration to `denyWrite`. Do not derive writable roots from model tool arguments or untrusted repository settings.
 
-Built-in Read, Write, Edit, UndoEdit, and Glob receive in-process path checks. Bash, Grep, and managed stdio MCP spawns use the backend. Custom tools that perform their own filesystem or network operations still run inside the host process; they must use the same policy or an appropriate isolated execution path. Remote MCP servers run outside this host's sandbox. Skill preprocessing is also outside the subprocess boundary and should use trusted skills. See [architecture and limits](./sandboxing.md).
+Built-in Read, Write, Edit, UndoEdit, and Glob receive in-process path checks. Bash, Grep, skill shell markers, and managed stdio MCP spawns use the backend. Custom tools that perform their own filesystem or network operations still run inside the host process; they must use the same policy or an appropriate isolated execution path. Remote MCP servers run outside this host's sandbox. Skill script markers (`!{script: ...}`) run in the host process, outside the subprocess boundary, and should come from trusted skills. See [architecture and limits](./sandboxing.md).
 
 Single-command Bash escalation is still a separate approval. Cortex uses `BASH_ESCALATION_PERMISSION_NAME` (`Bash(escalate)`) and refuses escalation without a permission resolver. A consumer resolver must treat it as a request to leave containment, rather than blindly allowing it.
 

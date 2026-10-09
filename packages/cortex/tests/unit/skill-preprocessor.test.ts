@@ -7,6 +7,8 @@ import {
   substituteVariables,
   executeShellCommand,
 } from '../../src/skill-preprocessor.js';
+import { selectShell } from '../../src/tools/bash/shell.js';
+import type { SandboxProvider, SandboxSpawnSpec } from '../../src/sandbox/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -269,5 +271,77 @@ Args: $ARGUMENTS`;
     expect(result).toContain('Agent: Test');
     expect(result).toContain('running');
     expect(result).toContain('Args: arg1 arg2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shell markers under an OS sandbox provider
+// ---------------------------------------------------------------------------
+
+describe('shell markers with a sandbox provider', () => {
+  /** A provider whose wrapped spawn runs a different command, so output shows which spawn ran. */
+  function recordingProvider(): { provider: SandboxProvider; specs: SandboxSpawnSpec[] } {
+    const specs: SandboxSpawnSpec[] = [];
+    const provider: SandboxProvider = {
+      initialize: async () => {
+        throw new Error('not used');
+      },
+      dispose: async () => {},
+      wrapSpawn: async (spec) => {
+        specs.push(spec);
+        return { file: spec.shell, args: [...spec.shellArgs, 'echo contained'], env: spec.env };
+      },
+    };
+    return { provider, specs };
+  }
+
+  it('launches the marker through the provider-wrapped spawn', async () => {
+    // Precondition: without a provider the marker runs its own command.
+    const bare = await preprocessSkillBody('!`echo raw`', { variables: {}, scriptContext: {}, skillDir: tmpDir });
+    expect(bare).toBe('raw');
+
+    const { provider, specs } = recordingProvider();
+    const result = await preprocessSkillBody('!`echo raw`', {
+      variables: {},
+      scriptContext: {},
+      skillDir: tmpDir,
+      sandbox: provider,
+    });
+
+    expect(result).toBe('contained');
+    expect(specs).toHaveLength(1);
+    const shell = selectShell();
+    expect(specs[0]).toMatchObject({ command: 'echo raw', cwd: tmpDir, shell: shell.shell, shellArgs: shell.args });
+  });
+
+  it('wraps quoted argument values exactly as the shell would receive them', async () => {
+    const { provider, specs } = recordingProvider();
+    await preprocessSkillBody('!`cat $1`', {
+      variables: { '1': '; echo pwned' },
+      scriptContext: {},
+      skillDir: tmpDir,
+      sandbox: provider,
+    });
+    expect(specs).toHaveLength(1);
+    expect(specs[0]!.command).toBe("cat '; echo pwned'");
+  });
+
+  it('does not run the command uncontained when the provider cannot wrap it', async () => {
+    const provider: SandboxProvider = {
+      initialize: async () => {
+        throw new Error('not used');
+      },
+      dispose: async () => {},
+      wrapSpawn: async () => {
+        throw new Error('profile generation failed');
+      },
+    };
+    const result = await preprocessSkillBody('!`echo raw`', {
+      variables: {},
+      scriptContext: {},
+      skillDir: tmpDir,
+      sandbox: provider,
+    });
+    expect(result).toMatch(/^\[Error: .*profile generation failed\]$/);
   });
 });

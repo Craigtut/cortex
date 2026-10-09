@@ -6,6 +6,7 @@
  * clear it at its own work-unit boundaries.
  */
 
+import type { SandboxProvider } from '../sandbox/types.js';
 import { SkillRegistry } from '../skill-registry.js';
 import { buildLoadSkillDescription, createLoadSkillTool } from '../skill-tool.js';
 import type { CortexLogger, LoadedSkill } from '../types.js';
@@ -17,16 +18,19 @@ export interface SkillBindingPorts {
   /** Re-sync pi's tool list (it holds shallow copies of each tool). */
   refreshTools(): void;
   logger: CortexLogger;
+  /** The loop's OS sandbox, which skill shell markers spawn through. */
+  sandbox?: SandboxProvider | undefined;
 }
 
 type LoadSkillTool = ReturnType<typeof createLoadSkillTool>;
 
 export class SkillBinding {
-  readonly registry = new SkillRegistry();
+  readonly registry: SkillRegistry;
   private loadSkillTool: LoadSkillTool | null = null;
   private buffer: LoadedSkill[] = [];
 
   constructor(private readonly ports: SkillBindingPorts) {
+    this.registry = new SkillRegistry(undefined, { sandbox: ports.sandbox });
     this.registry.addChangeListener(() => this.rebuildDescription());
   }
 

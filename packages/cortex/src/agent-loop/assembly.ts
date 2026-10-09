@@ -373,6 +373,7 @@ export function assembleLoop(params: {
     ),
     refreshTools: () => host.refreshTools(),
     logger,
+    sandbox: config.sandbox,
   });
   const pipeline = new ContextPipeline({
     agentState: () => agent.state,

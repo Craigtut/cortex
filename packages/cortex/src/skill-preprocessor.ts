@@ -18,8 +18,9 @@
  *    - Script markers: run via dynamic import with a context object (no shell),
  *      so their path/args are substituted with plain (unquoted) values.
  *
- * Shell commands use the same shell selection logic as the Bash tool
- * (PowerShell on Windows, bash/zsh on Unix).
+ * Shell commands use the Bash tool's shell selection (PowerShell on Windows,
+ * bash/zsh on Unix) and, when a sandbox provider is configured, run inside
+ * the same OS boundary as the Bash tool.
  *
  * References:
  *   - docs/cortex/skill-system.md
@@ -28,12 +29,13 @@
 
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import type { SandboxProvider } from './sandbox/types.js';
 import { buildSafeEnv } from './tools/shared/safe-env.js';
 import { findCatastrophicCommand } from './tools/bash/catastrophic.js';
+import { selectShell } from './tools/bash/shell.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,6 +48,11 @@ export interface PreprocessorConfig {
   scriptContext: Record<string, unknown>;
   /** Absolute path to the skill directory. */
   skillDir: string;
+  /**
+   * The loop's OS sandbox. Shell markers spawn through its wrapSpawn, like
+   * the Bash tool. Script markers run in-process and are not contained.
+   */
+  sandbox?: SandboxProvider | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,52 +83,6 @@ const POSITIONAL_PATTERN = /\$([1-9])/g;
 
 /** Match $ARGUMENTS reference. */
 const ARGUMENTS_PATTERN = /\$ARGUMENTS/g;
-
-// ---------------------------------------------------------------------------
-// Shell selection (mirrors bash tool logic)
-// ---------------------------------------------------------------------------
-
-interface ShellConfig {
-  shell: string;
-  args: string[];
-}
-
-function getShellConfig(): ShellConfig {
-  if (process.platform === 'win32') {
-    // PowerShell on Windows
-    const psCore = process.env['ProgramFiles'];
-    const psCorePath = psCore ? `${psCore}\\PowerShell\\7\\pwsh.exe` : null;
-
-    // Try pwsh (PowerShell 7+) first, fall back to Windows PowerShell
-    try {
-      if (psCorePath) {
-        fs.accessSync(psCorePath);
-        return { shell: psCorePath, args: ['-NoProfile', '-NonInteractive', '-Command'] };
-      }
-    } catch {
-      // Fall through
-    }
-
-    return {
-      shell: 'powershell.exe',
-      args: ['-NoProfile', '-NonInteractive', '-Command'],
-    };
-  }
-
-  // Unix: use $SHELL, falling back to /bin/bash or /bin/sh
-  const userShell = process.env['SHELL'];
-  if (userShell && !userShell.endsWith('/fish')) {
-    return { shell: userShell, args: ['-c'] };
-  }
-
-  // Fall back
-  try {
-    fs.accessSync('/bin/bash');
-    return { shell: '/bin/bash', args: ['-c'] };
-  } catch {
-    return { shell: '/bin/sh', args: ['-c'] };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Shell-safe value quoting
@@ -307,35 +268,52 @@ async function executeShellMarker(
     return `[Error: blocked by catastrophic-command floor: ${catastrophic.reason}]`;
   }
 
-  return executeShellCommand(command, config.skillDir);
+  return executeShellCommand(command, config.skillDir, config.sandbox);
 }
 
 /**
  * Execute a shell command and return stdout.
- * Uses the same shell selection as the Bash tool.
+ * Uses the Bash tool's shell selection and, when a sandbox provider is given,
+ * its wrapped spawn, so the command runs inside the same OS boundary.
  */
-export function executeShellCommand(
+export async function executeShellCommand(
   command: string,
   cwd: string,
+  sandbox?: SandboxProvider,
 ): Promise<string> {
+  const shell = selectShell();
+  // Sanitize the environment (strip injection vectors: LD_/DYLD_ preloads,
+  // NODE_OPTIONS, BASH_ENV, and similar) just like the Bash tool. SKILL.md
+  // shell hooks are author-controlled but must not run with a raw env.
+  const env = buildSafeEnv(process.env);
+
+  // Invoke the shell directly with the command as an argument, which avoids
+  // the double-shell invocation exec() would add.
+  let file = shell.shell;
+  let args = [...shell.args, command];
+  let spawnEnv = env;
+  if (sandbox) {
+    // A provider that cannot wrap the command fails closed: it never runs
+    // uncontained.
+    try {
+      const wrapped = await sandbox.wrapSpawn({ shell: shell.shell, shellArgs: shell.args, command, cwd, env });
+      file = wrapped.file;
+      args = wrapped.args;
+      spawnEnv = wrapped.env;
+    } catch (err) {
+      return `[Error: sandbox could not wrap command: ${err instanceof Error ? err.message : String(err)}]`;
+    }
+  }
+
   return new Promise((resolve) => {
-    const shellConfig = getShellConfig();
-
-    // Use execFile to invoke the shell directly with the command as an argument.
-    // This avoids double-shell invocation (exec spawns a shell around our shell).
-    const args = [...shellConfig.args, command];
-
     const child = execFile(
-      shellConfig.shell,
+      file,
       args,
       {
         cwd,
         timeout: COMMAND_TIMEOUT_MS,
         maxBuffer: 1024 * 1024, // 1MB
-        // Sanitize the environment (strip injection vectors: LD_/DYLD_ preloads,
-        // NODE_OPTIONS, BASH_ENV, and similar) just like the Bash tool. SKILL.md
-        // shell hooks are author-controlled but must not run with a raw env.
-        env: buildSafeEnv(process.env),
+        env: spawnEnv,
       },
       (error: Error | null, stdout: string, _stderr: string) => {
         if (error) {
