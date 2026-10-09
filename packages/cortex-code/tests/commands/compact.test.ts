@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { CompactNowResult, CortexCompactNowResult } from '@animus-labs/cortex';
 import { compactContext, describeCompaction } from '../../src/commands/compact.js';
 import { applySwitchWarningChoice } from '../../src/commands/model.js';
+import { CancellableCommands } from '../../src/session/cancellable-commands.js';
 import { createFakeApp } from '../helpers/fake-app.js';
 
 const compacted: CompactNowResult = {
@@ -17,19 +18,32 @@ const compacted: CompactNowResult = {
   reflection: { status: 'not-due' },
 };
 
-function fakeSession(result: CortexCompactNowResult) {
+function fakeSession(
+  result: CortexCompactNowResult,
+  compactNow: (options?: { signal?: AbortSignal }) => Promise<CortexCompactNowResult> = async () => result,
+) {
   const app = createFakeApp();
-  const agent = {
-    compactNow: vi.fn(async () => result),
-  };
+  const agent = { compactNow: vi.fn(compactNow) };
+  const commands = new CancellableCommands();
   const session = {
     getAgent: () => agent as never,
     getApp: () => app as never,
     getProvider: () => 'anthropic',
+    runCancellable: <T>(work: (signal: AbortSignal) => Promise<T>) => commands.run(work),
     switchModel: vi.fn(async () => {}),
     switchProvider: vi.fn(async () => {}),
   };
-  return { app, agent, session };
+  return { app, agent, session, commands };
+}
+
+/** A compactNow that holds until its signal aborts, then reports it stopped. */
+function heldUntilCancelled(talker?: CompactNowResult) {
+  return (options?: { signal?: AbortSignal }) => new Promise<CortexCompactNowResult>((resolve) => {
+    options?.signal?.addEventListener('abort', () => {
+      const reasoner: CompactNowResult = { status: 'failed', error: options.signal!.reason as Error };
+      resolve(talker ? { reasoner, talker } : { reasoner });
+    }, { once: true });
+  });
 }
 
 describe('describeCompaction', () => {
@@ -75,6 +89,59 @@ describe('/compact', () => {
       'Moved 12 messages into memory, 48.2k to 9.1k tokens.',
       undefined,
     );
+  });
+});
+
+describe('/compact cancelled with Esc', () => {
+  it('stops compactNow through its signal and says nothing changed', async () => {
+    const { app, agent, session, commands } = fakeSession({ reasoner: compacted }, heldUntilCancelled());
+
+    const running = compactContext(session);
+    await vi.waitFor(() => expect(agent.compactNow).toHaveBeenCalledOnce());
+    expect(commands.cancel(new Error('cancelled'))).toBe(true);
+    await running;
+
+    expect(agent.compactNow.mock.calls[0]![0]!.signal!.aborted).toBe(true);
+    expect(app.spinnerVisible).toBe(false);
+    expect(app.transcript['addNotification']).toHaveBeenCalledWith('Compaction Cancelled', 'Nothing changed: cancelled', undefined);
+  });
+
+  it('reports what the conversation loop did before the cancel', async () => {
+    const { app, agent, session, commands } = fakeSession({ reasoner: compacted }, heldUntilCancelled(compacted));
+
+    const running = compactContext(session);
+    await vi.waitFor(() => expect(agent.compactNow).toHaveBeenCalledOnce());
+    commands.cancel(new Error('cancelled'));
+    await running;
+
+    expect(app.transcript['addNotification']).toHaveBeenCalledWith(
+      'Compaction Cancelled',
+      'Work: Nothing changed: cancelled\nConversation: Moved 12 messages into memory, 48.2k to 9.1k tokens.',
+      undefined,
+    );
+  });
+
+  it('reports a compaction the cancel came too late to stop', async () => {
+    const { app, session, commands } = fakeSession({ reasoner: compacted }, async (options) => {
+      // Done, then the cancel lands before the command reads the result.
+      commands.cancel(new Error('cancelled'));
+      expect(options?.signal?.aborted).toBe(true);
+      return { reasoner: compacted };
+    });
+
+    await compactContext(session);
+
+    expect(app.transcript['addNotification']).toHaveBeenCalledWith(
+      'Compaction', 'Moved 12 messages into memory, 48.2k to 9.1k tokens.', undefined,
+    );
+  });
+
+  it('cancels nothing once it has finished', async () => {
+    const { session, commands } = fakeSession({ reasoner: compacted });
+
+    await compactContext(session);
+
+    expect(commands.cancel(new Error('cancelled'))).toBe(false);
   });
 });
 

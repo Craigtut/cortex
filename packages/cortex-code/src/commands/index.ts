@@ -44,6 +44,7 @@ export type CommandSession = Pick<Session,
   | 'resetTitle'
   | 'resetUtilityModel'
   | 'resume'
+  | 'runCancellable'
   | 'setPreferredEffort'
   | 'setSandboxRung'
   | 'setUtilityModel'

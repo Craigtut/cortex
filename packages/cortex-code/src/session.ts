@@ -56,6 +56,7 @@ import { AssistantStream } from './session/assistant-stream.js';
 import { LoopRouting } from './session/loop-routing.js';
 import { ModelSelection } from './session/model-selection.js';
 import { RetryStatusLine } from './session/retry-status.js';
+import { CancellableCommands } from './session/cancellable-commands.js';
 import { SessionSandbox } from './session/sandbox-state.js';
 import { SessionStatusView, readGitBranch } from './session/status-view.js';
 import { SubAgentActivity } from './session/sub-agent-activity.js';
@@ -134,6 +135,7 @@ export class Session {
   private readonly status: SessionStatusView;
   private readonly checkpoints: SessionCheckpoints;
   private readonly work: WorkTracker;
+  private readonly commands = new CancellableCommands();
   private readonly trust: ProjectTrustGates;
   private readonly mcpReload: McpReloadScheduler;
   private readonly turns: TurnRunner;
@@ -393,6 +395,11 @@ export class Session {
     }
   }
 
+  /** Run a slash command's long work under a signal Esc aborts. */
+  runCancellable<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    return this.commands.run(work);
+  }
+
   /** Show the interactive "update available" overlay (startup and /update). */
   promptForUpdate(info: UpdateInfo): Promise<void> {
     return this.updatePrompt.show(info);
@@ -544,6 +551,7 @@ export class Session {
    */
   async abort(): Promise<void> {
     this.freezeDiagnostics.recordAbortRequested('session.abort');
+    this.commands.cancel(new Error('cancelled'));
     const tearingDown = this.agent?.state === 'destroying' || this.agent?.state === 'destroyed';
     if (this.agent && this.work.isRunning && !tearingDown) {
       await this.agent.abort();

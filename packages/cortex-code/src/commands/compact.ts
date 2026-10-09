@@ -13,37 +13,49 @@ export const compactCommand: Command = {
  * Compact now and say what happened: shared by /compact and /model's
  * "compact first". compactNow moves older messages into memory whatever the
  * context usage, keeping the most recent ones verbatim; a failure changes
- * nothing.
+ * nothing, and Esc cancels it.
  */
-export async function compactContext(session: Pick<CommandSession, 'getAgent' | 'getApp'>): Promise<void> {
+export async function compactContext(
+  session: Pick<CommandSession, 'getAgent' | 'getApp' | 'runCancellable'>,
+): Promise<void> {
   const agent = session.getAgent();
   const app = session.getApp();
   if (!agent || !app) return;
 
-  app.showStatusSpinner('Compacting context...');
+  app.showStatusSpinner('Compacting context... (Esc to cancel)');
   let result: CortexCompactNowResult;
+  let cancelled = false;
   try {
-    result = await agent.compactNow();
+    result = await session.runCancellable(async (signal) => {
+      const compacted = await agent.compactNow({ signal });
+      cancelled = signal.aborted;
+      return compacted;
+    });
   } catch (err) {
     app.hideStatusSpinner();
     app.transcript.addNotification('Compaction Error', err instanceof Error ? err.message : String(err));
     return;
   }
   app.hideStatusSpinner();
-  const report = describeCompaction(result);
+  const report = describeCompaction(result, cancelled);
   app.transcript.addNotification(report.title, report.body, report.failed ? { severity: 'error' } : undefined);
 }
 
 /**
  * The notice for a compactNow result: the work loop's, then, in duplex,
- * the conversation loop's.
+ * the conversation loop's. A cancel that stopped the work loop's compaction
+ * is not a failure; one that came after it compacted changes nothing here.
  */
-export function describeCompaction(result: CortexCompactNowResult): { title: string; body: string; failed: boolean } {
-  const failed = result.reasoner.status === 'failed';
+export function describeCompaction(
+  result: CortexCompactNowResult,
+  cancelled = false,
+): { title: string; body: string; failed: boolean } {
+  const stopped = result.reasoner.status === 'failed';
   const body = result.talker
     ? `Work: ${describeLoop(result.reasoner)}\nConversation: ${describeLoop(result.talker)}`
     : describeLoop(result.reasoner);
-  return { title: failed ? 'Compaction Failed' : 'Compaction', body, failed };
+  if (stopped && cancelled) return { title: 'Compaction Cancelled', body, failed: false };
+  return { title: stopped ? 'Compaction Failed' : 'Compaction', body, failed: stopped };
 }
 
 function describeLoop(result: CompactNowResult): string {
