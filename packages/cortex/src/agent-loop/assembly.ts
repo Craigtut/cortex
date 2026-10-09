@@ -469,6 +469,7 @@ export function assembleLoop(params: {
     ));
   compactionManager.onMemoryError((info) => eventBridge.emitMemory({ kind: 'error', info }));
   compactionManager.onMemoryRecovered((info) => eventBridge.emitMemory({ kind: 'recovered', info }));
+  compactionManager.onMemoryGap((info) => eventBridge.emitMemory({ kind: 'gap', info }));
 
   parts = {
     agent, logger, retryPolicy, origin, lifecycle, gate, abortState, runner, queues, background, deadLetters,

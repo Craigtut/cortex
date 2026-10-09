@@ -263,8 +263,12 @@ export interface ObservationChunk {
  * own compression systems.
  */
 export interface ObservationEvent {
-  /** What recorded them: a threshold activation, compactNow, or observeNow. */
-  trigger: 'activation' | 'compact-now' | 'observe-now';
+  /**
+   * What recorded them: a threshold activation, compactNow, observeNow, or
+   * the swap that precedes a drop after the provider rejected a request as
+   * too long.
+   */
+  trigger: 'activation' | 'compact-now' | 'observe-now' | 'emergency';
 
   /** Messages whose observations this event added to the log. */
   observedMessages: AgentMessage[];
@@ -357,13 +361,32 @@ export interface MemoryRecoveredInfo {
 }
 
 /**
+ * Messages that left context before memory recorded them: the provider
+ * rejected a request as too long and the unobserved messages that did not
+ * fit were dropped. The log carries `note`, so the agent knows of the gap.
+ *
+ * Registered via `agent.onMemoryGap()`.
+ */
+export interface MemoryGapInfo {
+  droppedMessages: number;
+  /** Earliest and latest timestamp among them, when they carry any. */
+  from: Date | null;
+  to: Date | null;
+  /** Why they were not observed in time. */
+  reason: string;
+  /** The line appended to the observation log. */
+  note: string;
+}
+
+/**
  * The `memory` event on the event bridge: the same reports as the memory
  * callbacks, so they forward from sub-agents (with `childTaskId`) and carry
  * the loop's path on a composite facade's merged stream.
  */
 export type MemoryEventPayload =
   | { kind: 'error'; info: MemoryErrorInfo }
-  | { kind: 'recovered'; info: MemoryRecoveredInfo };
+  | { kind: 'recovered'; info: MemoryRecoveredInfo }
+  | { kind: 'gap'; info: MemoryGapInfo };
 
 // ---------------------------------------------------------------------------
 // Recall

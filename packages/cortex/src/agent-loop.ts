@@ -17,6 +17,7 @@ import type { DirectCompletionContext } from './cache-breakpoints.js';
 import type { CompactionManager } from './compaction/index.js';
 import type {
   MemoryErrorInfo,
+  MemoryGapInfo,
   MemoryRecoveredInfo,
   ObservationalMemoryState,
   ObservationEvent,
@@ -479,6 +480,9 @@ export class AgentLoop implements
   }
   onMemoryRecovered(handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void): void {
     this.parts.compactionManager.onMemoryRecovered((info) => handler(info, this.parts.origin));
+  }
+  onMemoryGap(handler: (info: MemoryGapInfo, origin: LoopOriginContext) => void): void {
+    this.parts.compactionManager.onMemoryGap((info) => handler(info, this.parts.origin));
   }
   onBeforeCompaction(handler: (target: CompactionTarget, origin: LoopOriginContext) => Promise<void>): void {
     this.parts.compactionManager.onBeforeCompaction((target) => handler(target, this.parts.origin));

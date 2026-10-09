@@ -68,6 +68,7 @@ export class StateEmitter {
       loop.onPostCompaction(() => this.markDirty());
       loop.onObservation(() => this.markDirty());
       loop.onReflection(() => this.markDirty());
+      loop.onMemoryGap(() => this.markDirty());
     }
   }
 

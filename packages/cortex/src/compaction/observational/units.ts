@@ -45,6 +45,15 @@ export function unitFloor(history: AgentMessage[], index: number): number {
   return floor;
 }
 
+/** The smallest unit boundary at or above `index`. */
+export function unitCeil(history: AgentMessage[], index: number): number {
+  for (const unit of unitsOf(history)) {
+    if (unit.start >= index) return unit.start;
+    if (unit.end > index) return unit.end;
+  }
+  return history.length;
+}
+
 /**
  * Where the next observation piece starting at `from` should end: as many
  * whole units as fit `capTokens`, and at least one.

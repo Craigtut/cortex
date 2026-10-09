@@ -49,6 +49,7 @@ import type {
   ReflectionEvent,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
+  MemoryGapInfo,
 } from './observational/types.js';
 import { resolvePromptCacheTtlMs } from '../provider-registry.js';
 import type { CacheRetention } from '../provider-registry.js';
@@ -76,6 +77,7 @@ export type {
   MemoryCallTrigger,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
+  MemoryGapInfo,
   MemoryEventPayload,
 } from './observational/types.js';
 export { createRecallTool } from './observational/recall-tool.js';
@@ -84,6 +86,13 @@ export { createRecallTool } from './observational/recall-tool.js';
 // ---------------------------------------------------------------------------
 // Default config
 // ---------------------------------------------------------------------------
+
+/**
+ * After the provider rejects a request as too long, history shrinks to fit
+ * this fraction of capacity. The only lossy step, so it drops the minimum;
+ * in-band view truncation then holds later requests under the ceiling.
+ */
+const OVERFLOW_TARGET_RATIO = 0.8;
 
 export const ADAPTIVE_DEFAULTS: AdaptiveThresholdConfig = {
   enabled: true,
@@ -261,6 +270,13 @@ export class CompactionManager {
   private compactionResultHandlers: Array<(result: CompactionResult) => void> = [];
   private compactionDegradedHandlers: Array<(info: CompactionDegradedInfo) => void> = [];
   private compactionExhaustedHandlers: Array<(info: CompactionExhaustedInfo) => void> = [];
+
+  /**
+   * Tokens outside history (system prompt, slots, tools, injections) in the
+   * last transform pass: what an overflow drop must leave room for when no
+   * measured count is available.
+   */
+  private lastOverheadTokens = 0;
 
   /** Consecutive Layer 2 failure count for circuit breaker. Reset on success. */
   private _consecutiveLayer2Failures = 0;
@@ -613,6 +629,11 @@ export class CompactionManager {
   /** Register a handler for the first successful memory call after failures. */
   onMemoryRecovered(handler: (info: MemoryRecoveredInfo) => void): void {
     this.observationalEngine?.onMemoryRecovered(handler);
+  }
+
+  /** Register a handler for messages dropped before memory recorded them. */
+  onMemoryGap(handler: (info: MemoryGapInfo) => void): void {
+    this.observationalEngine?.onMemoryGap(handler);
   }
 
   /**
@@ -1140,13 +1161,32 @@ export class CompactionManager {
       }
     }
 
-    // Layer 3: Emergency truncation (90% of model context window)
+    // Emergency truncation under observational memory: the view only, near
+    // the full effective window. The source keeps every message and the
+    // observer still reads them, so a context that will not fit loses
+    // nothing; it is shown less for this request, with a note saying so.
+    if (this._strategy === 'observational' && this.observationalEngine && getSourceHistory) {
+      this.lastOverheadTokens = slotTokens;
+      const ceiling = this._contextWindow * this.config.failsafe.threshold;
+      if (slotTokens + this.estimateHistoryTokens(history) >= ceiling) {
+        const truncated = this.observationalEngine.truncateView(
+          history, getSourceHistory(), Math.max(0, ceiling - slotTokens),
+        );
+        if (truncated) {
+          this.logger.warn('[Compaction] context over the emergency ceiling; older messages are not shown this request', {
+            shown: truncated.length - 1,
+            of: history.length,
+          });
+          history = truncated;
+        }
+      }
+      return setHistory(context, history);
+    }
+
+    // Layer 3 (classic): Emergency truncation (90% of model context window)
     // Uses the MODEL's actual context window, not the budget. Emergency
     // truncation should only fire when we're near the model's real limit,
     // not the user's artificial budget. Layer 1/2 handle the budget.
-    // When observational memory is active, L3 operates on the post-slot
-    // history (raw messages only). The observation slot lives in the slot
-    // region and is naturally protected by historyStart.
     {
       const failsafeWindow = this._modelContextWindow > 0 ? this._modelContextWindow : this._contextWindow;
       const postLayerTokens = this.estimateHistoryTokens(history);
@@ -1324,6 +1364,28 @@ export class CompactionManager {
     const history = getHistory();
     if (history.length === 0) return;
 
+    if (this.observationalEngine) {
+      // The provider rejected the request, so the estimate was optimistic:
+      // shrink the source well below capacity. Observed messages leave as
+      // in any swap; unobserved ones that do not fit are dropped and the log
+      // records the gap.
+      const capacity = this._modelContextWindow > 0 ? this._modelContextWindow : this._contextWindow;
+      const overhead = Math.max(
+        this._currentContextTokenCount - this.estimateHistoryTokens(history),
+        this.lastOverheadTokens,
+      );
+      const rewritten = this.observationalEngine.dropForOverflow(
+        history,
+        Math.max(0, capacity * OVERFLOW_TARGET_RATIO - overhead),
+      );
+      if (rewritten) {
+        setHistory(rewritten);
+        this.microcompaction.resetCache();
+        this.invalidateContextTokenCount();
+      }
+      return;
+    }
+
     // API returned overflow error, so use the model's actual window
     const failsafeWindow = this._modelContextWindow > 0 ? this._modelContextWindow : this._contextWindow;
     const estimatedTokens = this.estimateHistoryTokens(history);
@@ -1338,10 +1400,6 @@ export class CompactionManager {
 
     setHistory(result.newHistory);
     this.microcompaction.resetCache();
-    // Keep the observational buffer watermark aligned with the front-
-    // truncated source so the next activation neither trims unobserved
-    // messages nor orphans a tool result at the new head (H-4).
-    this.observationalEngine?.onSourceHistoryTruncated(result.turnsRemoved);
     this._currentContextTokenCount = result.tokensAfter;
   }
 

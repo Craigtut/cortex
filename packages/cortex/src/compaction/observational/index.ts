@@ -29,6 +29,7 @@ import type {
   ObserverOutput,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
+  MemoryGapInfo,
 } from './types.js';
 import { OBSERVATIONAL_MEMORY_DEFAULTS } from './constants.js';
 import { runObserver } from './observer.js';
@@ -38,9 +39,10 @@ import { estimateTokens } from '../../token-estimator.js';
 import { MemoryCallError, RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
-import { messageTokens, pieceEnd } from './units.js';
+import { messageTokens, pieceEnd, unitCeil } from './units.js';
 import { selectTail } from './tail.js';
 import { keptAfter, removedBy, removesAny, swapCut } from './swap.js';
+import { gapNote, timeSpan, truncateView } from './emergency.js';
 import type { SwapCut } from './swap.js';
 import { ObservationLog } from './log.js';
 import type { MemoryCallTrigger } from './health.js';
@@ -69,6 +71,8 @@ export type {
   MemoryCallTrigger,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
+  MemoryGapInfo,
+  MemoryEventPayload,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -149,6 +153,7 @@ export class ObservationalMemoryEngine {
 
   // Event handler arrays (method-level registration, multiple handlers)
   private observationHandlers: Array<(event: ObservationEvent) => void> = [];
+  private gapHandlers: Array<(info: MemoryGapInfo) => void> = [];
 
   constructor(config: Partial<ObservationalMemoryConfig>, slotIndex: number) {
     this.slotIndex = slotIndex;
@@ -234,6 +239,11 @@ export class ObservationalMemoryEngine {
   /** Register a handler for the first successful memory call after failures. */
   onMemoryRecovered(handler: (info: MemoryRecoveredInfo) => void): void {
     this.health.onRecovered(handler);
+  }
+
+  /** Register a handler for messages dropped before memory recorded them. */
+  onMemoryGap(handler: (info: MemoryGapInfo) => void): void {
+    this.gapHandlers.push(handler);
   }
 
   // -------------------------------------------------------------------------
@@ -453,6 +463,98 @@ export class ObservationalMemoryEngine {
       observed = true;
     }
     return observed;
+  }
+
+  // -------------------------------------------------------------------------
+  // Emergency: the provider rejected a request as too long
+  // -------------------------------------------------------------------------
+
+  /**
+   * Shrink the source after the provider rejected a request for overflow,
+   * so the history fits `budgetTokens`. Synchronous: it runs in the failed
+   * run's catch, with no time for an observer call.
+   *
+   * Everything already observed outside the reduced tail leaves as in any
+   * swap. Unobserved messages outside it are dropped, oldest first, and the
+   * log records the gap. The latest user message and the last unit stay.
+   *
+   * @returns the new source history, or null when nothing could be dropped
+   */
+  dropForOverflow(source: AgentMessage[], budgetTokens: number): AgentMessage[] | null {
+    const tail = selectTail(source, budgetTokens);
+    const ledger = this.buffering.ledger;
+    const watermark = ledger.watermark;
+    const swap = swapCut(source, tail, watermark);
+    const keep = swap.keep;
+    // Unobserved units outside the tail: from the first unit boundary past
+    // what is observed, up to the tail.
+    const droppedIndices = new Set<number>();
+    for (let i = unitCeil(source, Math.max(swap.cut, watermark)); i < tail.start; i++) {
+      if (i !== tail.latestUser) droppedIndices.add(i);
+    }
+    if (!removesAny(swap) && droppedIndices.size === 0) return null;
+
+    const priorPrefix = ledger.observedPrefix;
+    const consumed = ledger.removePrefix(swap.cut, keep ?? undefined);
+    if (consumed.length > 0) {
+      const swapped = this.log.merge(consumed);
+      this.log.append(swapped.observations, swapped.hint);
+    }
+    const dropped = [...droppedIndices].map((i) => source[i]!);
+    if (dropped.length > 0) {
+      // Every dropped index is past the observed region; only a pending
+      // observer over them is affected.
+      const pending = ledger.pendingRange();
+      if (pending) this.buffering.invalidateObserver();
+      const lastError = this.health.lastError;
+      const reason = lastError
+        ? `the memory model was failing: ${lastError.message}`
+        : 'the context overflowed before they were observed';
+      const note = gapNote(dropped, reason);
+      this.log.append(note);
+      const span = timeSpan(dropped);
+      this.dispatchGap({
+        droppedMessages: dropped.length,
+        from: span?.start ?? null,
+        to: span?.end ?? null,
+        reason,
+        note,
+      });
+    }
+    const removed = removedBy(source, swap);
+    if (removed.length > 0) {
+      const observedEnd = consumed.length > 0 ? consumed[consumed.length - 1]!.endIndex : priorPrefix;
+      this.fireObservationEvent({
+        trigger: 'emergency',
+        observedMessages: source.slice(priorPrefix, observedEnd),
+        removedMessages: removed,
+        observations: this.log.text,
+        contextUtilization: 0,
+        tokensBefore: 0,
+        tokensAfter: 0,
+        sync: false,
+        timestamp: new Date(),
+      });
+    }
+    return source.filter((_, i) => !(i < swap.cut && i !== keep) && !droppedIndices.has(i));
+  }
+
+  /**
+   * The request's history cut to fit `budgetTokens` in the view only (see
+   * emergency.ts truncateView). The source keeps every message.
+   */
+  truncateView(view: AgentMessage[], source: AgentMessage[], budgetTokens: number): AgentMessage[] | null {
+    return truncateView(view, new Set(source), budgetTokens);
+  }
+
+  private dispatchGap(info: MemoryGapInfo): void {
+    for (const handler of this.gapHandlers) {
+      try {
+        handler(info);
+      } catch (err) {
+        this.logger?.warn(`onMemoryGap handler threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------

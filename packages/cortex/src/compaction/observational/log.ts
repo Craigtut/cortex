@@ -58,7 +58,10 @@ export class ObservationLog {
    * meanwhile) and nothing changed.
    */
   reflect(input: string, reflected: string): boolean {
-    const next = applyReflection(this.log, input, reflected);
+    // A gap line records messages lost before memory saw them. It must
+    // outlive every reflection, whatever the reflector kept.
+    const lostGaps = input.split('\n').filter((line) => isGapLine(line) && !reflected.includes(line.trim()));
+    const next = applyReflection(this.log, input, lostGaps.length > 0 ? `${reflected}\n\n${lostGaps.join('\n')}` : reflected);
     if (next === null) return false;
     this.log = next;
     this.tokens = estimateTokens(this.log);
@@ -123,4 +126,9 @@ export class ObservationLog {
     this.tokens = 0;
     this.generations = 0;
   }
+}
+
+/** Whether a log line is a gap note (see emergency.ts gapNote). */
+function isGapLine(line: string): boolean {
+  return / GAP: \d+ messages /.test(line);
 }

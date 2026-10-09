@@ -448,8 +448,9 @@ Before producing your output, verify:
 2. **Temporal coherence.** Dates and timestamps are preserved. Events are ordered chronologically within each date.
 3. **User facts preserved.** All user identity, preference, and assertion observations are present.
 4. **Completed items retained.** All \\u2705 markers are present (though the details may be condensed).
-5. **No fabrication.** You only output information that was present in the input observations. Do not infer or fabricate new observations.
-6. **Format consistency.** Output follows the same structural format as input (date headers, priority markers, timestamps, two-level bullets).
+5. **Gaps preserved.** Every line containing "GAP:" appears in your output word for word: it records messages that were lost before they could be observed.
+6. **No fabrication.** You only output information that was present in the input observations. Do not infer or fabricate new observations.
+7. **Format consistency.** Output follows the same structural format as input (date headers, priority markers, timestamps, two-level bullets).
 
 ## Handling Compression Levels
 
@@ -507,6 +508,7 @@ Guidelines for using your observations:
 - If your observations mention a planned action with a date that has passed, assume the action was completed unless the user indicates otherwise.
 - Do not mention the observation system itself to the user. Use the information naturally as if you remember it from prior conversations.
 - Pay attention to priority markers: items marked with \\u{1F534} are critical facts and preferences that should strongly influence your responses.
+- A line marked GAP means messages from that span were lost before they could be recorded. If asked about that period, say so rather than guess.
 
 ### Current Task and Suggested Response
 

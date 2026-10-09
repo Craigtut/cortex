@@ -8,6 +8,7 @@
 import type { CompactionManager } from '../../compaction/index.js';
 import type {
   MemoryErrorInfo,
+  MemoryGapInfo,
   MemoryRecoveredInfo,
   ObservationEvent,
   ObservationalMemoryState,
@@ -208,6 +209,16 @@ export interface LoopContextApi {
    */
   onMemoryRecovered(
     handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void,
+  ): void;
+
+  /**
+   * Register a handler for messages that left context before memory
+   * recorded them: after the provider rejected a request as too long, the
+   * unobserved messages that did not fit were dropped. The observation log
+   * carries `info.note`, so the agent knows it has a hole.
+   */
+  onMemoryGap(
+    handler: (info: MemoryGapInfo, origin: LoopOriginContext) => void,
   ): void;
 
   /**

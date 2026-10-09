@@ -31,7 +31,7 @@ import { findToolCallGroups } from './tool-call-groups.js';
 // ---------------------------------------------------------------------------
 
 export const FAILSAFE_DEFAULTS: FailsafeConfig = {
-  threshold: 0.90,
+  threshold: 0.95,
 };
 
 /**

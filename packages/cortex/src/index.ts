@@ -444,6 +444,7 @@ export type {
   MemoryCallTrigger,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
+  MemoryGapInfo,
   MemoryEventPayload,
 } from './compaction/index.js';
 

@@ -1158,7 +1158,13 @@ export interface CompactionConfig {
  * Emergency truncation (Layer 3) configuration.
  */
 export interface FailsafeConfig {
-  /** Context usage ratio that triggers emergency truncation. Default: 0.90. */
+  /**
+   * Context usage ratio that triggers emergency truncation. Default: 0.95.
+   * Under observational memory it is measured against the effective window
+   * and truncates only the request's view (the source keeps every message
+   * for the observer); under the classic strategy, against the model's
+   * window.
+   */
   threshold: number;
 }
 

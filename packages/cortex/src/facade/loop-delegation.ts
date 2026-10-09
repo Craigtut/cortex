@@ -205,6 +205,7 @@ export const AGENT_LOOP_DELEGATION = {
   onReflection: 'forwarded',
   onMemoryError: 'forwarded',
   onMemoryRecovered: 'forwarded',
+  onMemoryGap: 'forwarded',
 } as const satisfies Record<keyof AgentLoop, AgentLoopMemberDisposition>;
 
 type DelegationTable = typeof AGENT_LOOP_DELEGATION;

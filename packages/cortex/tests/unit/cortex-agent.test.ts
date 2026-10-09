@@ -1094,6 +1094,7 @@ const POST_DESTROY_PROBES: Record<ForwardedLoopMember, PostDestroyProbe> = {
   onReflection: { call: (t) => t.onReflection(() => {}) },
   onMemoryError: { call: (t) => t.onMemoryError(() => {}) },
   onMemoryRecovered: { call: (t) => t.onMemoryRecovered(() => {}) },
+  onMemoryGap: { call: (t) => t.onMemoryGap(() => {}) },
 };
 
 /**

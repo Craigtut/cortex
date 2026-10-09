@@ -31,6 +31,7 @@ export interface MemoryCallOutcomes {
 export class MemoryHealth implements MemoryCallOutcomes {
   private consecutiveFailures = 0;
   private degradedSince: number | null = null;
+  private latestError: Error | null = null;
   private readonly errorHandlers: Array<(info: MemoryErrorInfo) => void> = [];
   private readonly recoveredHandlers: Array<(info: MemoryRecoveredInfo) => void> = [];
 
@@ -39,6 +40,11 @@ export class MemoryHealth implements MemoryCallOutcomes {
 
   get isDegraded(): boolean {
     return this.consecutiveFailures > 0;
+  }
+
+  /** The error of the failure that keeps memory degraded, if it is. */
+  get lastError(): Error | null {
+    return this.isDegraded ? this.latestError : null;
   }
 
   onError(handler: (info: MemoryErrorInfo) => void): void {
@@ -62,6 +68,7 @@ export class MemoryHealth implements MemoryCallOutcomes {
 
   failed(failure: MemoryCallFailure): void {
     this.consecutiveFailures++;
+    this.latestError = failure.error;
     this.degradedSince ??= Date.now();
     this.dispatch(this.errorHandlers, {
       ...failure,

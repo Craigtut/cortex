@@ -78,6 +78,7 @@ import type { BudgetGuard } from '../budget-guard.js';
 import type { SkillRegistry } from '../skill-registry.js';
 import type {
   MemoryErrorInfo,
+  MemoryGapInfo,
   MemoryRecoveredInfo,
   ObservationEvent,
   ObservationalMemoryState,
@@ -506,5 +507,9 @@ export abstract class LoopSurface {
 
   onMemoryRecovered(handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void): void {
     for (const loop of this.topology.resident) loop.onMemoryRecovered(handler);
+  }
+
+  onMemoryGap(handler: (info: MemoryGapInfo, origin: LoopOriginContext) => void): void {
+    for (const loop of this.topology.resident) loop.onMemoryGap(handler);
   }
 }
