@@ -634,6 +634,35 @@ against the pre-change source: revert only the source with
   - Bedrock's "Too many tokens" is not an overflow. That test exists from
     2e04562.
   - Cortex Code renders the billing notification.
+- As built (research and review corrected the plan here):
+  - Billing also covers the OpenCode gateway's monthly limits
+    (`GoUsageLimitError`, `FreeUsageLimitError`, "Monthly usage limit
+    reached"), per decision 7.
+  - A stated reset beyond `maxRetryAfterMs` (6 hours), or past the policy's
+    `maxElapsedMs`, is not waited for: the failure surfaces at once, since a
+    retry before the reset would be refused the same way. A reset within reach
+    is waited for (`max(backoff, retryAfterMs)`) and counts as one attempt.
+  - Overflow detection is pi's on the failed message, after Cortex's
+    rate-limit patterns, so the throttling exclusion holds by ordering.
+    `failsafe.ts` re-exports the classifier's `isContextOverflow`. Wordings
+    only Cortex matched ("context window", "request too large", "input too
+    long") are no longer overflows; pi's patterns caught real provider
+    wordings Cortex's had missed (Anthropic's 413 `request_too_large`,
+    OpenAI's "exceeds the context window", Gemini, Bedrock).
+  - A silent overflow is checked on the completed answer in the turn runner
+    (`overflowedSilently`), not in the classifier, since nothing failed.
+  - pi wraps credential failures as "OAuth refresh failed for <provider>:
+    <cause>", which the authentication patterns matched, so a network blip
+    during a refresh was fatal. The cause now decides: transient causes are
+    retried, anything else stays `authentication`.
+  - Memory calls (`compaction/observational/calls.ts`) do not retry
+    `billing` or an error with a stated reset; the call fails at once and
+    memory goes degraded.
+  - The Cortex Code notice shows the provider's own sentence (the `message`
+    of the JSON body) and points at `/model`. Cortex has no billing URLs per
+    provider, so there is no link beyond what the provider's message carries.
+  - pi's token estimator moved out of this migration, to the observational
+    memory work, since chars/4 drives every compaction threshold and fixture.
 
 ## Risks
 
