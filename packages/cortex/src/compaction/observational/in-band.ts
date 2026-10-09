@@ -60,7 +60,7 @@ export class InBandObserver {
     const { buffering } = this.ports;
     let observed = false;
     const stop = (error: Error): CatchUpResult => ({ observed, error });
-    if (buffering.isObserverInFlight() && !(await settledUnlessAborted(buffering.waitForObserverSettled(), signal))) {
+    if (!(await buffering.observerSettledUnless(signal))) {
       return stop(reasonOf(signal));
     }
     while (buffering.getWatermark() < end) {
@@ -122,23 +122,4 @@ export class InBandObserver {
     });
     return error;
   }
-}
-
-/** Whether `promise` settled before `signal` fired. Never rejects. */
-function settledUnlessAborted(promise: Promise<unknown>, signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    const onAbort = (): void => resolve(false);
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(true);
-      },
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(true);
-      },
-    );
-  });
 }

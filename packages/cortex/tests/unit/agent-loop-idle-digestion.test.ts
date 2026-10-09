@@ -12,6 +12,7 @@ import type { PiAgent, PiModel } from '../../src/agent-loop.js';
 import type { AgentLoopConfig } from '../../src/types.js';
 import type { AgentMessage } from '../../src/context-manager.js';
 import type { CompleteFn } from '../../src/compaction/observational/types.js';
+import { ObservationalMemoryEngine } from '../../src/compaction/observational/index.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 
 type TestAgentLoopConstructor = new (
@@ -259,6 +260,102 @@ describe('digestIdle observer wait bound', () => {
 });
 
 describe('digestIdle preemption', () => {
+  it('launches nothing more once preempted, so a swap after it cannot mark unobserved messages observed', async () => {
+    const piAgent = createMockPiAgent();
+    // Non-blocking: the run's activation merges what is buffered, never waits.
+    const loop = createLoop(piAgent, {
+      compaction: { nonBlocking: true, observational: { bufferMinTokens: 100, bufferTokenCap: 3_500, maxAttempts: 1 } },
+    });
+    const tags = (text: string): string[] => text.match(/<m\d+>/g) ?? [];
+    const seen: string[][] = [];
+    const releases: Array<() => void> = [];
+    const complete = vi.fn<CompleteFn>((context) => {
+      seen.push([...new Set(tags(JSON.stringify(context.messages)))]);
+      return new Promise<string>((resolve) => releases.push(() => resolve(OBSERVER_OUTPUT)));
+    });
+    loop.getCompactionManager().setObservationalCompleteFn(complete);
+    // About 1,000 tokens a message; a piece holds three. m0 and m1 are
+    // already observed.
+    const message = (i: number): AgentMessage =>
+      ({ role: i % 2 ? 'assistant' : 'user', content: `<m${i}> ` + 'x'.repeat(4_000), timestamp: i + 1 }) as AgentMessage;
+    loop.restoreConversationHistory([
+      ...Array.from({ length: 7 }, (_, i) => message(i)),
+      { role: 'user', content: '<m7> latest', timestamp: 8 },
+    ] as never);
+    loop.restoreObservationalMemoryState({
+      observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
+      bufferedChunks: [{ observations: '* m0 m1', messageTokensObserved: 2_000, createdAt: new Date(), endIndex: 2 }],
+      bufferWatermark: 2,
+    });
+
+    const preempt = new AbortController();
+    const digestion = loop.digestIdle({ signal: preempt.signal });
+    await waitUntil(() => complete.mock.calls.length === 1);
+    expect(seen[0]).toEqual(['<m2>', '<m3>', '<m4>']);
+    preempt.abort();
+    expect((await digestion).preempted).toBe(true);
+
+    // A run's activation swaps m0 and m1 out: the ledger rebases.
+    loop.updateCurrentContextTokenCount(19_500);
+    await loop.getTransformContextHook()({
+      systemPrompt: '', model: null, messages: piAgent.state.messages, tools: [], thinkingLevel: 'medium',
+    } as never);
+    expect(tags(JSON.stringify(loop.getConversationHistory()[0]!.content))).toEqual(['<m2>']);
+
+    // The digestion's piece lands; nothing launches after it.
+    releases[0]!();
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(complete).toHaveBeenCalledTimes(1);
+    // Every message the ledger counts as observed was seen by an observer.
+    const watermark = loop.getObservationalMemoryState().bufferWatermark!;
+    const counted = loop.getConversationHistory().slice(0, watermark)
+      .map((m) => tags(JSON.stringify(m.content))[0]!);
+    expect(counted.filter((tag) => !seen.flat().includes(tag))).toEqual([]);
+    expect(counted).toEqual(['<m2>', '<m3>', '<m4>']);
+  });
+
+  it('keeps observing the live history when a run rewrites it between pieces', async () => {
+    // Not preempted: a digestion that continues past a swap must cut its
+    // next piece from the history as it is now.
+    const engine = new ObservationalMemoryEngine({ bufferMinTokens: 100, bufferTokenCap: 3_500, maxAttempts: 1 });
+    engine.setContextWindow(20_000);
+    engine.setUtilityModelContextWindow(200_000);
+    const tags = (text: string): string[] => text.match(/<m\d+>/g) ?? [];
+    const seen: string[][] = [];
+    const releases: Array<() => void> = [];
+    engine.setCompleteFn(vi.fn<CompleteFn>((context) => {
+      seen.push([...new Set(tags(JSON.stringify(context.messages)))]);
+      return new Promise<string>((resolve) => releases.push(() => resolve(OBSERVER_OUTPUT)));
+    }));
+    const message = (i: number): AgentMessage =>
+      ({ role: i % 2 ? 'assistant' : 'user', content: `<m${i}> ` + 'x'.repeat(4_000), timestamp: 0 }) as AgentMessage;
+    let live: AgentMessage[] = [...Array.from({ length: 9 }, (_, i) => message(i)), { role: 'user', content: '<m9> latest', timestamp: 0 }];
+    engine.restoreState({
+      observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
+      bufferedChunks: [{ observations: '* m0 m1', messageTokensObserved: 2_000, createdAt: new Date(), endIndex: 2 }],
+      bufferWatermark: 2,
+    });
+
+    const digestion = engine.digestPendingBuffers(() => live);
+    await waitUntil(() => seen.length === 1);
+    // A swap removes m0 and m1 while the first piece is in flight.
+    await engine.applyInTransformContext(0.95, () => live, (history) => { live = history; }, { allowSync: false });
+    expect(tags(JSON.stringify(live[0]!.content))).toEqual(['<m2>']);
+
+    for (let i = 0; i < 4 && releases[i]; i++) {
+      releases[i]!();
+      await waitUntil(() => seen.length > i + 1 || i === 3, 200).catch(() => {});
+    }
+    await digestion;
+    const watermark = engine.getState().bufferWatermark!;
+    const counted = live.slice(0, watermark).map((m) => tags(JSON.stringify(m.content))[0]!);
+    // Precondition: digestion went on past the first piece.
+    expect(seen.length).toBeGreaterThan(1);
+    expect(counted.filter((tag) => !seen.flat().includes(tag))).toEqual([]);
+    // And no message was observed twice.
+    expect(new Set(seen.flat()).size).toBe(seen.flat().length);
+  });
+
   it('releases the gate at once when preempted during a hung observer wait', async () => {
     const piAgent = createMockPiAgent();
     const loop = createLoop(piAgent);

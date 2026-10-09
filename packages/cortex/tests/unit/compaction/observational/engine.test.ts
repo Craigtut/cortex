@@ -435,10 +435,8 @@ describe('ObservationalMemoryEngine', () => {
 
       // launchObserver declines on the aborted coordinator, so no observer
       // ran; reporting true here would be a false positive to digestIdle.
-      const ran = await engine.digestPendingBuffers(
-        [userMsg('long enough content '.repeat(50))],
-        0,
-      );
+      const history = [userMsg('long enough content '.repeat(50))];
+      const ran = await engine.digestPendingBuffers(() => history);
 
       expect(ran).toBe(false);
       expect(mockComplete).not.toHaveBeenCalled();

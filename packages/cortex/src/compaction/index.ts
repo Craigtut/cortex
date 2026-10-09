@@ -519,16 +519,15 @@ export class CompactionManager {
   /**
    * Run pending observation buffering outside a prompt (see
    * ObservationalMemoryEngine.digestPendingBuffers). Returns true when an
-   * observer call ran to completion;
-   * false also covers a wait that hit `observerTimeoutMs` (the digestion
-   * gives the gate back rather than blocking on a hung utility request).
+   * observer call ran to completion; false also covers a wait that hit the
+   * timeout or the preemption signal (the digestion gives the gate back
+   * rather than blocking on a hung utility request).
    */
   async digestPendingObservationBuffers(
-    messages: AgentMessage[],
-    historyStart: number,
-    observerTimeoutMs?: number,
+    getHistory: () => AgentMessage[],
+    options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<boolean> {
-    return this.observationalEngine.digestPendingBuffers(messages, historyStart, observerTimeoutMs);
+    return this.observationalEngine.digestPendingBuffers(getHistory, options);
   }
 
   /**

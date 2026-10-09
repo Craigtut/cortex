@@ -524,66 +524,71 @@ export class ObservationalMemoryEngine {
    * an explicit digestion pass) is a cheap chunk merge. This is the
    * primitive behind "digest during idle windows".
    *
-   * Both waits are bounded by `timeoutMs` (a single wall-clock budget for
-   * the whole call): callers hold the loop gate while digesting, so a hung
-   * utility request must time the digestion out rather than wedge the gate.
-   * A timed-out observer stays in flight and lands its chunk whenever it
-   * settles; only the waiting is abandoned.
+   * Every wait is bounded by `timeoutMs` (one wall-clock budget for the
+   * whole call) and by `signal` (the owner preempting the digestion):
+   * callers hold the loop gate while digesting, so a hung utility request
+   * must time the digestion out rather than wedge the gate, and input
+   * arriving must stop it. A stopped digestion launches nothing more; an
+   * observer already in flight lands its chunk whenever it settles.
    *
-   * @param messages - The full message array (slot messages included)
-   * @param historyStart - Index of the first history message (past the system head and slots)
-   * @param timeoutMs - Wall-clock budget for observer waits (default 60s)
+   * History is read afresh for every piece: a run between pieces may have
+   * swapped observed messages out and rebased the ledger, and a piece cut
+   * from an older snapshot would mark messages observed that no observer
+   * saw.
+   *
+   * @param getHistory - The live post-slot history
+   * @param options.timeoutMs - Wall-clock budget for the whole call (default 60s)
+   * @param options.signal - Preempts the digestion
    * @returns true when an observer call ran to completion in this digestion
    */
   async digestPendingBuffers(
-    messages: AgentMessage[],
-    historyStart: number,
-    timeoutMs: number = DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS,
+    getHistory: () => AgentMessage[],
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<boolean> {
     if (!this.completeFn) return false;
-    const deadline = Date.now() + timeoutMs;
-
-    // Let an already-running observer finish and record its chunk, so the
-    // tail computed below starts at the settled watermark. On timeout,
-    // skip launching a second observer behind a hung one.
-    if (!(await this.buffering.waitForObserverSettledWithin(timeoutMs))) {
-      this.logger?.warn('Idle digestion timed out waiting for the in-flight observer');
+    const deadline = deadlineSignal(options.timeoutMs ?? DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS);
+    const stop = options.signal ? AbortSignal.any([deadline.signal, options.signal]) : deadline.signal;
+    const timedOut = (what: string): false => {
+      if (deadline.signal.aborted) this.logger?.warn(`Idle digestion timed out waiting for ${what}`);
       return false;
-    }
+    };
+    try {
+      // Let an already-running observer finish and record its chunk, so the
+      // tail read below starts at the settled watermark. When the wait is
+      // given up, launch nothing behind a hung observer.
+      if (!(await this.buffering.observerSettledUnless(stop))) return timedOut('the in-flight observer');
 
-    const history = messages.slice(historyStart);
-    const unobserved = history.slice(this.buffering.getWatermark());
-    if (unobserved.length === 0) return false;
+      const unobservedTokens = getHistory().slice(this.buffering.getWatermark()).reduce((sum, msg) => {
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : JSON.stringify(msg.content);
+        return sum + estimateTokens(content);
+      }, 0);
+      // Same floor onTurnEnd's buffering uses: observing a trivial tail
+      // thrashes the utility model for nothing.
+      if (unobservedTokens === 0 || unobservedTokens < this.config.bufferMinTokens) return false;
 
-    const unobservedTokens = unobserved.reduce((sum, msg) => {
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : JSON.stringify(msg.content);
-      return sum + estimateTokens(content);
-    }, 0);
-    // Same floor onTurnEnd's buffering uses: observing a trivial tail
-    // thrashes the utility model for nothing.
-    if (unobservedTokens < this.config.bufferMinTokens) return false;
-
-    // One piece at a time, each within the observer's input cap, until the
-    // tail is observed, a call fails, or the budget runs out.
-    let observerRan = false;
-    while (this.buffering.getWatermark() < history.length) {
-      const before = this.buffering.getWatermark();
-      this.launchPiece(history, before, 'idle');
-      if (!this.buffering.isObserverInFlight()) {
-        // launchObserver declined (the coordinator was aborted): no
-        // observer ran, so do not report one.
-        return observerRan;
+      // One piece at a time, each within the observer's input cap, until the
+      // tail is observed, a call fails, or the digestion is stopped.
+      let observerRan = false;
+      for (;;) {
+        if (stop.aborted) return observerRan;
+        const history = getHistory();
+        const before = this.buffering.getWatermark();
+        if (before >= history.length) return observerRan;
+        this.launchPiece(history, before, 'idle');
+        if (!this.buffering.isObserverInFlight()) {
+          // launchObserver declined (the coordinator was aborted): no
+          // observer ran, so do not report one.
+          return observerRan;
+        }
+        if (!(await this.buffering.observerSettledUnless(stop))) return timedOut('its observer call');
+        if (this.buffering.getWatermark() <= before) return observerRan;
+        observerRan = true;
       }
-      if (!(await this.buffering.waitForObserverSettledWithin(deadline - Date.now()))) {
-        this.logger?.warn('Idle digestion timed out waiting for its observer call');
-        return false;
-      }
-      if (this.buffering.getWatermark() <= before) return observerRan;
-      observerRan = true;
+    } finally {
+      deadline.clear();
     }
-    return observerRan;
   }
 
   // -------------------------------------------------------------------------

@@ -433,32 +433,26 @@ export class BufferingCoordinator {
   }
 
   /**
-   * Like {@link waitForObserverSettled}, but bounded by a wall clock:
-   * resolves false when the in-flight observer has not settled within
-   * `timeoutMs`. The observer stays in flight; its chunk (or failure
-   * cleanup) is still recorded whenever it eventually settles. This bound
-   * exists for callers that hold a gate while waiting (idle digestion): an
-   * unbounded await on a hung provider request would wedge the gate
-   * forever. Never rejects.
+   * Like {@link waitForObserverSettled}, but given up when `signal` fires
+   * (a deadline, a preemption): resolves false when the in-flight observer
+   * had not settled by then. The observer stays in flight; its chunk (or
+   * failure cleanup) is still recorded whenever it settles. Callers that
+   * hold a gate while waiting need this bound: an unbounded await on a
+   * hung provider request would wedge the gate. Never rejects.
    */
-  async waitForObserverSettledWithin(timeoutMs: number): Promise<boolean> {
+  async observerSettledUnless(signal: AbortSignal): Promise<boolean> {
     const inFlight = this.inFlightObserver?.promise;
     if (!inFlight) return true;
-    const settled = inFlight.then(
-      () => true,
-      () => true,
-    );
-    if (!Number.isFinite(timeoutMs)) return settled;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
-      timer.unref?.();
+    if (signal.aborted) return false;
+    return new Promise((resolve) => {
+      const onAbort = (): void => resolve(false);
+      signal.addEventListener('abort', onAbort, { once: true });
+      const settle = (): void => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(true);
+      };
+      inFlight.then(settle, settle);
     });
-    try {
-      return await Promise.race([settled, timeout]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
   }
 
   /**

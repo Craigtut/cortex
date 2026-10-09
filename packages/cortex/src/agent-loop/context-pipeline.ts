@@ -437,13 +437,17 @@ export class ContextPipeline {
       }
 
       // 1. Observer catch-up, so the next activation is a cheap merge.
-      // Preempting abandons only the wait; the observer still lands its
-      // chunk.
+      // Preempting stops it launching more and abandons the wait; an
+      // observer in flight still lands its chunk. It reads the live
+      // history: a run after a preemption can rewrite it.
+      const historyStart = this.ports.slots.historyStart;
       const outcome = await raceAbort(
         this.ports.compaction().digestPendingObservationBuffers(
-          this.ports.agentState().messages,
-          this.ports.slots.historyStart,
-          options?.observerTimeoutMs,
+          () => this.ports.agentState().messages.slice(historyStart),
+          {
+            ...(options?.observerTimeoutMs !== undefined ? { timeoutMs: options.observerTimeoutMs } : {}),
+            ...(signal ? { signal } : {}),
+          },
         ),
         signal,
       );
