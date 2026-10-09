@@ -18,6 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { ProviderManager } from '../../../src/provider-manager.js';
 
 // ---------------------------------------------------------------------------
 // Provider configuration
@@ -92,28 +93,20 @@ function saveCredentialsCache(cache: CredentialsCache): void {
 }
 
 // ---------------------------------------------------------------------------
-// Pi-ai OAuth dynamic imports
+// OAuth through Cortex's ProviderManager
 // ---------------------------------------------------------------------------
 
-interface PiAiOAuthModule {
-  getOAuthProvider: (provider: string) => {
-    login: (opts: {
-      onAuth: (info: { url: string; instructions?: string }) => void;
-      onPrompt: (prompt: { message: string }) => Promise<string>;
-      onProgress?: (message: string) => void;
-      onManualCodeInput?: () => Promise<string>;
-      signal?: AbortSignal;
-    }) => Promise<Record<string, unknown>>;
-  } | undefined;
-  getOAuthApiKey: (
-    provider: string,
-    credMap: Record<string, unknown>,
-  ) => Promise<{ apiKey: string; newCredentials: Record<string, unknown> } | null>;
-}
+/**
+ * pi-ai 0.80 removed the global OAuth helpers this file used to import from
+ * `@earendil-works/pi-ai/oauth` (`getOAuthProvider`, `getOAuthApiKey`); the
+ * subpath now exports types only. Evals go through ProviderManager, the
+ * same OAuth surface Cortex consumers use.
+ */
+let providerManager: ProviderManager | null = null;
 
-async function loadPiAiOAuth(): Promise<PiAiOAuthModule> {
-  const modulePath = '@earendil-works/pi-ai/oauth';
-  return await import(modulePath) as PiAiOAuthModule;
+function getProviderManager(): ProviderManager {
+  providerManager ??= new ProviderManager();
+  return providerManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,22 +245,10 @@ interface RefreshResult {
 }
 
 async function refreshOAuthKey(provider: string, credentials: string): Promise<RefreshResult | null> {
-  const oauthModule = await loadPiAiOAuth();
-
-  const rawCredentials = JSON.parse(credentials) as Record<string, unknown>;
-  const credMap = { [provider]: { type: 'oauth' as const, ...rawCredentials } };
-
-  const result = await oauthModule.getOAuthApiKey(provider, credMap);
-  if (!result) return null;
-
-  const originalJson = credentials;
-  const newJson = JSON.stringify(result.newCredentials);
-  const changed = newJson !== originalJson;
-
-  return {
-    key: result.apiKey,
-    updatedCredentials: changed ? newJson : undefined,
-  };
+  const result = await getProviderManager().resolveOAuthApiKey(provider, credentials);
+  return result.changed
+    ? { key: result.apiKey, updatedCredentials: result.credentials }
+    : { key: result.apiKey };
 }
 
 interface OAuthLoginResult {
@@ -276,16 +257,10 @@ interface OAuthLoginResult {
 }
 
 async function runInteractiveOAuth(provider: string): Promise<OAuthLoginResult> {
-  const oauthModule = await loadPiAiOAuth();
-
-  const oauthProvider = oauthModule.getOAuthProvider(provider);
-  if (!oauthProvider) {
-    throw new Error(`No OAuth provider found for "${provider}"`);
-  }
-
+  const manager = getProviderManager();
   console.log('');
 
-  const rawCredentials = await oauthProvider.login({
+  const login = await manager.initiateOAuth(provider, {
     onAuth: ({ url, instructions }) => {
       console.log('  ╔══════════════════════════════════════════════════╗');
       console.log('  ║  OAuth Authorization Required                   ║');
@@ -310,35 +285,27 @@ async function runInteractiveOAuth(provider: string): Promise<OAuthLoginResult> 
       }
       console.log('  Waiting for authorization...\n');
     },
+    // Anthropic asks for a login method first; evals always use the browser.
+    onSelect: async (prompt) => prompt.options.find(option => option.id === 'browser')?.id ?? prompt.options[0]?.id,
     onPrompt: async (prompt: { message: string }) => {
-      // This shouldn't happen for Anthropic OAuth, but handle it
       console.log(`  Prompt: ${prompt.message}`);
       return '';
     },
-    onManualCodeInput: async () => {
-      console.log('  Paste the manual authorization code if the browser callback did not complete.');
-      return '';
-    },
+    // pi races this prompt against the browser callback, and an answer ends
+    // the race: resolving with '' would abandon the callback and fail the
+    // login. Never answer; the callback wins.
+    onManualCodeInput: () => new Promise<string>(() => {}),
     onProgress: (message: string) => {
       console.log(`  ${message}`);
     },
   });
 
-  const credentials = JSON.stringify(rawCredentials);
-
-  // Immediately resolve an API key from the fresh credentials
-  const credMap = { [provider]: { type: 'oauth' as const, ...rawCredentials } };
-  const keyResult = await oauthModule.getOAuthApiKey(provider, credMap);
-
-  if (!keyResult) {
-    throw new Error('OAuth login succeeded but could not resolve an API key');
-  }
-
+  const keyResult = await manager.resolveOAuthApiKey(provider, login.credentials);
   console.log('  OAuth login successful! Credentials cached.\n');
 
   return {
     apiKey: keyResult.apiKey,
-    credentials: JSON.stringify(keyResult.newCredentials),
+    credentials: keyResult.credentials,
   };
 }
 
