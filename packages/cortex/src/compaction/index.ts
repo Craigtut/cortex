@@ -84,30 +84,33 @@ export const DEFAULT_COMPACTION_CONFIG: CortexCompactionConfig = {
 
 /**
  * Build a full compaction config from partial overrides.
+ *
+ * Always returns fresh objects, never the shared defaults: a loop writes its
+ * own persistResult into the microcompaction settings, which would otherwise
+ * leak into every later loop in the process.
  */
 export function buildCompactionConfig(
   partial?: Partial<CortexCompactionConfig>,
 ): CortexCompactionConfig {
-  if (!partial) return DEFAULT_COMPACTION_CONFIG;
-
   const config: CortexCompactionConfig = {
     microcompaction: {
       ...MICROCOMPACTION_DEFAULTS,
-      ...partial.microcompaction,
+      ...partial?.microcompaction,
     },
     compaction: {
       ...COMPACTION_DEFAULTS,
-      ...partial.compaction,
+      ...partial?.compaction,
     },
     failsafe: {
       ...FAILSAFE_DEFAULTS,
-      ...partial.failsafe,
+      ...partial?.failsafe,
     },
     adaptive: {
       ...ADAPTIVE_DEFAULTS,
-      ...partial.adaptive,
+      ...partial?.adaptive,
     },
   };
+  if (!partial) return config;
 
   if (partial.strategy !== undefined) {
     config.strategy = partial.strategy;
