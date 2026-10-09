@@ -304,7 +304,8 @@ describe('ObservationalMemoryEngine', () => {
 
       expect(handler).toHaveBeenCalledOnce();
       const event: ObservationEvent = handler.mock.calls[0]![0];
-      expect(event.compactedMessages.length).toBe(2);
+      expect(event.observedMessages.length).toBe(2);
+      expect(event.removedMessages).toEqual([]);
       expect(event.observations).toContain('Test observation');
       expect(event.sync).toBe(true);
       expect(event.timestamp).toBeInstanceOf(Date);
@@ -614,16 +615,17 @@ describe('ObservationalMemoryEngine', () => {
       expect(survivingSource).toContain(resultB);
     });
 
-    it('without reconciliation the stale watermark orphans a tool result (bug repro)', async () => {
+    it('even without reconciliation, a stale watermark cannot orphan a tool result', async () => {
       const engine = await buildEngineWatermark4();
 
-      // Skip the reconciliation: the watermark stays at the pre-truncation 4.
+      // Skip the reconciliation: the watermark stays at the pre-truncation 4,
+      // inside the [callB, resultB] group. Swaps cut on unit boundaries, so
+      // the group stays whole.
       const survivingSource = await activate(engine);
 
-      // The stale slice removed callB but kept resultB: an orphaned result at
-      // the head of the surviving source. This is exactly what the fix prevents.
-      expect(survivingSource[0]!.role).toBe('toolResult');
-      expect(() => assertNoOrphans(survivingSource)).toThrow();
+      assertNoOrphans(survivingSource);
+      expect(survivingSource).toContain(callB);
+      expect(survivingSource).toContain(resultB);
     });
   });
 
@@ -725,16 +727,17 @@ describe('ObservationalMemoryEngine', () => {
       expect(survivingSource).toContain(U2);
     });
 
-    it('without reconciliation the stale watermark orphans a tool result (bug repro)', async () => {
+    it('even without reconciliation, a stale watermark cannot orphan a tool result', async () => {
       const engine = await buildEngineWatermark3();
 
-      // Skip the reconciliation: the watermark still counts the trimmed stub.
+      // Skip the reconciliation: the watermark still counts the trimmed stub
+      // and points inside the [callB, resultB] group. Swaps cut on unit
+      // boundaries, so the group stays whole.
       const survivingSource = await activate(engine);
 
-      // The stale slice removed callB but kept resultB: an orphaned result at
-      // the head of the surviving source. This is exactly what the fix prevents.
-      expect(survivingSource[0]!.role).toBe('toolResult');
-      expect(() => assertNoOrphans(survivingSource)).toThrow();
+      assertNoOrphans(survivingSource);
+      expect(survivingSource).toContain(callB);
+      expect(survivingSource).toContain(resultB);
     });
   });
 });

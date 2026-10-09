@@ -22,12 +22,20 @@ function newEngine(complete: CompleteFn, config: Partial<ObservationalMemoryConf
   return engine;
 }
 
-/** One in-band activation over an unobserved history that keeps utilization over the threshold. */
+/**
+ * One in-band activation over an unobserved history that keeps utilization
+ * over the threshold: an older exchange the verbatim tail cannot hold, then
+ * the latest question.
+ */
 async function activate(
   engine: ObservationalMemoryEngine,
   options?: { signal?: AbortSignal },
 ): Promise<AgentMessage[]> {
-  let source = [userMsg('u'.repeat(4_000)), userMsg('latest')];
+  let source = [
+    userMsg('u'.repeat(16_000)),
+    { role: 'assistant', content: 'v'.repeat(16_000), timestamp: 0 } as AgentMessage,
+    userMsg('latest'),
+  ];
   const context: AgentContext = {
     systemPrompt: '', model: null, messages: [userMsg('slot'), ...source], tools: [], thinkingLevel: 'medium',
   };
@@ -54,7 +62,7 @@ describe('timeouts', () => {
     const surviving = await activate(engine);
 
     // Nothing was observed, so nothing left the source.
-    expect(surviving).toHaveLength(2);
+    expect(surviving).toHaveLength(3);
     expect(engine.getObservations()).toBe('');
   });
 });
@@ -73,7 +81,7 @@ describe('retries', () => {
 
     expect(complete).toHaveBeenCalledTimes(2);
     expect(engine.getObservations()).toContain('OBSERVED');
-    expect(surviving).toHaveLength(0);
+    expect(surviving.map((m) => m.content)).toEqual(['latest']);
   });
 
   it('guard: does not retry an authentication failure', async () => {
@@ -111,7 +119,7 @@ describe('the run abort', () => {
     run.abort();
     const surviving = await pass;
 
-    expect(surviving).toHaveLength(2);
+    expect(surviving).toHaveLength(3);
   });
 });
 

@@ -48,6 +48,12 @@ export const OBSERVATIONAL_MEMORY_DEFAULTS: Required<
   /** 2k tokens of previous observations sent to the Observer for context. */
   previousObserverTokens: 2_000,
 
+  /** A fifth of the window stays verbatim after a swap... */
+  tailRatio: 0.2,
+
+  /** ...up to 64k tokens. */
+  tailMaxTokens: 64_000,
+
   /** Each observer or reflector attempt answers within a minute. */
   callTimeoutMs: 60_000,
 
@@ -209,7 +215,7 @@ Good:
 
 ## Output Format
 
-You MUST output your observations in the following XML format. All three sections are required AND must contain meaningful content. Do not leave sections empty or with placeholder labels only. The current-task and suggested-response sections are critical: after activation, the raw conversation messages are removed from context, and these hints are the ONLY way the agent knows what it was doing and how to continue. Treat them as mission-critical.
+You MUST output your observations in the following XML format. All three sections are required AND must contain meaningful content. Do not leave sections empty or with placeholder labels only. The current-task and suggested-response sections are critical: after activation, older raw messages are removed from context and only the most recent messages stay verbatim, so these hints are how the agent connects what it was doing before that recent stretch to the work in it. Treat them as mission-critical.
 
 <observations>
 Date: [date in "Mon DD, YYYY" format, e.g., "Apr 10, 2026"]
@@ -492,7 +498,7 @@ export const COMPRESSION_LEVEL_GUIDANCE: readonly string[] = [
  */
 export const OBSERVATION_CONTEXT_PREAMBLE = `## Your Memory (Observations)
 
-The following observations are your memory of past interactions with this user. They were extracted from conversations you no longer have direct access to.
+The following observations are your memory of past interactions with this user. They were extracted from earlier conversation. The most recent messages follow verbatim after this block; where they overlap with an observation, the verbatim message is the more precise record. An observation can describe work done after the oldest message you still see.
 
 Guidelines for using your observations:
 - Reference specific details from your observations when responding. Demonstrate continuity by acknowledging prior context naturally.
@@ -506,10 +512,10 @@ Guidelines for using your observations:
 
 After your observations you will find two additional sections: <current-task> and <suggested-response>. These are briefing notes from your memory system about the active work.
 
-- <current-task> describes what you were working on at the moment the raw conversation was compressed into these observations. Use this to maintain continuity: you should know what you were doing and pick it back up, not ask the user to re-explain.
+- <current-task> describes what you were working on at the moment older messages were compressed into these observations. Use this to maintain continuity: you should know what you were doing and pick it back up, not ask the user to re-explain.
 - <suggested-response> is concrete guidance for your next message. Use it as a starting point for what to say or do. You can adapt it to fit the user's most recent input, but do not ignore it. If the user's latest message is a direct request that supersedes the suggested response, address the request first while still preserving the context from the suggested response.
 
-These sections exist because after memory compaction you do not have the raw conversation to refer to. Without them you would sound like you had forgotten what you were doing.`;
+These sections exist because after memory compaction you have only the most recent part of the raw conversation to refer to. Without them you would sound like you had forgotten what you were doing.`;
 
 // ---------------------------------------------------------------------------
 // Recall Instructions (appended when recall is configured)

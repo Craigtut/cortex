@@ -186,25 +186,34 @@ describe('ObservationalMemoryEngine allowSync', () => {
     return sourceHistory;
   }
 
+  /** Two large exchanges: more than the verbatim tail (20% of the window) holds. */
+  function largeHistory(): AgentMessage[] {
+    return [
+      makeUserMsg('a'.repeat(40_000)),
+      makeAssistantMsg('b'.repeat(40_000)),
+      makeUserMsg('c'.repeat(40_000)),
+      makeAssistantMsg('d'.repeat(40_000)),
+    ];
+  }
+
   it('with allowSync false, never runs the forced observer on the unobserved tail', async () => {
     const { engine, complete } = buildEngine();
-    const source = buildHistory(5);
 
-    const surviving = await activate(engine, source, false);
+    const surviving = await activate(engine, largeHistory(), false);
 
     expect(complete).not.toHaveBeenCalled();
     // Nothing was observed, so nothing may be trimmed.
-    expect(surviving).toHaveLength(10);
+    expect(surviving).toHaveLength(4);
   });
 
-  it('control: with allowSync true, the forced observer runs and trims', async () => {
+  it('control: with allowSync true, the forced observer runs and trims up to the tail', async () => {
     const { engine, complete } = buildEngine();
-    const source = buildHistory(5);
 
-    const surviving = await activate(engine, source, true);
+    const surviving = await activate(engine, largeHistory(), true);
 
     expect(complete).toHaveBeenCalled();
-    expect(surviving).toHaveLength(0);
+    // The older exchange left; the latest stays verbatim.
+    expect(surviving).toHaveLength(2);
   });
 
   it('with allowSync false, reflection at threshold launches async instead of running inline', async () => {

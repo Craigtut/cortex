@@ -65,6 +65,8 @@ describe('context size after a swap', () => {
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
       { role: 'assistant', content: 'done '.repeat(3000), timestamp: 2 },
+      { role: 'user', content: 'more '.repeat(3000), timestamp: 3 },
+      { role: 'assistant', content: 'again '.repeat(3000), timestamp: 4 },
     );
     // Buffer a chunk below the threshold, then add a fresh exchange.
     await loop.digestIdle();
@@ -77,6 +79,7 @@ describe('context size after a swap', () => {
     // Precondition: the swap happened, with one observer call so far.
     expect(swap.historyCompacted).toBe(true);
     expect(complete).toHaveBeenCalledTimes(1);
+    const afterSwap = history(loop, piAgent);
 
     // The next request's transformContext, as pi would run it.
     await loop.getTransformContextHook()({
@@ -84,7 +87,9 @@ describe('context size after a swap', () => {
     } as AgentContext);
 
     expect(complete).toHaveBeenCalledTimes(1);
-    expect(history(loop, piAgent)).toEqual(['latest question', 'latest answer']);
+    // The swap's result stands: the verbatim tail and the latest exchange.
+    expect(history(loop, piAgent)).toEqual(afterSwap);
+    expect(afterSwap.slice(-2)).toEqual(['latest question', 'latest answer']);
     expect(loop.estimateCurrentContextTokens()).toBeLessThan(18_000);
   });
 
@@ -94,6 +99,7 @@ describe('context size after a swap', () => {
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
       { role: 'assistant', content: 'done '.repeat(3000), timestamp: 2 },
+      { role: 'user', content: 'latest question', timestamp: 3 },
     );
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 
@@ -101,8 +107,9 @@ describe('context size after a swap', () => {
       systemPrompt: '', model: null, messages: piAgent.state.messages as AgentMessage[], tools: [], thinkingLevel: 'medium',
     } as AgentContext);
 
-    // Precondition: the swap removed the observed history.
-    expect(history(loop, piAgent)).toHaveLength(0);
+    // Precondition: the swap removed the older message; the verbatim tail stayed.
+    expect(history(loop, piAgent)).toHaveLength(2);
+    expect(history(loop, piAgent).at(-1)).toBe('latest question');
     expect(loop.currentContextTokenCount).toBe(0);
   });
 });

@@ -164,6 +164,8 @@ describe('digestIdle (observational)', () => {
     const loop = createLoop(piAgent);
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
     loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    // Two exchanges: the older one can leave; the latest stays verbatim.
+    seedHistory(piAgent);
     seedHistory(piAgent);
     // Over the activation threshold (default 0.9 of the 20k budget).
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
@@ -182,6 +184,8 @@ describe('digestIdle (observational)', () => {
     const loop = createLoop(piAgent, { compaction: { nonBlocking: true } });
     const complete = vi.fn().mockResolvedValue(OBSERVER_OUTPUT);
     loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
+    // Two exchanges: the older one can leave; the latest stays verbatim.
+    seedHistory(piAgent);
     seedHistory(piAgent);
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 
@@ -550,6 +554,8 @@ describe('digestIdle abandoned pass event suppression', () => {
     loop.getCompactionManager().setObservationalCompleteFn(complete as unknown as CompleteFn);
     const observed = vi.fn();
     loop.onObservation(observed);
+    // Two exchanges: the older one can leave; the latest stays verbatim.
+    seedHistory(piAgent);
     seedHistory(piAgent);
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
 

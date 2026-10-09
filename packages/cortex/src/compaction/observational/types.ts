@@ -89,6 +89,21 @@ export interface ObservationalMemoryConfig {
   previousObserverTokens: number;
 
   /**
+   * Fraction of the context window kept verbatim when observations swap
+   * in: the most recent messages stay as they are, never split between a
+   * tool call and its result, and the latest user message always stays.
+   * @default 0.2
+   */
+  tailRatio: number;
+
+  /**
+   * Cap on the verbatim tail in tokens, so a large window does not keep a
+   * large raw tail. The last unit of history stays whatever its size.
+   * @default 64_000
+   */
+  tailMaxTokens: number;
+
+  /**
    * Wall-clock bound on each attempt of an observer or reflector call.
    * @default 60_000
    */
@@ -240,24 +255,37 @@ export interface ObservationChunk {
 // ---------------------------------------------------------------------------
 
 /**
- * Event payload fired when observation activates (messages are compressed
- * and removed from context).
+ * Event payload fired when observations are recorded into the log, and
+ * when a swap removes observed messages from context.
  *
  * Registered via `agent.onObservation()`. Multiple handlers are supported.
- * Consumers can use this to persist compacted messages or coordinate their
+ * Consumers can use this to persist removed messages or coordinate their
  * own compression systems.
  */
 export interface ObservationEvent {
-  /** The raw messages that were compressed and removed from context. */
-  compactedMessages: AgentMessage[];
+  /** What recorded them: a threshold activation, compactNow, or observeNow. */
+  trigger: 'activation' | 'compact-now' | 'observe-now';
 
-  /** The observation text those messages were compressed into. */
+  /** Messages whose observations this event added to the log. */
+  observedMessages: AgentMessage[];
+
+  /**
+   * Messages that left context. Empty when nothing was swapped out
+   * (observeNow records without removing).
+   */
+  removedMessages: AgentMessage[];
+
+  /** The whole observation log after this event. */
   observations: string;
 
   /** Total context utilization (0-1) at the time of activation. */
   contextUtilization: number;
 
-  /** Whether this was a sync (blocking) or async (buffered) observation. */
+  /** Estimated context size before and after, in tokens. */
+  tokensBefore: number;
+  tokensAfter: number;
+
+  /** Whether observations were made while a caller waited (in-band). */
   sync: boolean;
 
   /** Timestamp of the observation. */

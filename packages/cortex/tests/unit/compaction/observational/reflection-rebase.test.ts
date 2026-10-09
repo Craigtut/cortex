@@ -30,8 +30,12 @@ function newEngine(complete: CompleteFn, observations: string): ObservationalMem
   return engine;
 }
 
+/** An activation over an older message the verbatim tail cannot hold, then `content`. */
 async function activate(engine: ObservationalMemoryEngine, content: string): Promise<void> {
-  let source = [userMsg(content)];
+  let source: AgentMessage[] = [
+    { role: 'assistant', content: 'older ' + 'o'.repeat(20_000), timestamp: 0 },
+    userMsg(content),
+  ];
   const context: AgentContext = {
     systemPrompt: '', model: null, messages: [userMsg('slot'), ...source], tools: [], thinkingLevel: 'medium',
   };

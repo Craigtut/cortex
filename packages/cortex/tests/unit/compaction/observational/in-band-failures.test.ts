@@ -45,7 +45,10 @@ describe('in-band observer failure after chunk activation', () => {
     engine.setContextWindow(20_000);
     engine.setUtilityModelContextWindow(200_000);
     const covered = userMsg('covered by the chunk');
-    const unbuffered = userMsg('u'.repeat(80_000));
+    // Unobserved history past the chunk: more than the verbatim tail holds,
+    // so the pass tries to observe it in-band, and fails.
+    const unbuffered = assistantMsg('u'.repeat(80_000));
+    const latest = userMsg('the latest question');
     engine.restoreState({
       observations: '',
       continuationHint: null,
@@ -59,11 +62,11 @@ describe('in-band observer failure after chunk activation', () => {
     const complete = vi.fn<CompleteFn>().mockRejectedValue(new Error('utility 529'));
     engine.setCompleteFn(complete);
 
-    const surviving = await activate(engine, [covered, unbuffered], 0.99);
+    const surviving = await activate(engine, [covered, unbuffered, latest], 0.99);
 
     expect(complete).toHaveBeenCalledTimes(1);
     expect(engine.getObservations()).toContain('CHUNK TEXT');
-    expect(surviving).toEqual([unbuffered]);
+    expect(surviving).toEqual([unbuffered, latest]);
     expect(engine.getState().bufferedChunks).toEqual([]);
   });
 });

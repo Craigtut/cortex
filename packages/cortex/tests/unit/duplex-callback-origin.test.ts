@@ -60,6 +60,8 @@ async function observeOn(loop: unknown, pi: ScriptedPiAgent): Promise<void> {
   digestible.getCompactionManager().setObservationalCompleteFn(
     (async () => OBSERVER_OUTPUT) as unknown as CompleteFn,
   );
+  // Two exchanges: the older one can leave; the latest stays verbatim.
+  seedHistory(pi);
   seedHistory(pi);
   digestible.getCompactionManager().updateCurrentContextTokenCount(19_500);
   await digestible.digestIdle({ observerTimeoutMs: 5_000 });

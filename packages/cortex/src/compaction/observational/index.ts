@@ -38,7 +38,10 @@ import { estimateTokens } from '../../token-estimator.js';
 import { MemoryCallError, RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
-import { pieceEnd } from './units.js';
+import { messageTokens, pieceEnd } from './units.js';
+import { selectTail } from './tail.js';
+import { keptAfter, removedBy, removesAny, swapCut } from './swap.js';
+import type { SwapCut } from './swap.js';
 import { ObservationLog } from './log.js';
 import type { MemoryCallTrigger } from './health.js';
 
@@ -79,6 +82,25 @@ export type {
  * this. Overridable per call (digestIdle's observerTimeoutMs).
  */
 export const DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS = 60_000;
+
+/** Whether `promise` settled before `signal` fired. Never rejects. */
+function settledUnlessAborted(promise: Promise<unknown>, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const onAbort = (): void => resolve(false);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(true);
+      },
+      () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(true);
+      },
+    );
+  });
+}
 
 /** The continuation hint an observer output carries, if it carries one. */
 function hintOf(output: ObserverOutput): ContinuationHint | null {
@@ -292,73 +314,57 @@ export class ObservationalMemoryEngine {
     // so a failed or abandoned observer call can never leave messages
     // removed whose observations were not recorded.
     const sourceHistory = getSourceHistory();
-    const { chunks, watermark } = this.buffering.getCompletedChunks();
-    const merged = chunks.length > 0 ? this.log.merge(chunks) : null;
-    const observedMessages = sourceHistory.slice(0, watermark);
-    const unbufferedMessages = sourceHistory.slice(watermark);
+    const tail = selectTail(sourceHistory, this.tailBudget());
 
-    // Step 1: Would swapping in what is already observed be enough?
-    // Account for the full slot overhead (preamble, XML wrappers,
-    // continuation hints) rather than just the raw observation text, since
-    // the slot is always larger.
-    const trimmedMessageTokens = estimateTokens(
-      observedMessages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n'),
-    );
-    const slotOverheadTokens = merged
-      ? estimateTokens(this.log.slotContent(merged.observations))
-      : 0;
-    const netTokenReduction = trimmedMessageTokens - slotOverheadTokens;
-    const postChunkUtilization = utilization - (this.contextWindow > 0 ? netTokenReduction / this.contextWindow : 0);
-
-    // Step 2: If not, observe the unbuffered remainder in-band.
-    let syncOutput: ObserverOutput | null = null;
+    // Step 1: Would swapping in what is already observed be enough? If not,
+    // and blocking work is allowed, observe up to the tail while we wait.
+    let sync = false;
     if (
       allowSync &&
-      postChunkUtilization >= this.config.activationThreshold &&
       this.completeFn &&
-      unbufferedMessages.length > 0
+      this.buffering.getWatermark() < tail.start &&
+      this.utilizationAfter(sourceHistory, swapCut(sourceHistory, tail, this.buffering.getWatermark()), utilization)
+        >= this.config.activationThreshold
     ) {
-      // These messages are about to be observed here; an in-flight observer
-      // covering them must not land a second chunk for them.
-      this.buffering.invalidateObserver();
-      syncOutput = await this.observeInBand(unbufferedMessages, 'activation', passSignal);
+      sync = await this.catchUp(sourceHistory, tail.start, passSignal, isStale);
     }
 
     // An abandoned or aborted pass applies nothing: its rewrite would be
-    // discarded by the owner (or its request never sent), and the chunks it
-    // did not consume stay buffered.
+    // discarded by the owner (or its request never sent); what it observed
+    // stays buffered.
     if (isStale?.() || runSignal?.aborted) return context;
 
-    // Step 3: Apply, synchronously: record, cut, merge.
-    let cut = watermark;
-    if (syncOutput) {
-      this.buffering.ledger.record(chunkFromOutput(syncOutput, unbufferedMessages), sourceHistory.length);
-      cut = sourceHistory.length;
-    }
-    let compactedMessages: AgentMessage[] = [];
-    if (cut > 0) {
-      const consumed = this.buffering.ledger.removePrefix(cut);
+    // Step 2: Swap, synchronously: cut, merge, rewrite.
+    const swap = swapCut(sourceHistory, tail, this.buffering.getWatermark());
+    if (removesAny(swap)) {
+      const priorPrefix = this.buffering.ledger.observedPrefix;
+      const consumed = this.buffering.ledger.removePrefix(swap.cut, swap.keep ?? undefined);
+      const observedEnd = consumed.length > 0 ? consumed[consumed.length - 1]!.endIndex : priorPrefix;
+      const before = this.log.tokenCount;
       if (consumed.length > 0) {
         const swapped = this.log.merge(consumed);
         this.log.append(swapped.observations, swapped.hint);
       }
-      compactedMessages = sourceHistory.slice(0, cut);
-      setSourceHistory(sourceHistory.slice(cut));
-    }
-    const activatedSync = syncOutput !== null;
+      const removedMessages = removedBy(sourceHistory, swap);
+      setSourceHistory(keptAfter(sourceHistory, swap));
 
-    // Fire the observation event (the pass is known live: stale returned above).
-    if (compactedMessages.length > 0) {
+      // Step 3: Report it (the pass is known live: stale returned above).
+      const tokensBefore = Math.round(utilization * this.contextWindow);
+      const removedTokens = removedMessages.reduce((sum, message) => sum + messageTokens(message), 0);
       this.fireObservationEvent({
-        compactedMessages,
+        trigger: 'activation',
+        observedMessages: sourceHistory.slice(priorPrefix, observedEnd),
+        removedMessages,
         observations: this.log.text,
         contextUtilization: utilization,
-        sync: activatedSync,
+        tokensBefore,
+        tokensAfter: Math.max(0, tokensBefore - removedTokens + (this.log.tokenCount - before)),
+        sync,
         timestamp: new Date(),
       });
     }
 
-    // Step 4: Handle reflection (may replace this.observations with condensed version)
+    // Step 4: Handle reflection (may condense the log)
     await this.reflection.reflectIfDue(allowSync, isStale, passSignal);
 
     // Step 5: Build slot content AFTER reflection so it contains post-reflection
@@ -390,6 +396,63 @@ export class ObservationalMemoryEngine {
       { ...context, messages: newMessages },
       postSlotMessages,
     );
+  }
+
+  /** Tokens the verbatim tail may hold: a share of the window, capped. */
+  private tailBudget(): number {
+    return Math.min(this.config.tailRatio * this.contextWindow, this.config.tailMaxTokens);
+  }
+
+  /**
+   * Estimated utilization after `swap`: the removed messages leave, the
+   * chunks covering them join the slot. Counts the whole slot as added
+   * (preamble, wrappers, hints), which overstates it, so the estimate errs
+   * toward observing more.
+   */
+  private utilizationAfter(history: AgentMessage[], swap: SwapCut, utilization: number): number {
+    if (this.contextWindow <= 0) return utilization;
+    const removedTokens = removedBy(history, swap).reduce((sum, message) => sum + messageTokens(message), 0);
+    let start = this.buffering.ledger.observedPrefix;
+    const merging = this.buffering.ledger.completedChunks().filter((chunk) => {
+      const covers = start < swap.cut;
+      start = chunk.endIndex;
+      return covers;
+    });
+    const slotTokens = merging.length > 0 ? estimateTokens(this.log.slotContent(this.log.merge(merging).observations)) : 0;
+    return utilization - (removedTokens - slotTokens) / this.contextWindow;
+  }
+
+  /**
+   * Observe [watermark, end) while the caller waits, so a swap can cut up to
+   * the tail. The observer already in flight goes first: it is the cheapest
+   * way to cover its messages, and starting another over them would observe
+   * them twice. Then pieces within the observer's input cap, until `end`,
+   * a failed call, the pass signal, or an abandoned pass. Returns whether
+   * anything was observed here.
+   */
+  private async catchUp(
+    history: AgentMessage[],
+    end: number,
+    signal: AbortSignal,
+    isStale?: () => boolean,
+  ): Promise<boolean> {
+    if (this.buffering.isObserverInFlight()) {
+      const settled = await settledUnlessAborted(this.buffering.waitForObserverSettled(), signal);
+      if (!settled) return false;
+    }
+    let observed = false;
+    while (this.buffering.getWatermark() < end) {
+      if (signal.aborted || isStale?.()) return observed;
+      const from = this.buffering.getWatermark();
+      const to = Math.min(pieceEnd(history, from, this.observerInputCap()), end);
+      if (to <= from) return observed;
+      const messages = history.slice(from, to);
+      const output = await this.observeInBand(messages, 'activation', signal);
+      if (!output || isStale?.()) return observed;
+      this.buffering.ledger.record(chunkFromOutput(output, messages), to);
+      observed = true;
+    }
+    return observed;
   }
 
   // -------------------------------------------------------------------------
@@ -605,7 +668,11 @@ export class ObservationalMemoryEngine {
 
     // Fire observation event
     this.fireObservationEvent({
-      compactedMessages: history,
+      trigger: 'observe-now',
+      observedMessages: history,
+      removedMessages: [],
+      tokensBefore: 0,
+      tokensAfter: 0,
       observations: this.log.text,
       contextUtilization: 0, // manual trigger, utilization unknown
       sync: true,
