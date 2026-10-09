@@ -23,8 +23,8 @@ We review every PR carefully. Contributions that don't align with the project vi
 
 ```bash
 # Clone the repo
-git clone https://github.com/Craigtut/cortex-mono.git
-cd cortex-mono
+git clone https://github.com/Craigtut/cortex.git
+cd cortex
 
 # Install dependencies
 npm install

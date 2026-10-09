@@ -7,13 +7,13 @@
   "private": false,
   "repository": {
     "type": "git",
-    "url": "https://github.com/Craigtut/cortex-mono.git",
+    "url": "https://github.com/Craigtut/cortex.git",
     "directory": "packages/cortex"
   },
   "bugs": {
-    "url": "https://github.com/Craigtut/cortex-mono/issues"
+    "url": "https://github.com/Craigtut/cortex/issues"
   },
-  "homepage": "https://github.com/Craigtut/cortex-mono/tree/main/packages/cortex",
+  "homepage": "https://github.com/Craigtut/cortex/tree/main/packages/cortex",
   "keywords": [
     "ai",
     "agent",

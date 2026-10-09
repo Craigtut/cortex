@@ -1,17 +1,17 @@
 {
-  "name": "cortex-mono",
+  "name": "cortex",
   "private": true,
   "author": "Animus Labs",
   "description": "Monorepo for Cortex, a production-grade agent framework with structured context management",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Craigtut/cortex-mono.git"
+    "url": "https://github.com/Craigtut/cortex.git"
   },
   "bugs": {
-    "url": "https://github.com/Craigtut/cortex-mono/issues"
+    "url": "https://github.com/Craigtut/cortex/issues"
   },
-  "homepage": "https://github.com/Craigtut/cortex-mono",
+  "homepage": "https://github.com/Craigtut/cortex",
   "workspaces": [
     "packages/*",
     "apps/*"

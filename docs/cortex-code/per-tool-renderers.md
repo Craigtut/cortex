@@ -396,7 +396,7 @@ Shows the diff preview as old_str and new_str stream in, with new content scroll
 ```
 ╭──
 │  1  {
-│  2    "name": "cortex-mono",
+│  2    "name": "cortex",
 │  3    "version": "0.1.0",
 │  ...
 │  20   "dependencies": {

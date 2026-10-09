@@ -28,7 +28,7 @@ pi-tui uses a vertical stacking model. Components render top-to-bottom as line a
 │   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝            │
 │                                                    code          │
 │  v0.1.0                                                          │
-│  Project: cortex-mono                                            │
+│  Project: cortex                                                 │
 │  Branch: main                                                    │
 │  /help for commands                                              │
 │                                                                  │
@@ -69,7 +69,7 @@ Rendered once on session start. Uses Unicode block characters with neon teal (`#
 
 ```
 v0.1.0
-Project: cortex-mono
+Project: cortex
 Branch: main
 /help for commands
 ```

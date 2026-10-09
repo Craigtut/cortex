@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability, please report it responsibly:
 
-- Open a [GitHub Security Advisory](https://github.com/Craigtut/cortex-mono/security/advisories) on this repository. This allows private discussion before public disclosure.
+- Open a [GitHub Security Advisory](https://github.com/Craigtut/cortex/security/advisories) on this repository. This allows private discussion before public disclosure.
 
 Please include:
 - A description of the issue and its potential impact

@@ -1,6 +1,6 @@
 # Cortex
 
-Production-grade agent framework with structured context management. By [Animus Labs](https://github.com/Craigtut/cortex-mono).
+Production-grade agent framework with structured context management. By [Animus Labs](https://github.com/Craigtut/cortex).
 
 Cortex treats the LLM context window as a managed surface, not a flat chat log. Named slots with stability-ordered layout maximize prompt cache hit rates. Observational memory is the default compaction strategy, with classic string trimming, summarization, and emergency truncation available when needed.
 
