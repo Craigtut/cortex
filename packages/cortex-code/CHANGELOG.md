@@ -4,6 +4,7 @@ All notable changes to `@animus-labs/cortex-code` are documented here.
 
 ## Unreleased
 
+- `cortex -p` completes through Cortex's `completeModel()`, and Cortex Code no longer depends on pi-ai directly.
 - Upgrade pi-ai and pi-tui to `1.1.0`, pinned exactly. pi-tui now asks the terminal at startup whether it supports program status reports (OSC 7501); `PI_PROGRAM_STATUS=0` turns that off.
 - Windows sandboxing runs on MXC BaseContainer through Cortex instead of the unsigned restricted-token helper. It stays opt-in (`/sandbox workspace`) until validated on a real Windows 11 host, and needs `@microsoft/mxc-sdk` installed alongside Cortex Code.
 - Upgrade pi-ai and pi-tui to `0.87.1`.

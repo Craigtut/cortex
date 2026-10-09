@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 
 import {
   ProviderManager,
+  completeModel,
   structuredCompletionRequest,
   parseSchemaCompletion,
-  unwrapModel,
   type CortexModel,
 } from '@animus-labs/cortex';
 
@@ -254,12 +254,10 @@ async function completeWithModel(input: {
   prompt: string;
   schema: unknown | null;
 }): Promise<unknown> {
-  // complete() moved to pi-ai 0.80's temporary /compat shim (Phase 2 migrates this).
-  const piAi = await import('@earendil-works/pi-ai/compat');
   const toolName = 'structured_output';
   const context: Record<string, unknown> = {
     systemPrompt: input.systemPrompt,
-    messages: [{ role: 'user', content: input.prompt }],
+    messages: [{ role: 'user', content: input.prompt, timestamp: Date.now() }],
   };
   const completeOptions: Record<string, unknown> = { apiKey: input.apiKey };
   if (input.schema) {
@@ -270,10 +268,10 @@ async function completeWithModel(input: {
     Object.assign(completeOptions, request.options);
   }
 
-  const result = await piAi.complete(
-    unwrapModel(input.model) as Parameters<typeof piAi.complete>[0],
-    context as unknown as Parameters<typeof piAi.complete>[1],
-    completeOptions as Parameters<typeof piAi.complete>[2],
+  const result = await completeModel(
+    input.model,
+    context as unknown as Parameters<typeof completeModel>[1],
+    completeOptions,
   );
   checkForSilentError(result);
 

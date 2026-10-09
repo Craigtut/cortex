@@ -2,8 +2,7 @@
 // Build Cortex first. This probes one selected model sequentially and never unloads it.
 import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { ProviderManager, unwrapModel } from '../packages/cortex/dist/index.js';
-import { complete } from '@earendil-works/pi-ai/compat';
+import { ProviderManager, completeModel } from '../packages/cortex/dist/index.js';
 
 const { values } = parseArgs({ options: {
   model: { type: 'string' }, host: { type: 'string' },
@@ -22,7 +21,6 @@ const model = await new ProviderManager().createOllamaModel({
   modelId: values.model, baseUrl: values.host,
   onMetrics: value => { metrics = value; },
 });
-const raw = unwrapModel(model);
 console.log(JSON.stringify({ model: model.modelId, contextWindow: model.contextWindow,
   trainedContextWindow: model.capabilities?.trainedContextWindow }));
 
@@ -34,7 +32,7 @@ const context = { systemPrompt: 'Answer with the word OK. Do not call tools.', m
 ] };
 async function run(phase, input) {
   metrics = undefined;
-  const result = await complete(raw, input, {
+  const result = await completeModel(model, input, {
     maxTokens: 32, temperature: 0,
     onPayload: payload => {
       payload.options.top_p = 1;

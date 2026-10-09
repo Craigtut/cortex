@@ -6,10 +6,12 @@
  * tool-result interceptor contract.
  */
 
+import type { Context, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { applyCacheBreakpoints } from '../cache-breakpoints.js';
 import type { CacheBreakpointIndices } from '../cache-breakpoints.js';
 import type { AgentContext, AgentMessage } from '../context-manager.js';
 import { errorMessageOf } from '../error-classifier.js';
+import { streamModelSimple } from '../model-runtime.js';
 import { unwrapModel } from '../model-wrapper.js';
 import type { AgentLoopConfig, CortexLogger } from '../types.js';
 import { createBeforeToolCall } from './permissions.js';
@@ -108,17 +110,15 @@ export function buildPiAgentConfig(params: {
     toolExecution: cortexConfig.toolExecution ?? 'sequential',
   };
 
-  agentConfig['streamFn'] = async (model: unknown, context: unknown, options?: Record<string, unknown>) => {
-    // streamSimple lives in pi-ai's /compat shim until the createModels() migration.
-    const { streamSimple } = await import('@earendil-works/pi-ai/compat');
+  const ambientCredentials = cortexConfig.ambientCredentials === true;
+  agentConfig['streamFn'] = (model: PiModel, context: Context, options?: SimpleStreamOptions) => {
     const { retention, sessionId } = host()?.streamOptions() ?? { retention: null, sessionId: null };
-    let streamOptions = options;
-    if (retention || sessionId) {
-      streamOptions = { ...options };
-      if (retention) (streamOptions as Record<string, unknown>)['cacheRetention'] = retention;
-      if (sessionId) (streamOptions as Record<string, unknown>)['sessionId'] = sessionId;
-    }
-    return streamSimple(model as any, context as any, streamOptions as any);
+    return streamModelSimple(model, context, {
+      ...options,
+      ...(retention ? { cacheRetention: retention } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      ambientCredentials,
+    });
   };
 
   // Runs before every provider request, the first included, after pi has

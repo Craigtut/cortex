@@ -268,6 +268,7 @@ export const CONFIG_ROUTING: { [K in keyof Required<CortexAgentConfig>]: ConfigD
   persistentRuntime: 'reasoner',
   // Shared environment-level wiring, passed to every loop verbatim.
   getApiKey: 'shared',
+  ambientCredentials: 'shared',
   sandbox: 'shared',
   envOverrides: 'shared',
   logger: 'shared',

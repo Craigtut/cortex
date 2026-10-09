@@ -52,8 +52,7 @@ vi.mock('@earendil-works/pi-ai', () => ({
   complete: (...args: unknown[]) => mockComplete(...args),
 }));
 
-// pi-ai 0.80 moved catalog reads to providers/all and completion to /compat.
-// agent-loop now imports from those entrypoints; mock them to the same fns.
+// Catalog reads come from providers/all; mock them to the same fns.
 vi.mock('@earendil-works/pi-ai/providers/all', () => ({
   getBuiltinModel: (...args: unknown[]) => mockGetModel(...args),
   getBuiltinModels: vi.fn(),
@@ -61,9 +60,9 @@ vi.mock('@earendil-works/pi-ai/providers/all', () => ({
   builtinProviders: () => [],
 }));
 
-vi.mock('@earendil-works/pi-ai/compat', () => ({
-  complete: (...args: unknown[]) => mockComplete(...args),
-  completeSimple: (...args: unknown[]) => mockComplete(...args),
+// Requests go through Cortex's model runtime; its stream resolves to the mock.
+vi.mock('../../src/model-runtime.js', () => ({
+  streamModel: (...args: unknown[]) => ({ result: () => mockComplete(...args) }),
 }));
 
 vi.mock('@earendil-works/pi-agent-core', () => ({
@@ -142,7 +141,7 @@ describe('AgentLoop model contract', () => {
         systemPrompt: 'System',
         messages: [{ role: 'user', content: 'Hello' }],
       }),
-      undefined,
+      { ambientCredentials: false },
     );
 
     const nextModel = await providerManager.resolveModel('anthropic', 'claude-opus-4-20260101');
@@ -187,7 +186,7 @@ describe('AgentLoop model contract', () => {
         systemPrompt: 'System',
         messages: [{ role: 'user', content: 'Hello' }],
       }),
-      { cacheRetention: 'long' },
+      { cacheRetention: 'long', ambientCredentials: false },
     );
   });
 

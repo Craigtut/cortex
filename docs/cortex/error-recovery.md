@@ -208,7 +208,7 @@ The `getApiKey` callback (e.g. a consumer's `CortexCredentialService.resolveApiK
 - The encrypted key cannot be decrypted (vault locked)
 - An OAuth access token is expired and its refresh token is revoked/expired (refresh fails)
 
-A resolution failure is remembered, not swallowed. The completion still attempts pi-ai's env-var fallback (so a consumer whose callback can't resolve but who has `ANTHROPIC_API_KEY` set still works). If the call then fails, the remembered resolution error is surfaced as the cause (it is more actionable than the downstream provider error) and classified as `authentication` / `fatal`. In the agentic loop, pi-agent-core invokes `getApiKey` and stores the failure on `agent.state.errorMessage`, which `AgentLoop` re-throws and classifies the same way.
+A resolution failure is remembered, not swallowed. The completion still runs without a key, which succeeds for providers that need none and, with `ambientCredentials: true`, for credentials pi-ai finds in the environment; otherwise pi-ai reports the provider as not configured. If the call then fails, the remembered resolution error is surfaced as the cause (it is more actionable than the downstream provider error) and classified as `authentication` / `fatal`. In the agentic loop, pi-agent-core invokes `getApiKey` and stores the failure on `agent.state.errorMessage`, which `AgentLoop` re-throws and classifies the same way.
 
 ### Post-Call (Provider Rejection)
 

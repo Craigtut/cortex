@@ -710,9 +710,13 @@ interface AgentLoopConfig {
   /**
    * Dynamic API key resolver. Called before every LLM call.
    * Enables OAuth token refresh without session teardown.
-   * If omitted, pi-ai falls back to environment variables.
+   * If omitted, requests to providers that need credentials fail, unless
+   * `ambientCredentials` lets pi-ai read them from the environment.
    */
   getApiKey?: (provider: string) => Promise<string>;
+
+  /** Let pi-ai resolve env var, federation, AWS profile, and ADC credentials. Default false. */
+  ambientCredentials?: boolean;
 
   // ... tools, contextManager, budgetGuards, etc.
 }

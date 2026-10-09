@@ -330,6 +330,16 @@ export interface AgentLoopConfig {
    */
   getApiKey?: (provider: string) => Promise<string>;
 
+  /**
+   * Let pi-ai resolve credentials from the environment for a request that
+   * carries no key from `getApiKey`: provider env vars (`ANTHROPIC_API_KEY`
+   * and the like), Anthropic workload identity federation, AWS profiles,
+   * and gcloud ADC. Default false: without a key from `getApiKey` a request
+   * to a provider that needs credentials fails, and ambient credentials are
+   * never picked up silently.
+   */
+  ambientCredentials?: boolean;
+
   /** Ordered list of context slot names. Order defines position in the message array. */
   slots?: string[];
 

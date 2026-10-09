@@ -439,6 +439,10 @@ export { wrapModel, unwrapModel, isCortexModel } from './model-wrapper.js';
 export type { CortexModel } from './model-wrapper.js';
 export { inferUtilityModel, inferUtilityModelId } from './utility-model-inference.js';
 
+// Model requests outside an agent loop (one-shot completions)
+export { completeModel } from './model-runtime.js';
+export type { ModelRequestOptions } from './model-runtime.js';
+
 // Provider Registry (Phase 1D)
 export {
   PROVIDER_REGISTRY,

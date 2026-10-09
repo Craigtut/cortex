@@ -11,7 +11,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Type } from 'typebox';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
-import * as piCompat from '@earendil-works/pi-ai/compat';
 import {
   getCurrentSystemPrompt,
   getCurrentTools,
@@ -21,10 +20,7 @@ import { AgentLoop } from '../../src/agent-loop.js';
 import { ProviderManager } from '../../src/provider-manager.js';
 import { TOOL_NAMES } from '../../src/tools/index.js';
 import { INSTRUCTIONS_SECTION } from '../../src/agent-loop/system-prompt.js';
-
-vi.mock('@earendil-works/pi-ai/compat', async (importOriginal) => ({
-  ...await importOriginal<typeof piCompat>(),
-}));
+import { getModelRuntime } from '../../src/model-runtime.js';
 
 type Sent = Array<{ role: string; [key: string]: unknown }>;
 
@@ -38,11 +34,13 @@ function probe(name: string) {
 }
 
 /**
- * Every streamSimple call is captured into `requests`; `failNext()` makes a
- * call fail the way a provider error does. Installed once per test.
+ * Every request to pi's Anthropic provider is captured into `requests`;
+ * `failNext()` makes a call fail the way a provider error does. Installed
+ * once per test. Only the transport is replaced: Cortex's runtime still
+ * picks the provider and hands it the request.
  */
 function mockProvider(requests: Sent[], failNext: () => boolean = () => false) {
-  vi.spyOn(piCompat, 'streamSimple').mockImplementation((rawModel, context) => {
+  vi.spyOn(getModelRuntime().models.getProvider('anthropic')!, 'streamSimple').mockImplementation((rawModel, context) => {
     requests.push(structuredClone(context.messages) as unknown as Sent);
     const fail = failNext();
     const message: AssistantMessage = {

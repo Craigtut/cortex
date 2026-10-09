@@ -6,6 +6,8 @@
 
 import { UTILITY_MODEL_OVERRIDES } from '../provider-registry.js';
 import { inferUtilityModelId } from '../utility-model-inference.js';
+import type { Api, Model } from '@earendil-works/pi-ai';
+import { streamModelSimple } from '../model-runtime.js';
 import { loadPiAi } from './pi-ai.js';
 import type { PiAiModule } from './pi-ai.js';
 
@@ -72,28 +74,12 @@ async function tryValidation(
   apiKey: string,
 ): Promise<ApiKeyValidationResult> {
   try {
-    const model = piAi.getModel(provider, modelId);
-
-    // Try completeSimple first, then complete
-    const completeFn = piAi.completeSimple ?? piAi.complete;
-
-    if (typeof completeFn !== 'function') {
-      // Cannot validate without a complete function; assume valid
-      // (the consumer will discover failures at first real call)
-      return {
-        provider,
-        modelId,
-        valid: true,
-        retryable: false,
-        status: 'valid',
-      };
-    }
-
-    const result = await completeFn(
+    const model = piAi.getModel(provider, modelId) as Model<Api>;
+    const result = await streamModelSimple(
       model,
-      { messages: [{ role: 'user', content: 'hi' }] },
+      { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] },
       { apiKey, maxTokens: 1 },
-    );
+    ).result();
     const silentError = extractSilentValidationError(result);
     if (silentError) {
       throw new Error(silentError);

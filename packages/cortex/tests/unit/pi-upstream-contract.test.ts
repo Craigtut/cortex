@@ -1,20 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Type } from 'typebox';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
-import * as piCompat from '@earendil-works/pi-ai/compat';
 import { AgentLoop } from '../../src/agent-loop.js';
 import { ProviderManager } from '../../src/provider-manager.js';
 import { TOOL_NAMES } from '../../src/tools/index.js';
+import { getModelRuntime } from '../../src/model-runtime.js';
 
-// Native ESM exports are immutable. Copy the real exports so Vitest can replace
-// the transport while retaining the published entrypoint and its other APIs.
-vi.mock('@earendil-works/pi-ai/compat', async (importOriginal) => ({
-  ...await importOriginal<typeof piCompat>(),
-}));
+/** pi's Anthropic provider as Cortex's runtime dispatches to it. */
+function anthropicTransport() {
+  return getModelRuntime().models.getProvider('anthropic')!;
+}
 
-// Keep the installed Agent, provider catalog, and event stream real. Only the
-// model response is synthetic, so this checks our dynamic upstream boundary
-// without credentials or network requests.
+// Keep the installed Agent, provider catalog, event stream, and Cortex's
+// dispatch real. Only the provider's transport is replaced, so this checks
+// our upstream boundary without credentials or network requests.
 describe('installed Pi integration', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -29,7 +28,7 @@ describe('installed Pi integration', () => {
         content: [{ type: 'text', text: 'Tool completed' }],
         ...(kind === 'terminating tool' ? { terminate: true } : {}),
       }));
-      const stream = vi.spyOn(piCompat, 'streamSimple');
+      const stream = vi.spyOn(anthropicTransport(), 'streamSimple');
       stream.mockImplementation((rawModel) => {
         const callsTool = kind !== 'text' && stream.mock.calls.length === 1;
         const message: AssistantMessage = {
@@ -118,7 +117,7 @@ describe('installed Pi integration', () => {
     const manager = new ProviderManager();
     const catalog = await manager.listModels('anthropic');
     const model = await manager.resolveModel('anthropic', catalog[0]!.id);
-    const stream = vi.spyOn(piCompat, 'streamSimple');
+    const stream = vi.spyOn(anthropicTransport(), 'streamSimple');
     stream.mockImplementation((rawModel) => {
       // Created first: a stream only times responses that start after it.
       const events = createAssistantMessageEventStream();
@@ -171,6 +170,56 @@ describe('installed Pi integration', () => {
       expect(history[2]!['durationMs']).toEqual(expect.any(Number));
       expect(history[1]).toMatchObject({ thinkingLevel: 'low' });
       expect(history[1]!['durationMs']).toEqual(expect.any(Number));
+    } finally {
+      await loop.destroy();
+    }
+  });
+  it("forwards the loop's credentials, cache retention, and session id to pi's provider", async () => {
+    const manager = new ProviderManager();
+    const catalog = await manager.listModels('anthropic');
+    const model = await manager.resolveModel('anthropic', catalog[0]!.id);
+    const stream = vi.spyOn(anthropicTransport(), 'streamSimple');
+    stream.mockImplementation((rawModel) => {
+      const events = createAssistantMessageEventStream();
+      const message: AssistantMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done' }],
+        api: rawModel.api,
+        provider: rawModel.provider,
+        model: rawModel.id,
+        usage: {
+          input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      };
+      events.push({ type: 'start', partial: message });
+      events.push({ type: 'done', reason: 'stop', message });
+      return events;
+    });
+
+    const loop = await AgentLoop.create({
+      model,
+      workingDirectory: process.cwd(),
+      initialBasePrompt: 'Test the upstream integration.',
+      getApiKey: async () => 'consumer-key',
+      sessionId: 'session-under-test',
+      compaction: { strategy: 'classic' },
+      disableTools: Object.values(TOOL_NAMES),
+      enableSubAgentTool: false,
+      enableLoadSkillTool: false,
+    });
+    loop.setCacheRetention('long');
+
+    try {
+      await loop.prompt('Hello.');
+      expect(stream).toHaveBeenCalledTimes(1);
+      expect(stream.mock.lastCall![2]).toMatchObject({
+        apiKey: 'consumer-key',
+        cacheRetention: 'long',
+        sessionId: 'session-under-test',
+      });
     } finally {
       await loop.destroy();
     }

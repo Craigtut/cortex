@@ -45,7 +45,7 @@ await agent.destroy();
 
 `prompt()` sends user input and never throws on a busy agent, but what it resolves with depends on the mode. In passthrough, concurrent calls serialize and each resolves against the turn that carries its input. In duplex there is no such queue, deliberately: a call arriving while the talker is busy parks and rides the talker's next run, resolving `undefined` when the conversation next settles rather than with that turn's result. Barge-in is the conversation's core event, so new input has to interrupt rather than wait its turn. When the return value is not `undefined` it is the underlying pi-agent-core result and should be treated as opaque. Either way, do not render from it: most applications render assistant text from `onTurnComplete()` (`output.userFacing`; with working tags off it is the whole text) or from the session log.
 
-If `getApiKey` is omitted, pi-ai falls back to provider environment variables such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+Cortex never reads credentials from the environment on its own. Without a key from `getApiKey`, a request to a provider that needs one fails with "Provider is not configured"; providers that need none (Ollama) still work. Set `ambientCredentials: true` to let pi-ai resolve provider environment variables such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, Anthropic workload identity federation, AWS profiles, and gcloud ADC when `getApiKey` supplies nothing.
 
 ## Duplex Is the Default
 

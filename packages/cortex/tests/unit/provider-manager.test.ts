@@ -24,8 +24,9 @@ vi.mock('@earendil-works/pi-ai', () => ({
 }));
 
 // pi-ai 0.80 split the API across entrypoints; loadPiAi() composes them, so
-// mirror that split here: catalog reads from providers/all, completion from
-// /compat. All wired to the same mock fns as the root mock above.
+// mirror that split here: catalog reads from providers/all, wired to the
+// same mock fns as the root mock above. Requests go through the model
+// runtime, mocked below.
 vi.mock('@earendil-works/pi-ai/providers/all', () => ({
   getBuiltinModel: (...args: unknown[]) => mockGetModel(...args),
   getBuiltinModels: (...args: unknown[]) => mockGetModels(...args),
@@ -34,9 +35,9 @@ vi.mock('@earendil-works/pi-ai/providers/all', () => ({
   builtinProviders: () => mockBuiltinProviders(),
 }));
 
-vi.mock('@earendil-works/pi-ai/compat', () => ({
-  complete: (...args: unknown[]) => mockCompleteSimple(...args),
-  completeSimple: (...args: unknown[]) => mockCompleteSimple(...args),
+vi.mock('../../src/model-runtime.js', () => ({
+  streamModel: (...args: unknown[]) => ({ result: () => mockCompleteSimple(...args) }),
+  streamModelSimple: (...args: unknown[]) => ({ result: () => mockCompleteSimple(...args) }),
 }));
 
 // Mock pi's per-provider OAuth (formerly the pi-ai/oauth registry).
@@ -901,7 +902,7 @@ describe('ProviderManager', () => {
       );
       expect(mockCompleteSimple).toHaveBeenCalledWith(
         mockModel,
-        { messages: [{ role: 'user', content: 'hi' }] },
+        { messages: [{ role: 'user', content: 'hi', timestamp: expect.any(Number) }] },
         { apiKey: 'sk-ant-test-key', maxTokens: 1 },
       );
     });

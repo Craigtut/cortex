@@ -9,10 +9,8 @@ import { describe, it, expect, vi } from 'vitest';
 
 const mockComplete = vi.fn();
 
-vi.mock('@earendil-works/pi-ai/compat', () => ({
-  complete: (...args: unknown[]) => mockComplete(...args),
-  completeSimple: (...args: unknown[]) => mockComplete(...args),
-  streamSimple: vi.fn(),
+vi.mock('../../src/model-runtime.js', () => ({
+  streamModel: (...args: unknown[]) => ({ result: () => mockComplete(...args) }),
 }));
 
 import { AgentLoop } from '../../src/agent-loop.js';

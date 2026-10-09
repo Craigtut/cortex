@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { complete, streamSimple } from '@earendil-works/pi-ai/compat';
-import type { Context, Model } from '@earendil-works/pi-ai';
+import type { Api, Context, Model } from '@earendil-works/pi-ai';
+import { streamModel, streamModelSimple } from '../../src/model-runtime.js';
+import type { ModelRequestOptions, SimpleModelRequestOptions } from '../../src/model-runtime.js';
 import { ProviderManager } from '../../src/provider-manager.js';
 import { unwrapModel } from '../../src/model-wrapper.js';
 import { encodeOllamaMessages } from '../../src/providers/ollama/messages.js';
 import { ollamaServer } from '../helpers/ollama.js';
+
+// Requests go through Cortex's model runtime, which dispatches the native
+// Ollama provider; no credentials are needed for a local server. `complete`
+// is pi's API level (direct completions), `streamSimple` its reasoning level
+// (the agent loop).
+const streamSimple = (model: Model<string>, ctx: Context, options?: SimpleModelRequestOptions) =>
+  streamModelSimple(model as Model<Api>, ctx, options);
+const complete = (model: Model<string>, ctx: Context, options?: ModelRequestOptions) =>
+  streamModel(model as Model<Api>, ctx, options).result();
 
 const context: Context = { systemPrompt: 'Be useful.', messages: [{ role: 'user', content: 'Hello', timestamp: 1 }] };
 async function setup(server = ollamaServer(), onMetrics = vi.fn()) {

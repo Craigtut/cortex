@@ -12,16 +12,15 @@
 
 /**
  * Shape of the pi-ai functions ProviderManager uses. pi-ai spreads these
- * across entrypoints: catalog reads live on `providers/all`, thinking-level
- * helpers on the root, and completion on the temporary `/compat` shim.
- * `loadPiAi()` composes them back into this single object.
+ * across entrypoints: catalog reads live on `providers/all` and
+ * thinking-level helpers on the root. `loadPiAi()` composes them back into
+ * this single object. Requests go through the model runtime
+ * (model-runtime.ts).
  */
 export interface PiAiModule {
   getModel: (provider: string, modelId: string) => unknown;
   getModels: (provider: string) => Array<Record<string, unknown>>;
   getSupportedThinkingLevels?: ((model: unknown) => string[]) | undefined;
-  completeSimple?: ((model: unknown, context: unknown, options?: unknown) => Promise<unknown>) | undefined;
-  complete?: ((model: unknown, context: unknown, options?: unknown) => Promise<unknown>) | undefined;
 }
 
 /** A pi OAuth credential blob. `expires` is epoch millis. */
@@ -92,13 +91,11 @@ interface PiBuiltinProvider {
 export async function loadPiAi(): Promise<PiAiModule> {
   try {
     // Compose the subset ProviderManager needs from each entrypoint: catalog
-    // reads from `providers/all`, thinking-level helpers from root, and
-    // completion from the temporary `/compat` shim. String-literal paths
-    // avoid bundler resolution.
+    // reads from `providers/all` and thinking-level helpers from root.
+    // String-literal paths avoid bundler resolution.
     const catalogPath = '@earendil-works/pi-ai/providers/all';
     const rootPath = '@earendil-works/pi-ai';
-    const compatPath = '@earendil-works/pi-ai/compat';
-    const [catalog, root, compat] = await Promise.all([
+    const [catalog, root] = await Promise.all([
       import(/* @vite-ignore */ catalogPath) as Promise<{
         getBuiltinModel: (provider: string, modelId: string) => unknown;
         getBuiltinModels: (provider: string) => Array<Record<string, unknown>>;
@@ -106,17 +103,11 @@ export async function loadPiAi(): Promise<PiAiModule> {
       import(/* @vite-ignore */ rootPath) as Promise<{
         getSupportedThinkingLevels?: (model: unknown) => string[];
       }>,
-      import(/* @vite-ignore */ compatPath) as Promise<{
-        complete?: (model: unknown, context: unknown, options?: unknown) => Promise<unknown>;
-        completeSimple?: (model: unknown, context: unknown, options?: unknown) => Promise<unknown>;
-      }>,
     ]);
     return {
       getModel: catalog.getBuiltinModel,
       getModels: catalog.getBuiltinModels,
       getSupportedThinkingLevels: root.getSupportedThinkingLevels,
-      complete: compat.complete,
-      completeSimple: compat.completeSimple,
     };
   } catch {
     throw new Error(

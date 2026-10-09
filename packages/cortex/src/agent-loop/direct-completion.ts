@@ -11,7 +11,10 @@ import {
   resolveDirectCompletionContext,
 } from '../cache-breakpoints.js';
 import type { CacheBreakpointIndices, DirectCompletionContext } from '../cache-breakpoints.js';
+import type { Context } from '@earendil-works/pi-ai';
 import { toError } from '../error-classifier.js';
+import { streamModel } from '../model-runtime.js';
+import type { ModelRequestOptions } from '../model-runtime.js';
 import type { CortexModel } from '../model-wrapper.js';
 import { assistantText, assistantUsage, toolCallArguments } from '../pi-message.js';
 import { parseSchemaCompletion, structuredCompletionRequest } from '../structured-completion.js';
@@ -50,6 +53,8 @@ export interface DirectCompletionOptions {
 export interface DirectCompletionPorts {
   models(): { primary: CortexModel; primaryPi: PiModel; utility: CortexModel; utilityPi: PiModel };
   getApiKey: ((provider: string) => Promise<string>) | undefined;
+  /** Let pi resolve ambient credentials when no key was resolved (AgentLoopConfig.ambientCredentials). */
+  ambientCredentials: boolean;
   cacheRetention(): CacheRetention | null;
   sessionId(): string | null;
   isAborted(): boolean;
@@ -60,13 +65,10 @@ export interface DirectCompletionPorts {
   logger: CortexLogger;
 }
 
-type CompleteFn = typeof import('@earendil-works/pi-ai/compat').complete;
-
 /** What distinguishes one direct entry point from another. */
 interface CompletionSpec<T> {
   entry: 'directComplete' | 'structuredComplete' | 'utilityComplete';
   target: 'primary' | 'utility';
-  missingDependencyMessage: string;
   defaultUsageCategory: string;
   /** Extra request context and options, built once credentials resolved. */
   request?: () => { context: Record<string, unknown>; options: Record<string, unknown> };
@@ -82,9 +84,6 @@ export class DirectCompletions {
     return this.run({
       entry: 'directComplete',
       target: 'primary',
-      missingDependencyMessage:
-        'directComplete() requires @earendil-works/pi-ai to be installed. ' +
-        'Install it as a dependency or peer dependency.',
       defaultUsageCategory: 'direct',
       read: assistantText,
     }, context, options);
@@ -107,7 +106,6 @@ export class DirectCompletions {
     return this.run({
       entry: 'structuredComplete',
       target: 'primary',
-      missingDependencyMessage: 'structuredComplete() requires @earendil-works/pi-ai to be installed.',
       defaultUsageCategory: 'structured',
       // The provider capability selects native schema output or a forced tool.
       request: () => structuredCompletionRequest(primary(), schema, tool),
@@ -123,9 +121,6 @@ export class DirectCompletions {
     return this.run({
       entry: 'utilityComplete',
       target: 'utility',
-      missingDependencyMessage:
-        'utilityComplete() requires @earendil-works/pi-ai to be installed. ' +
-        'Install it as a dependency or peer dependency.',
       defaultUsageCategory: 'utility',
       read: assistantText,
     }, context, options);
@@ -136,15 +131,6 @@ export class DirectCompletions {
     context: DirectCompletionContext,
     options?: DirectCompletionOptions,
   ): Promise<T> {
-    // complete() lives in pi-ai's /compat shim until the createModels() migration.
-    let completeFn: CompleteFn;
-    try {
-      const piAi = await import('@earendil-works/pi-ai/compat');
-      completeFn = piAi.complete;
-    } catch {
-      throw new Error(spec.missingDependencyMessage);
-    }
-
     // Structured contexts get the [slots][history][ephemeral][prompt] layout plus BP2/BP3 indices.
     const resolved = resolveDirectCompletionContext(context);
 
@@ -171,17 +157,19 @@ export class DirectCompletions {
     const startMs = Date.now();
     try {
       // Messages pass through as-is; pi-ai normalizes formats per provider.
-      const result = await completeFn(
-        piModel as unknown as Parameters<CompleteFn>[0],
+      const result = await streamModel(
+        piModel,
         {
           systemPrompt: resolved.systemPrompt,
           messages: resolved.messages,
           ...request?.context,
-        } as Parameters<CompleteFn>[1],
-        (request
-          ? { ...(completeOptions ?? {}), ...request.options }
-          : completeOptions) as Parameters<CompleteFn>[2] | undefined,
-      );
+        } as Context,
+        {
+          ...completeOptions,
+          ...request?.options,
+          ambientCredentials: this.ports.ambientCredentials,
+        } as ModelRequestOptions,
+      ).result();
 
       // Caller-initiated cancellation takes precedence over error/usage handling.
       throwIfAborted(result, options?.signal);
@@ -228,7 +216,7 @@ export class DirectCompletions {
     apiKey: string | undefined,
     options?: DirectCompletionOptions,
     breakpointIndices?: CacheBreakpointIndices | null,
-  ): Record<string, unknown> | undefined {
+  ): Record<string, unknown> {
     const completeOptions: Record<string, unknown> = {};
     const cacheRetention = options?.cacheRetention ?? this.ports.cacheRetention();
     const sessionId = options?.sessionId ?? this.ports.sessionId();
@@ -249,7 +237,7 @@ export class DirectCompletions {
       };
     }
 
-    return Object.keys(completeOptions).length > 0 ? completeOptions : undefined;
+    return completeOptions;
   }
 }
 

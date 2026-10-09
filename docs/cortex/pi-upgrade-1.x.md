@@ -527,6 +527,28 @@ against the pre-change source: revert only the source with
     must still fail when, for example, Cortex drops `cacheRetention` or
     `sessionId`.
   - The Ollama stream tests pass through `createProvider`.
+- As built (research corrected the plan here):
+  - `/compat` has two request levels, and Cortex used both: the agent loop
+    sent `streamSimple` (one `reasoning` level), while direct completions sent
+    `complete`, pi's API level, where thinking stays off unless an API option
+    asks for it. Routing direct completions through `streamSimple` would have
+    changed them (Ollama, for one, would have started sending `think: false`).
+    `model-runtime.ts` keeps both levels: `streamModelSimple` for the loop and
+    `streamModel`/`completeModel` for everything else.
+  - "An explicit key goes through `provider.streamSimple`" needed compat's own
+    guard: a request goes to the model's provider only when that provider
+    serves the model's API (a single-API provider sends whatever it is given
+    over its one API); otherwise it goes to the implementation for the API,
+    from `@earendil-works/pi-ai/api/<api>.lazy`. Cortex's own providers
+    (`ollama`, `custom`) always take their models.
+  - The contract tests replace the transport of the real Anthropic provider
+    object in Cortex's runtime instead of a faux provider, which keeps the
+    catalog model and Cortex's dispatch real. One new test fails when the loop
+    drops the consumer's key, `cacheRetention`, or `sessionId`.
+  - Cortex Code no longer imports pi-ai at all, so its direct `pi-ai`
+    dependency is gone; `cortex -p` calls Cortex's new `completeModel()`.
+  - The opt-in is `ambientCredentials: true`, shared like `getApiKey` by the
+    talker, lookups, and sub-agents.
 
 ### Phase 4: Models and CredentialStore in ProviderManager (Cortex)
 
