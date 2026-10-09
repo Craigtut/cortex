@@ -6,9 +6,9 @@ How Cortex classifies, surfaces, and recovers from errors. Covers the error clas
 
 ## Error Classification
 
-Pi-ai surfaces all errors as plain `Error` objects with string messages. No error codes, no HTTP status codes, no structured types. The only structured detection pi-ai provides is `isContextOverflow()` (14+ provider-specific regex patterns).
+Pi-ai records a failed request as an assistant message with `stopReason: 'error'` and an `errorMessage` string (the agent loop rethrows it as a plain `Error`). No error codes, no structured types. Pi-ai judges two things about such a message: `isContextOverflow(message, contextWindow)` (provider overflow wordings, plus a silent overflow where `usage.input` exceeds the window) and `isRetryableAssistantError(message)` (a broad list of transient failures).
 
-Cortex implements a regex-based error classifier (`error-classifier.ts`) that maps error strings to actionable categories. This follows the same pattern pi-ai uses for context overflow detection, extended to cover other error types.
+Cortex's classifier (`error-classifier.ts`) is a thin layer over those helpers. It uses pi-ai for overflow and transient detection and owns what pi-ai does not decide: billing exhaustion, usage windows and their reset times, authentication, rate limits, and the server/network split. When the turn runner has pi's failed message it passes it (`assistantMessage`); for a thrown error (a direct completion, a credential failure) a message is built from the error's text.
 
 ### Categories
 
@@ -17,7 +17,8 @@ Simplified to categories that are actionable at the framework level:
 | Category | Severity | Description |
 |----------|----------|-------------|
 | `authentication` | fatal | Invalid API key, expired token, missing credentials |
-| `rate_limit` | retry | Provider rate limit hit (429 equivalent) |
+| `billing` | fatal | Paid credit exhausted, or a monthly plan limit. Never retried |
+| `rate_limit` | retry | Provider rate limit hit (429 equivalent), including a usage window with a stated reset |
 | `context_overflow` | recoverable | Context window exceeded. Handled by compaction. |
 | `server_error` | retry | Provider 5xx or internal server error |
 | `network` | retry | Connection failure, DNS resolution, timeout |
@@ -26,9 +27,31 @@ Simplified to categories that are actionable at the framework level:
 
 Removed from the existing system (not actionable at the cortex level): `authorization`, `execution`, `resource_exhausted`, `not_found`, `invalid_input`, `unsupported`. These either don't apply to LLM calls or are too granular to classify from error strings.
 
+`billing` is not `resource_exhausted` back. That category would have swept up Google's per-minute `RESOURCE_EXHAUSTED`, which is transient. `billing` matches only provider-specific codes for exhausted paid credit, says what to do (top up or switch provider), and leaves every per-minute or per-day quota under `rate_limit`.
+
 ### Classification Patterns
 
-The classifier checks error strings against provider-specific regex patterns. Patterns are checked in priority order (first match wins).
+Checked in priority order (first match wins): cancelled, billing, usage window, authentication, rate limit, context overflow, server error, network, then anything pi-ai calls transient as a server error, else unknown.
+
+**Billing** (before the rate-limit patterns, which an `insufficient_quota` 429 also matches):
+```
+/\binsufficient_quota\b/i            OpenAI's code (pi-ai puts the JSON body in the message)
+/credit balance is too low/i          Anthropic
+/\b402\b/ with /insufficient credits/i OpenRouter
+/\bGoUsageLimitError\b/, /\bFreeUsageLimitError\b/, /monthly usage limit reached/i
+                                      The OpenCode gateway's monthly limits, as pi-ai reports them
+```
+
+Never on a bare "quota" or "billing": Gemini's per-minute 429 reads "You exceeded your current quota, please check your plan and billing details" and stays `rate_limit`. Pi-ai's own non-retryable "provider limit" list is too broad to adopt for that reason.
+
+**Usage window** (`rate_limit` with `retryAfterMs`):
+```
+/usage limit/i                        Sign in with ChatGPT: "...usage limit (plus plan). Try again in ~42 min."
+/subscription_sharing_usage_limit_exceeded/i
+/server requested \d+s retry delay/i  pi-ai's error when Retry-After exceeds its maxRetryDelayMs
+```
+
+`retryAfterMs` is read from "Try again in ~N min" (or seconds, hours) and "Server requested Ns retry delay". Without one, the normal backoff applies.
 
 **Authentication:**
 ```
@@ -66,7 +89,7 @@ The `401`, `oauth`, `refresh.*token`, `token.*expired`, and `session.*expired` p
 ```
 
 **Context Overflow:**
-Delegates to pi-ai's `isContextOverflow(message, contextWindow)` which already has 14+ patterns. Not duplicated in cortex.
+Pi-ai's `isContextOverflow(message, contextWindow)`, checked after the rate-limit patterns, so a throttle worded like an overflow (Bedrock's "ThrottlingException: Too many tokens, please wait") is a rate limit. Wordings pi-ai does not know are not overflows. The exported `isContextOverflow(error)` is `classifyError(error).category === 'context_overflow'`.
 
 **Server Error:**
 ```
@@ -78,6 +101,8 @@ Delegates to pi-ai's `isContextOverflow(message, contextWindow)` which already h
 /server.*error/i
 /overloaded/i
 ```
+
+Anything else pi-ai's `isRetryableAssistantError()` accepts (`server_busy`, "model is at capacity", "stream ended before message_stop", "terminated" and more) is `server_error`, after Cortex's server and network patterns.
 
 **Network:**
 ```
@@ -105,14 +130,19 @@ interface ClassifiedError {
   category: ErrorCategory;
   severity: 'fatal' | 'retry' | 'recoverable';
   originalMessage: string;
+  causeDetail?: string;
   suggestedAction?: string;
+  /** The wait the provider stated, in ms (a usage window's reset, a retry delay over pi-ai's cap). */
+  retryAfterMs?: number;
 }
 
 function classifyError(error: Error | string, options?: ClassifyErrorOptions): ClassifiedError;
 
 interface ClassifyErrorOptions {
-  /** Context window size in tokens. Used for context overflow detection. */
+  /** Context window size in tokens. pi-ai's overflow check reads a failed response's usage against it. */
   contextWindow?: number;
+  /** pi's failed assistant message for the run, judged directly by pi-ai's helpers. */
+  assistantMessage?: AssistantMessage;
   /** Whether the agent was aborted (user or system cancellation). When true, the error is immediately classified as 'cancelled'. */
   wasAborted?: boolean;
 }
@@ -122,6 +152,7 @@ The classifier is a pure function. It does not throw, does not modify state. It 
 
 **Suggested actions** per category:
 - `authentication`: "Check your API key or re-authenticate in Settings."
+- `billing`: "The provider account is out of credits or over its plan limit. Add credits, or switch provider."
 - `rate_limit`: "Rate limit hit. The next tick will be delayed."
 - `context_overflow`: "Context window exceeded. Compaction will run."
 - `server_error`: "The provider is experiencing issues. Retrying."
@@ -244,15 +275,16 @@ Pi-agent-core has no retry at the agent loop level. When an LLM call fails after
 | `maxBackoffMs` | `600_000` | Cap on any single wait (10m). |
 | `maxAttempts` | `20` | Retries before giving up (about a 3h window with the defaults). |
 | `maxElapsedMs` | unset | Optional ceiling on time since the turn's first failure. |
+| `maxRetryAfterMs` | `21_600_000` | Longest wait for a reset the provider stated (6h). A reset further away, or past `maxElapsedMs`, is not waited for: the failure surfaces at once, since a retry before the reset would be refused the same way. |
 
 ### Mechanism
 
 `TurnRunner` (`src/agent-loop/turn-runner.ts`) runs one logical turn under the loop gate:
 
 1. The first attempt calls `agent.prompt()`. For a consumer turn the input is preceded by any parked wake deliveries and queued silent deliveries taken for this run. Pi catches provider errors and stores them in `state.errorMessage` without throwing, so the runner turns a set error state into a thrown error.
-2. A failure is classified with `classifyError()`. A context overflow triggers emergency truncation first; it is not in the default retryable set, so it then surfaces.
+2. A failure is classified with `classifyError()`, given pi's failed message and the model's context window. A context overflow triggers the overflow drop first; it is not in the default retryable set, so it then surfaces. A run that completes is checked for a silent overflow (pi-ai's `isContextOverflow()` on the answer: more input than the window holds, from a provider that truncates instead of rejecting), which triggers the same drop.
 3. The turn is retried only when `shouldRetry()` agrees (policy enabled, not aborted, severity not `fatal`, category retryable, attempts and elapsed time within the policy) and the transcript can be resumed: after trimming trailing failure stubs, the last message must be a user message or tool result past the slot region. A failure that lands after an assistant tool-call turn but before its results cannot be resumed and surfaces instead.
-4. Before each wait the runner emits `onRetryScheduled`, then sleeps for `backoffForAttempt()`. The sleep wakes at once if the run is aborted.
+4. Before each wait the runner emits `onRetryScheduled`, then sleeps for `retryDelayForAttempt()`: the backoff, or the provider's stated reset (`retryAfterMs`) when that is later. A wait for a stated reset counts as one attempt, and `delayMs` reports the real wait. The sleep wakes at once if the run is aborted.
 5. After the wait it trims pi's failure stub and calls `agent.continue()`. The user message is already in the transcript, so nothing is re-sent and completed tool calls do not re-run.
 6. A retry that succeeds emits `onRetrySucceeded`. A failure that will not be retried emits `onError` and rethrows. When the policy stopped a retryable category after at least one retry, `onRetryExhausted` fires first.
 
@@ -293,10 +325,11 @@ Every handler also receives the loop's `LoopOriginContext` as its second argumen
 
 | Category | Severity | Retried by Cortex? | Notes |
 |----------|----------|--------------------|-------|
-| `rate_limit` | retry | Yes, by default | 429 or rate limit patterns |
+| `rate_limit` | retry | Yes, by default | 429 or rate limit patterns. A usage window waits for its stated reset, up to `maxRetryAfterMs` |
 | `server_error` | retry | Yes, by default | 500, 502, 503, 504 |
 | `network` | retry | Yes, by default | Connection failure, DNS, timeout |
 | `authentication` | fatal | No | Invalid key, expired token. Fatal errors are never retried, even if listed. |
+| `billing` | fatal | No | Out of credit or over a monthly plan limit. Surfaces at once |
 | `context_overflow` | recoverable | No | Emergency truncation runs, then the error surfaces |
 | `cancelled` | recoverable | No | User abort |
 | `unknown` | recoverable | No | Unclassified errors, including a 404 |
@@ -305,7 +338,11 @@ Every handler also receives the loop's `LoopOriginContext` as its second argumen
 
 Provider SDKs retry inside each attempt, before the error reaches Cortex. Cortex's backoff starts only after those are spent.
 
-The `maxRetryDelayMs` option in pi-ai caps provider-requested retry delays. If a server asks for a longer delay, pi-ai throws immediately rather than waiting, and Cortex's own backoff takes over.
+The `maxRetryDelayMs` option in pi-ai caps provider-requested retry delays. If a server asks for a longer delay, pi-ai throws immediately ("Server requested 3600s retry delay (max: 60s)") rather than waiting, and Cortex waits the requested delay instead of its backoff, within `maxRetryAfterMs`.
+
+### Memory model calls
+
+Observer and reflector calls retry quickly within their own policy (`compaction/observational/calls.ts`). They do not retry `authentication`, `billing`, `context_overflow` or `cancelled` failures, nor a limit with a stated reset, which quick retries cannot reach: the call fails at once and memory goes degraded until a background call succeeds.
 
 ## Consumer-Specific Rate Limit Handling
 
@@ -358,6 +395,6 @@ Each phase of the pipeline (THOUGHT, AGENTIC LOOP, REFLECT) can fail independent
 
 ### Context Overflow During Agentic Loop
 
-Detected via pi-ai's `isContextOverflow()`. Handled by the compaction system (see `compaction-strategy.md`):
+Detected via pi-ai's `isContextOverflow()`, on a provider's rejection (after Cortex's rate-limit patterns, so a throttle never triggers it) or on a completed answer that overflowed silently. Handled by the compaction system (see `compaction-strategy.md`):
 1. The source shrinks to 80% of the model's capacity: observed messages leave as in any swap, and unobserved ones that do not fit are dropped, with a `GAP` line in the observation log and `onMemoryGap`
 2. The latest user message stays, and the next attempt runs with the smaller context

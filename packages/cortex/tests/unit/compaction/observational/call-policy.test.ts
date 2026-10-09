@@ -93,6 +93,41 @@ describe('retries', () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
+  it('does not retry a billing failure, and memory goes degraded', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn<CompleteFn>().mockRejectedValue(new Error(
+      'OpenAI API error (429): {"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}',
+    ));
+    const engine = newEngine(complete);
+    const errors: string[] = [];
+    engine.onMemoryError((info) => errors.push(info.error.message));
+
+    const pass = activate(engine);
+    // Room for the whole retry ladder, so a retried call would show.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await pass;
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(errors).toEqual([expect.stringContaining('insufficient_quota')]);
+    // Degraded: the next pass does not call the memory model.
+    await activate(engine);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a usage limit whose reset is minutes away', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn<CompleteFn>().mockRejectedValue(
+      new Error('You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.'),
+    );
+    const engine = newEngine(complete);
+
+    const pass = activate(engine);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await pass;
+
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it('retries a failed background observer before giving up', async () => {
     vi.useFakeTimers();
     const complete = vi.fn<CompleteFn>()

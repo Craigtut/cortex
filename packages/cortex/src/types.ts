@@ -740,6 +740,7 @@ export interface ContextManagerConfig {
  */
 export type ErrorCategory =
   | 'authentication'
+  | 'billing'
   | 'rate_limit'
   | 'context_overflow'
   | 'server_error'
@@ -775,6 +776,13 @@ export interface ClassifiedError {
   causeDetail?: string;
   /** Human-readable suggested action, or undefined if no action is needed. */
   suggestedAction?: string;
+  /**
+   * How long the provider said to wait before trying again, in ms: a usage
+   * window's reset ("Try again in ~42 min") or a retry delay above pi-ai's
+   * own cap ("Server requested 3600s retry delay"). The retry engine waits
+   * at least this long, within `RetryPolicy.maxRetryAfterMs`.
+   */
+  retryAfterMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -810,6 +818,14 @@ export interface RetryPolicy {
   maxBackoffMs: number;
   /** Maximum number of retries before giving up. Default: 20. */
   maxAttempts: number;
+  /**
+   * Longest wait for a reset the provider stated (`ClassifiedError.retryAfterMs`).
+   * A retry waits for the stated reset when it is later than the backoff; a
+   * reset further away than this, or past `maxElapsedMs`, is not waited for and
+   * the failure surfaces at once, since a retry before it would be refused the
+   * same way. Default: 21_600_000 (6h).
+   */
+  maxRetryAfterMs: number;
   /**
    * Optional ceiling on total elapsed time since the first failure. When set,
    * no retry is scheduled once this is exceeded, regardless of attempt count.

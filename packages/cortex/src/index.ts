@@ -109,6 +109,7 @@ export {
   DEFAULT_RETRY_POLICY,
   resolveRetryPolicy,
   backoffForAttempt,
+  retryDelayForAttempt,
   shouldRetry,
   isRetryableCategory,
 } from './retry-policy.js';

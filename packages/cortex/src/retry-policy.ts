@@ -13,7 +13,8 @@ import type { ClassifiedError, ErrorCategory, RetryPolicy } from './types.js';
 
 /**
  * Built-in defaults: retry transient categories with a 2m -> 4m -> 8m backoff
- * capped at 10m, up to 20 times (~3h window) before giving up.
+ * capped at 10m, up to 20 times (~3h window) before giving up. A reset the
+ * provider states is waited for when it is up to 6h away.
  */
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   enabled: true,
@@ -21,6 +22,7 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   backoffMs: [120_000, 240_000, 480_000],
   maxBackoffMs: 600_000,
   maxAttempts: 20,
+  maxRetryAfterMs: 6 * 60 * 60 * 1000,
 };
 
 /**
@@ -46,6 +48,9 @@ export function resolveRetryPolicy(partial?: Partial<RetryPolicy>): RetryPolicy 
   if (!Number.isInteger(merged.maxAttempts) || merged.maxAttempts < 0) {
     merged.maxAttempts = DEFAULT_RETRY_POLICY.maxAttempts;
   }
+  if (!Number.isFinite(merged.maxRetryAfterMs) || merged.maxRetryAfterMs < 0) {
+    merged.maxRetryAfterMs = DEFAULT_RETRY_POLICY.maxRetryAfterMs;
+  }
   return merged;
 }
 
@@ -58,6 +63,26 @@ export function resolveRetryPolicy(partial?: Partial<RetryPolicy>): RetryPolicy 
 export function backoffForAttempt(policy: RetryPolicy, retryIndex: number): number {
   const scheduled = policy.backoffMs[retryIndex] ?? policy.maxBackoffMs;
   return Math.min(policy.maxBackoffMs, Math.max(0, scheduled));
+}
+
+/**
+ * The wait before the retry at `retryIndex` after `error`: the backoff, or
+ * the reset the provider stated (`retryAfterMs`) when that is later. A wait
+ * for a stated reset counts as one attempt like any other.
+ */
+export function retryDelayForAttempt(policy: RetryPolicy, retryIndex: number, error: ClassifiedError): number {
+  return Math.max(backoffForAttempt(policy, retryIndex), error.retryAfterMs ?? 0);
+}
+
+/**
+ * Whether a reset the provider stated is close enough to wait for: within
+ * `maxRetryAfterMs`, and before the elapsed ceiling. A retry sooner would be
+ * refused the same way, so a reset out of reach ends the retries.
+ */
+function statedResetWithinReach(error: ClassifiedError, elapsedMs: number, policy: RetryPolicy): boolean {
+  if (error.retryAfterMs === undefined) return true;
+  if (error.retryAfterMs > policy.maxRetryAfterMs) return false;
+  return policy.maxElapsedMs === undefined || elapsedMs + error.retryAfterMs <= policy.maxElapsedMs;
 }
 
 /**
@@ -85,8 +110,9 @@ export interface RetryDecisionContext {
  * Decide whether a failed turn should be retried in the background.
  *
  * Retries only transient categories, never when aborted, fatal, out of
- * attempts, or past the elapsed ceiling. A 404 (classified `unknown`) and
- * auth failures are deliberately excluded so they surface to the user.
+ * attempts, or past the elapsed ceiling, nor when the provider stated a
+ * reset too far away to wait for. A 404 (classified `unknown`), auth and
+ * billing failures are deliberately excluded so they surface to the user.
  */
 export function shouldRetry(
   error: ClassifiedError,
@@ -101,7 +127,7 @@ export function shouldRetry(
   if (policy.maxElapsedMs !== undefined && ctx.elapsedMs >= policy.maxElapsedMs) {
     return false;
   }
-  return true;
+  return statedResetWithinReach(error, ctx.elapsedMs, policy);
 }
 
 /** Whether a category is in the policy's retryable set. */

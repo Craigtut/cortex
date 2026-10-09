@@ -10,8 +10,8 @@ describe('isContextOverflow', () => {
     expect(isContextOverflow(new Error('context_length_exceeded'))).toBe(true);
   });
 
-  it('detects "context window" error', () => {
-    expect(isContextOverflow(new Error('Exceeded context window limit'))).toBe(true);
+  it('detects OpenAI\'s "exceeds the context window"', () => {
+    expect(isContextOverflow(new Error('Your input exceeds the context window of this model'))).toBe(true);
   });
 
   it('detects "maximum context length"', () => {
@@ -26,16 +26,18 @@ describe('isContextOverflow', () => {
     expect(isContextOverflow(new Error('Request has too many tokens'))).toBe(true);
   });
 
-  it('detects "request too large"', () => {
-    expect(isContextOverflow(new Error('request too large'))).toBe(true);
+  it('detects Anthropic\'s request_too_large', () => {
+    expect(isContextOverflow(new Error(
+      '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
+    ))).toBe(true);
   });
 
   it('detects "prompt is too long"', () => {
     expect(isContextOverflow(new Error('prompt is too long'))).toBe(true);
   });
 
-  it('detects "input too long"', () => {
-    expect(isContextOverflow(new Error('input too long for this model'))).toBe(true);
+  it('detects Bedrock\'s "input is too long"', () => {
+    expect(isContextOverflow(new Error('Input is too long for requested model.'))).toBe(true);
   });
 
   it('returns false for unrelated errors', () => {

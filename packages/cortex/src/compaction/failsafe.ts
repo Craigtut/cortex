@@ -3,8 +3,8 @@
  *
  * Under observational memory, Layer 3 cuts a request's view when it would
  * still not fit after a swap (observational/emergency.ts truncateView);
- * after the provider rejects a request as too long, isContextOverflow
- * recognizes it and the source shrinks (CompactionManager.handleOverflowError).
+ * after the provider rejects a request as too long (the error classifier's
+ * `context_overflow`), the source shrinks (CompactionManager.handleOverflowError).
  *
  * References:
  *   - compaction-strategy.md (Layer 3)
@@ -21,33 +21,9 @@ export const FAILSAFE_DEFAULTS: FailsafeConfig = {
 };
 
 /**
- * Throttling and rate-limit errors that can share wording with an overflow.
- * Bedrock reports a tokens-per-minute throttle as "Too many tokens, please
- * wait before trying again." (prefixed "Throttling error:" by pi-ai, or the
- * raw "ThrottlingException"). Mirrors pi-ai's own overflow exclusions.
+ * Whether an error is the provider rejecting a request as too long: pi-ai's
+ * detection, after Cortex's rate-limit patterns, so a throttle worded like
+ * an overflow (Bedrock's "Too many tokens, please wait") never runs the
+ * lossy overflow drop. Owned by the error classifier.
  */
-const NON_OVERFLOW_PATTERNS: RegExp[] = [
-  /throttl/i,
-  /rate limit/i,
-  /too many requests/i,
-];
-
-/**
- * Check if an error represents a context overflow.
- * Matches common API error patterns from various providers, excluding
- * throttling and rate-limit errors that use the same wording.
- */
-export function isContextOverflow(error: Error): boolean {
-  if (NON_OVERFLOW_PATTERNS.some((p) => p.test(error.message))) return false;
-  const msg = error.message.toLowerCase();
-  return (
-    msg.includes('context_length_exceeded') ||
-    msg.includes('context window') ||
-    msg.includes('maximum context length') ||
-    msg.includes('token limit') ||
-    msg.includes('too many tokens') ||
-    msg.includes('request too large') ||
-    msg.includes('prompt is too long') ||
-    msg.includes('input too long')
-  );
-}
+export { isContextOverflow } from '../error-classifier.js';

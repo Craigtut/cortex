@@ -93,12 +93,14 @@ describe('classifyError', () => {
   // Context Overflow
   // -----------------------------------------------------------------------
   describe('context_overflow', () => {
-    // Minimal fallback patterns (full detection delegates to pi-ai's isContextOverflow)
+    // pi-ai's isContextOverflow decides; these are providers' real wordings.
     const overflowMessages = [
-      'context overflow detected',
+      'prompt is too long: 213462 tokens > 200000 maximum',
+      '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
+      'Your input exceeds the context window of this model',
+      'The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)',
+      'Input is too long for requested model.',
       'Too many tokens in the request',
-      'token limit reached for model',
-      'prompt is too long for the model',
     ];
 
     for (const msg of overflowMessages) {
@@ -184,6 +186,109 @@ describe('classifyError', () => {
       const msg = 'A very specific and unique error message 12345';
       const result = classifyError(msg);
       expect(result.originalMessage).toBe(msg);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Billing and usage windows (Cortex's layer over pi-ai)
+  // -----------------------------------------------------------------------
+  describe('billing', () => {
+    // OpenAI's quota error as pi-ai formats it: the JSON body in the message.
+    const openAiQuota = (type: string): string =>
+      `OpenAI API error (429): {"message":"You exceeded your current quota, please check your plan and billing details.","type":"${type}","param":null,"code":"${type}"}`;
+
+    it('classifies OpenAI insufficient_quota as billing, which is fatal', () => {
+      const result = classifyError(openAiQuota('insufficient_quota'));
+      expect(result.category).toBe('billing');
+      expect(result.severity).toBe('fatal');
+      expect(result.retryAfterMs).toBeUndefined();
+    });
+
+    it('classifies Anthropic credit exhaustion and OpenRouter 402 as billing', () => {
+      expect(classifyError(
+        '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}',
+      ).category).toBe('billing');
+      expect(classifyError(
+        '402 {"error":{"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits","code":402}}',
+      ).category).toBe('billing');
+    });
+
+    it('classifies the OpenCode gateway monthly limits as billing', () => {
+      expect(classifyError('429 {"type":"error","error":{"type":"GoUsageLimitError","message":"Usage limit reached"}}').category)
+        .toBe('billing');
+      expect(classifyError('429 {"type":"error","error":{"type":"FreeUsageLimitError","message":"Free usage exhausted"}}').category)
+        .toBe('billing');
+      expect(classifyError('Monthly usage limit reached. Enable available balance usage to continue.').category)
+        .toBe('billing');
+    });
+
+    it("guard: keeps Gemini's per-minute quota 429 a rate limit", () => {
+      const gemini = (status: string): string =>
+        `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"${status}"}}`;
+      // Positive precondition: the same fixture with OpenAI's code is billing.
+      expect(classifyError(gemini('insufficient_quota')).category).toBe('billing');
+
+      expect(classifyError(gemini('RESOURCE_EXHAUSTED')).category).toBe('rate_limit');
+    });
+
+    it("guard: keeps Google's per-metric quota a rate limit", () => {
+      const result = classifyError(
+        'Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15',
+      );
+      expect(result.category).toBe('rate_limit');
+      expect(result.retryAfterMs).toBeUndefined();
+    });
+  });
+
+  describe('usage windows', () => {
+    it('classifies a ChatGPT usage limit as a rate limit with its reset time', () => {
+      const result = classifyError('You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.');
+      expect(result.category).toBe('rate_limit');
+      expect(result.severity).toBe('retry');
+      expect(result.retryAfterMs).toBe(2_520_000);
+    });
+
+    it('reads a provider retry delay above pi-ai\'s cap as the reset time', () => {
+      const result = classifyError('Server requested 3600s retry delay (max: 60s). 429 Rate limit exceeded');
+      expect(result.category).toBe('rate_limit');
+      expect(result.retryAfterMs).toBe(3_600_000);
+    });
+
+    it('classifies a usage limit with no stated reset as a plain rate limit', () => {
+      const result = classifyError('You have hit your ChatGPT usage limit (pro plan).');
+      expect(result.category).toBe('rate_limit');
+      expect(result.retryAfterMs).toBeUndefined();
+    });
+  });
+
+  describe('transient failures pi-ai recognizes', () => {
+    it('classifies server_busy and a model at capacity as server errors', () => {
+      expect(classifyError('{"error":{"code":"server_busy","message":"Please retry later"}}').category)
+        .toBe('server_error');
+      expect(classifyError('The model is at capacity. Please try again later.').category).toBe('server_error');
+    });
+
+    it('guard: leaves a failure pi-ai does not call transient unknown', () => {
+      expect(classifyError('404 model not found').category).toBe('unknown');
+    });
+  });
+
+  describe('overflow judged on the failed response', () => {
+    const usage = (input: number) => ({
+      input, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: input,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+
+    it('reads a Cerebras body-less 413 as an overflow from the response it came on', () => {
+      const failure = {
+        role: 'assistant' as const, content: [], api: 'openai-completions', provider: 'cerebras', model: 'm',
+        usage: usage(0), stopReason: 'error' as const, errorMessage: '413 status code (no body)', timestamp: 0,
+      };
+      // Precondition: the text alone says nothing about the provider.
+      expect(classifyError('413 status code (no body)').category).not.toBe('context_overflow');
+
+      expect(classifyError('413 status code (no body)', { assistantMessage: failure }).category)
+        .toBe('context_overflow');
     });
   });
 

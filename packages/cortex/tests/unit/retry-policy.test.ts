@@ -5,6 +5,7 @@ import {
   backoffForAttempt,
   shouldRetry,
   isRetryableCategory,
+  retryDelayForAttempt,
   withElapsedCeiling,
 } from '../../src/retry-policy.js';
 import type { ClassifiedError } from '../../src/types.js';
@@ -82,6 +83,7 @@ describe('shouldRetry', () => {
 
   it('does not retry fatal, human-actionable, or unknown failures', () => {
     expect(shouldRetry(err('authentication', 'fatal'), ctx, policy)).toBe(false);
+    expect(shouldRetry(err('billing', 'fatal'), ctx, policy)).toBe(false);
     expect(shouldRetry(err('context_overflow', 'recoverable'), ctx, policy)).toBe(false);
     // A 404 / bad endpoint classifies as unknown -> must surface, not spin.
     expect(shouldRetry(err('unknown', 'recoverable'), ctx, policy)).toBe(false);
@@ -105,6 +107,34 @@ describe('shouldRetry', () => {
     const capped = resolveRetryPolicy({ maxElapsedMs: 10_000 });
     expect(shouldRetry(err('network', 'retry'), { ...ctx, elapsedMs: 9_999 }, capped)).toBe(true);
     expect(shouldRetry(err('network', 'retry'), { ...ctx, elapsedMs: 10_000 }, capped)).toBe(false);
+  });
+});
+
+describe('stated resets', () => {
+  const ctx = { retryIndex: 0, elapsedMs: 0, aborted: false };
+  const reset = (retryAfterMs: number): ClassifiedError => ({ ...err('rate_limit', 'retry'), retryAfterMs });
+
+  it('defaults the longest wait for a stated reset to 6 hours', () => {
+    expect(DEFAULT_RETRY_POLICY.maxRetryAfterMs).toBe(21_600_000);
+    expect(resolveRetryPolicy({ maxRetryAfterMs: -1 }).maxRetryAfterMs).toBe(21_600_000);
+  });
+
+  it('waits for a stated reset later than the backoff, and the backoff otherwise', () => {
+    expect(retryDelayForAttempt(DEFAULT_RETRY_POLICY, 0, reset(2_520_000))).toBe(2_520_000);
+    expect(retryDelayForAttempt(DEFAULT_RETRY_POLICY, 0, reset(30_000))).toBe(120_000);
+    expect(retryDelayForAttempt(DEFAULT_RETRY_POLICY, 0, err('rate_limit', 'retry'))).toBe(120_000);
+  });
+
+  it('retries for a reset up to maxRetryAfterMs away, and not beyond', () => {
+    expect(shouldRetry(reset(21_600_000), ctx, DEFAULT_RETRY_POLICY)).toBe(true);
+    expect(shouldRetry(reset(21_600_001), ctx, DEFAULT_RETRY_POLICY)).toBe(false);
+  });
+
+  it('does not retry for a reset past the elapsed ceiling', () => {
+    // The talker's fail-fast policy caps elapsed time at 10 seconds.
+    const failFast = resolveRetryPolicy({ maxElapsedMs: 10_000 });
+    expect(shouldRetry(reset(5_000), { ...ctx, elapsedMs: 4_000 }, failFast)).toBe(true);
+    expect(shouldRetry(reset(5_000), { ...ctx, elapsedMs: 6_000 }, failFast)).toBe(false);
   });
 });
 

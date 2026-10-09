@@ -621,6 +621,109 @@ describe('AgentLoop.currentRun across a retry ladder', () => {
   });
 });
 
+describe('AgentLoop billing and stated resets', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** A mock whose attempts fail with `failures` in turn, then succeed. */
+  function failingWith(...failures: string[]): RetryMockAgent {
+    const mock = createRetryMock(['ok']);
+    const queue = [...failures];
+    const attempt = (): void => {
+      const message = queue.shift();
+      mock.state.errorMessage = message;
+      mock.state.messages.push(
+        message === undefined
+          ? { role: 'assistant', content: 'done', stopReason: 'stop' } as never
+          : { role: 'assistant', content: [], stopReason: 'error', errorMessage: message } as never,
+      );
+    };
+    mock.prompt = async (input: string) => {
+      mock.promptCalls += 1;
+      mock.state.messages.push({ role: 'user', content: input } as never);
+      attempt();
+      return undefined;
+    };
+    mock.continue = async () => {
+      mock.continueCalls += 1;
+      attempt();
+      return undefined;
+    };
+    return mock;
+  }
+
+  const INSUFFICIENT_QUOTA =
+    'OpenAI API error (429): {"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}';
+  const USAGE_LIMIT = 'You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min.';
+
+  it('surfaces insufficient_quota at once as a fatal billing error', async () => {
+    const mock = failingWith(INSUFFICIENT_QUOTA);
+    const loop = build(mock, createConfig());
+    const scheduled = vi.fn();
+    const errored = vi.fn();
+    loop.onRetryScheduled(scheduled);
+    loop.onError(errored);
+
+    await expect(loop.prompt('hi')).rejects.toThrow();
+
+    expect(scheduled).not.toHaveBeenCalled();
+    expect(mock.continueCalls).toBe(0);
+    expect(errored.mock.calls[0]![0]).toMatchObject({ category: 'billing', severity: 'fatal' });
+  });
+
+  it('waits for the reset a usage limit states before retrying', async () => {
+    vi.useFakeTimers();
+    const mock = failingWith(USAGE_LIMIT);
+    const loop = build(mock, createConfig());
+    const scheduled = vi.fn();
+    loop.onRetryScheduled(scheduled);
+
+    const turn = loop.prompt('hi');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(scheduled).toHaveBeenCalledTimes(1);
+    expect(scheduled.mock.calls[0]![0]).toMatchObject({ category: 'rate_limit', delayMs: 2_520_000 });
+
+    await vi.advanceTimersByTimeAsync(2_519_000);
+    expect(mock.continueCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await turn;
+    expect(mock.continueCalls).toBe(1);
+  });
+
+  it('waits the retry delay a provider requested over the backoff', async () => {
+    vi.useFakeTimers();
+    const mock = failingWith('Server requested 3600s retry delay (max: 60s). 429 Rate limit exceeded');
+    // The default policy: a 2 minute first backoff.
+    const loop = build(mock, createConfig({ retryPolicy: {} }));
+    const scheduled = vi.fn();
+    loop.onRetryScheduled(scheduled);
+
+    const turn = loop.prompt('hi');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(scheduled.mock.calls[0]![0]).toMatchObject({ category: 'rate_limit', delayMs: 3_600_000 });
+
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    await turn;
+    expect(mock.continueCalls).toBe(1);
+  });
+
+  it('does not wait for a reset further away than maxRetryAfterMs', async () => {
+    const mock = failingWith('You have hit your ChatGPT usage limit (plus plan). Try again in ~420 min.');
+    const loop = build(mock, createConfig());
+    const scheduled = vi.fn();
+    const errored = vi.fn();
+    loop.onRetryScheduled(scheduled);
+    loop.onError(errored);
+
+    await expect(loop.prompt('hi')).rejects.toThrow();
+
+    expect(scheduled).not.toHaveBeenCalled();
+    expect(errored.mock.calls[0]![0]).toMatchObject({ category: 'rate_limit', retryAfterMs: 25_200_000 });
+  });
+});
+
 describe('AgentLoop reactive overflow handling', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -648,6 +751,42 @@ describe('AgentLoop reactive overflow handling', () => {
     await expect(loop.prompt('hi')).rejects.toThrow();
 
     expect(truncate).toHaveBeenCalledTimes(1);
+  });
+
+  /** A mock whose run completes with an answer reporting `input` tokens of input. */
+  function answersWithInput(input: number): RetryMockAgent {
+    const mock = createRetryMock(['ok']);
+    mock.prompt = async (text: string) => {
+      mock.promptCalls += 1;
+      mock.state.messages.push({ role: 'user', content: text } as never);
+      mock.state.messages.push({
+        role: 'assistant', content: [{ type: 'text', text: 'done' }], stopReason: 'stop',
+        usage: { input, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: input + 5 },
+      } as never);
+      return undefined;
+    };
+    return mock;
+  }
+
+  const modelWithWindow = (contextWindow: number) =>
+    makeModel({ provider: 'zai', name: 'glm-4.6', contextWindow } as PiModel);
+
+  it('runs the overflow drop when a provider overflows silently', async () => {
+    const truncate = vi.spyOn(CompactionManager.prototype, 'handleOverflowError');
+    const loop = build(answersWithInput(250_000), createConfig({ model: modelWithWindow(200_000) }));
+
+    await loop.prompt('hi');
+
+    expect(truncate).toHaveBeenCalledTimes(1);
+  });
+
+  it('guard: leaves history alone when the answer fit the window', async () => {
+    const truncate = vi.spyOn(CompactionManager.prototype, 'handleOverflowError');
+    const loop = build(answersWithInput(150_000), createConfig({ model: modelWithWindow(200_000) }));
+
+    await loop.prompt('hi');
+
+    expect(truncate).not.toHaveBeenCalled();
   });
 
   it('does not truncate history when Bedrock throttles on tokens per minute', async () => {

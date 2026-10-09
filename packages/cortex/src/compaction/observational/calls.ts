@@ -4,8 +4,10 @@
  * signal ending the whole call at once.
  *
  * An attempt is the model call plus reading its reply, so an unusable reply
- * (MemoryReplyError) is retried like a provider error. Authentication and
- * context-overflow errors are not: the same request fails the same way.
+ * (MemoryReplyError) is retried like a provider error. Authentication,
+ * billing and context-overflow errors are not: the same request fails the
+ * same way. Neither is a limit with a stated reset: quick retries cannot
+ * reach it.
  */
 
 import { classifyError } from '../../error-classifier.js';
@@ -130,9 +132,12 @@ async function boundedAttempt<T>(
 
 function isRetryable(error: Error): boolean {
   if (error instanceof MemoryReplyError || error instanceof MemoryCallTimeoutError) return true;
-  const category = classifyError(error).category;
-  return category !== 'authentication' && category !== 'context_overflow' && category !== 'cancelled';
+  const classified = classifyError(error);
+  if (classified.retryAfterMs !== undefined) return false;
+  return !NOT_RETRIED.has(classified.category);
 }
+
+const NOT_RETRIED: ReadonlySet<string> = new Set(['authentication', 'billing', 'context_overflow', 'cancelled']);
 
 function isDeadline(reason: unknown): boolean {
   return reason instanceof MemoryCallTimeoutError;

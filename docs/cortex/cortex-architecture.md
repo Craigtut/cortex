@@ -400,9 +400,9 @@ Pi-agent-core emits 10 events across 4 scopes. Cortex normalizes these into a co
 
 ### Error Recovery
 
-Pi-ai surfaces errors as plain `Error` objects with string messages. Cortex implements a regex-based error classifier that maps error strings to actionable categories (`authentication`, `rate_limit`, `context_overflow`, `server_error`, `network`, `cancelled`, `unknown`). Classified errors are emitted via the `onError` event for the consumer to route (logging, UI notifications, backoff, or retry).
+Pi-ai surfaces errors as plain `Error` objects with string messages. Cortex's error classifier maps them to actionable categories (`authentication`, `billing`, `rate_limit`, `context_overflow`, `server_error`, `network`, `cancelled`, `unknown`), using pi-ai's own overflow and transient-error detection and adding what pi-ai does not decide: billing exhaustion, usage windows with a stated reset, authentication, and rate limits. Classified errors are emitted via the `onError` event for the consumer to route (logging, UI notifications, backoff, or retry).
 
-Provider SDKs have inconsistent retry coverage, so Cortex retries transient failures (`network`, `server_error`, `rate_limit` by default) itself, per a configurable `retryPolicy`: it waits out a backoff, trims pi's failure stub, and resumes the turn with `agent.continue()`. Only failures it gives up on reach `onError`, and `onRetryScheduled` / `onRetrySucceeded` / `onRetryExhausted` report the retries along the way.
+Provider SDKs have inconsistent retry coverage, so Cortex retries transient failures (`network`, `server_error`, `rate_limit` by default) itself, per a configurable `retryPolicy`: it waits out a backoff (or a reset the provider stated, up to 6 hours), trims pi's failure stub, and resumes the turn with `agent.continue()`. Only failures it gives up on reach `onError`, and `onRetryScheduled` / `onRetrySucceeded` / `onRetryExhausted` report the retries along the way.
 
 See **`error-recovery.md`** for the full design: classification patterns per category, error event flow, auth failure detection, transient error handling, consumer-specific rate limit handling, and pipeline integration.
 

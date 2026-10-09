@@ -11,12 +11,12 @@
 
 import type { AgentMessage } from '../context-manager.js';
 import type { BudgetGuard } from '../budget-guard.js';
-import { classifyError, toError } from '../error-classifier.js';
-import { isContextOverflow } from '../compaction/failsafe.js';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { classifyError, overflowedSilently, toError } from '../error-classifier.js';
 import type { CompactionManager } from '../compaction/index.js';
 import type { CortexModel } from '../model-wrapper.js';
 import type { PromptWatchdogDiagnostics } from '../prompt-diagnostics.js';
-import { backoffForAttempt, isRetryableCategory, shouldRetry } from '../retry-policy.js';
+import { isRetryableCategory, retryDelayForAttempt, shouldRetry } from '../retry-policy.js';
 import type { CortexToolRuntime } from '../tools/runtime.js';
 import type {
   AgentLoopConfig,
@@ -343,6 +343,13 @@ export class TurnRunner {
           this.trimFailureStubs();
         }
 
+        // A provider that truncates an oversized request instead of
+        // rejecting it answers anyway; the next request would overflow too.
+        const answer = this.lastAssistantMessage();
+        if (answer && overflowedSilently(answer, this.ports.model().contextWindow)) {
+          this.ports.handleOverflow();
+        }
+
         if (retryIndex > 0) {
           this.retrySucceeded.emit({ attempts: retryIndex }, this.ports.origin);
         }
@@ -350,9 +357,14 @@ export class TurnRunner {
       } catch (err) {
         const error = toError(err);
         const aborted = this.ports.isAborted();
-        const classified = classifyError(error, { wasAborted: aborted });
+        const failure = this.lastAssistantMessage();
+        const classified = classifyError(error, {
+          wasAborted: aborted,
+          contextWindow: this.ports.model().contextWindow,
+          ...(failure?.stopReason === 'error' ? { assistantMessage: failure } : {}),
+        });
 
-        if (isContextOverflow(error)) {
+        if (classified.category === 'context_overflow') {
           this.ports.handleOverflow();
         }
 
@@ -390,7 +402,7 @@ export class TurnRunner {
           throw error;
         }
 
-        const delayMs = backoffForAttempt(policy, retryIndex);
+        const delayMs = retryDelayForAttempt(policy, retryIndex, classified);
         const attemptNumber = retryIndex + 1;
         const scheduled: RetryScheduledInfo = {
           category: classified.category,
@@ -441,6 +453,12 @@ export class TurnRunner {
     } finally {
       if (this.liveRun) this.liveRun.attemptStartedAt = null;
     }
+  }
+
+  /** The transcript's last message when it is a response: the run's answer or pi's failure record. */
+  private lastAssistantMessage(): AssistantMessage | undefined {
+    const last = this.ports.agent.state.messages.at(-1) as { role?: string } | undefined;
+    return last?.role === 'assistant' ? (last as AssistantMessage) : undefined;
   }
 
   /** Whether trimming the failure stubs leaves a transcript continue() can resume. */
