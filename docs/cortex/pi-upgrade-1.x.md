@@ -562,6 +562,29 @@ against the pre-change source: revert only the source with
   - `initiateOAuth('openai')` passes `getDeviceId`.
   - An Anthropic login on a fallback port still renders the branded page.
   - A `select` prompt with no `onSelect` picks the first option.
+- As built (research corrected the plan here):
+  - The `initiateOAuth('openai')` test was dropped: Sign in with ChatGPT is out
+    of scope (decision 8).
+  - The provider list is not derived from pi. pi's `Provider` objects carry an
+    id, a name, and which auth methods exist, but not what Cortex's UX needs
+    (env var names, key prefixes, key URLs: `envApiKeyAuth` keeps env names in
+    a closure), and a derived OAuth list would offer Sign in with ChatGPT.
+    `PROVIDER_REGISTRY` stays hand-kept, and `provider-registry.test.ts`
+    already fails when it disagrees with the installed catalog. With exact pin
+    bumps, that check runs at every upgrade.
+  - The single-refresh guarantee holds only through a store: `getAuth()`
+    refreshes inside the store's `modify`. `resolveOAuthApiKey()` still works
+    on a caller-held blob, so concurrent calls still refresh once each; it now
+    returns `auth` so Kimi Coding and Copilot work through it too.
+  - The `callback_failed` race stays. pi now rejects a failed callback itself,
+    but the shim surfaces the typed `OAuthError` as soon as the browser shows
+    the failure.
+  - The shim matches the callback the authorization URL names
+    (`redirect_uri` or `callback_url`), not only a fallback port, which also
+    brands OpenRouter's page (ephemeral port and random path) for the first
+    time.
+  - Changing `OAuthRefreshResult.apiKey` to optional broke a docs example; the
+    guide now shows `getAuth`.
 
 ### Phase 5: Cortex Code on the CredentialStore
 
