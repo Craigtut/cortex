@@ -234,7 +234,7 @@ Compaction reports through observational memory's events:
 
 - `onObservation(event, origin)`: observations recorded, and messages swapped out (`event.removedMessages`, with `trigger`, `tokensBefore` and `tokensAfter`). A consumer keeping its own memory, or a durable transcript marker, hangs off this.
 - `onReflection(event, origin)`: the log was condensed.
-- `onMemoryError(info, origin)`, `onMemoryRecovered(info, origin)`: a memory call failed after all its attempts, and the first success after failures. Nothing is lost when a memory call fails.
+- `onMemoryError(info, origin)`, `onMemoryRecovered(info, origin)`: a memory call failed after all its attempts, and the first success after failures. A failed call loses nothing by itself: unobserved messages stay in context. Only a provider overflow before memory records them drops any, and `onMemoryGap` reports that.
 - `onMemoryGap(info, origin)`: messages were dropped before memory recorded them (provider overflow only).
 
 The same reports reach the event bridge as the `memory` event, so they forward from sub-agents.

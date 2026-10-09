@@ -9,8 +9,10 @@
  * shrink. Observed messages leave as in any swap; unobserved ones are
  * dropped, oldest first, and the log records the gap.
  *
- * Both keep the latest user message and the last unit of history, and cut
- * only on unit boundaries.
+ * Both keep the latest user message and cut only on unit boundaries. Both
+ * also keep the last unit of history, but that protects content only in
+ * the view: after the provider rejects a request, the last unit is pi's
+ * failure stub for it.
  */
 
 import type { AgentMessage } from '../../context-manager.js';
@@ -87,7 +89,8 @@ export class OverflowDrop {
    *
    * Everything already observed outside the reduced tail leaves as in any
    * swap. Unobserved messages outside it are dropped, oldest first, and the
-   * log records the gap. The latest user message and the last unit stay.
+   * log records the gap. The latest user message stays. So does the last
+   * unit, which after a rejected request is pi's failure stub, not content.
    *
    * @returns the rewrite, or null when nothing could be dropped
    */

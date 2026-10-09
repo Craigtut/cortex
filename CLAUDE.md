@@ -38,7 +38,7 @@ Three main exports:
 
 - **No persistence**: Cortex is in-memory only. It provides `getConversationHistory()`, `restoreConversationHistory()`, and `onLoopComplete` hooks. The consumer decides where and when to persist.
 - **No application logic**: No thoughts, emotions, personas, goal tracking, or decision handling. Those are consumer concerns.
-- **Callback-driven integration**: `getApiKey` callback for credentials, `beforeToolCall` hook for permissions, `transformContext` for ephemeral context injection, `onBeforeCompaction`/`onPostCompaction` for domain-specific coordination.
+- **Callback-driven integration**: `getApiKey` callback for credentials, `beforeToolCall` hook for permissions, `transformContext` for ephemeral context injection, `onObservation`/`onReflection`/`onMemoryGap` for domain-specific coordination with memory.
 - **Consumer-provided system prompt**: Cortex appends operational rules after the consumer's content. The consumer owns identity and domain instructions.
 
 ### Architecture Highlights
@@ -46,7 +46,7 @@ Three main exports:
 - **Context Management**: Named slots for organizing context, slot-based composition, prefix caching optimization
 - **Built-in Tools**: Bash, Read, Write, Edit, Glob, Grep, WebFetch, SubAgent, TaskOutput (auto-registered, disable via `disableTools` config)
 - **Tool Permissions**: Per-tool permission modes (off/ask/always_allow), pre-execution callbacks
-- **Compaction**: Observational memory (default: background observer/reflector with async buffering) or classic strategy (summarization, emergency truncation). Cache-aware microcompaction (tool result trimming) is shared by both strategies.
+- **Compaction**: Observational memory (background observer/reflector with async buffering) swaps observations in for older messages and keeps a verbatim tail. Cache-aware microcompaction (tool result trimming) and a failsafe (view truncation, overflow drop with a recorded gap) back it up. Classic summarization was removed.
 - **Skills**: Progressive disclosure system (advertise/load/use), SKILL.md format, dynamic context injection
 - **MCP**: Unified MCP client for integrating external tool servers
 - **Budget Guards**: Token and cost limits to prevent runaway execution
@@ -154,7 +154,7 @@ Detailed documentation lives in `/docs/cortex/`. Use `/doc-explorer <topic>` to 
 - **Product Vision**: `docs/cortex/product-vision.md` (why Cortex exists, core insight, design principles)
 - **Architecture**: `docs/cortex/cortex-architecture.md` (core design, exports, patterns)
 - **Context**: `docs/cortex/context-manager.md` (slots, prefix caching, ephemeral context)
-- **Compaction**: `docs/cortex/observational-memory-architecture.md` (default: observational memory), `docs/cortex/compaction-strategy.md` (classic strategy)
+- **Compaction**: `docs/cortex/observational-memory-architecture.md` (observational memory), `docs/cortex/compaction-strategy.md` (the layers: memory, microcompaction, failsafe)
 - **Duplex (planned)**: `docs/cortex/duplex/` (talker/reasoner restructure: design decisions, architecture, migration plan)
 - **Tool Result Persistence**: `docs/cortex/tool-result-persistence.md` (proactive bookend + persist for oversized tool results)
 - **Skills**: `docs/cortex/skill-system.md` (progressive disclosure, SKILL.md format, registry)

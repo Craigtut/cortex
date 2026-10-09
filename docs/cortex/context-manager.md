@@ -36,7 +36,7 @@ In a managed `AgentLoop`, the effective message array has five regions. The Cont
 
 Consecutive user-role messages are valid: the Anthropic API auto-merges them into a single turn. No custom `convertToLlm` is needed.
 
-`ContextManager.historyStart` (`N + 1`) is where history begins; every history slice, compaction rewrite, and observational watermark counts from it. The ContextManager puts an empty head at index 0 at construction when pi has not created one. History may carry `role: 'system'` messages inline: pi declares tool changes there, and Cortex patches prompt sections there once the model has answered (see system-prompt.md). They declare, they are not turns: the observer and summarizer skip them, cache breakpoint indexing skips them, and a history rewrite that drops one folds it into the head (`spliceHistory` in `system-transcript.ts`) so the transcript still declares what it carried.
+`ContextManager.historyStart` (`N + 1`) is where history begins; every history slice, compaction rewrite, and observational watermark counts from it. The ContextManager puts an empty head at index 0 at construction when pi has not created one. History may carry `role: 'system'` messages inline: pi declares tool changes there, and Cortex patches prompt sections there once the model has answered (see system-prompt.md). They declare, they are not turns: the observer skips them, cache breakpoint indexing skips them, and a history rewrite that drops one folds it into the head (`spliceHistory` in `system-transcript.ts`) so the transcript still declares what it carried.
 
 ### Prefix Caching
 

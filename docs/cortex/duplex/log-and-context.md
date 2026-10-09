@@ -15,9 +15,9 @@ The log is the facade-owned, append-only record of the session: every user utter
 
 The log is not a context surface. No loop's prompt is built by projecting log entries into synthetic view messages. This was the original design and it was rejected (decisions.md D7) after the context-pipeline audit identified three violations, all in current code:
 
-1. **View injections vanish on compaction turns.** After an observational swap, the post-slot view is rebuilt from the source array (`compaction/observational/index.ts:317-339`, `compaction/index.ts:916-921`), so anything that existed only in the returned view silently disappears from the prompt on exactly those turns.
-2. **The observational watermark requires an append-only source.** Buffering tracks an index into the post-slot source history (`compaction/observational/buffering.ts:409-459`); the only sanctioned mutation is front-truncation. Foreign insertions desync the watermark into silent observation loss or an orphaned-toolResult provider 400.
-3. **Tool-call-group adjacency.** Any insertion between an assistant tool call and its consecutive tool results corrupts group detection (`compaction/tool-call-groups.ts:39-81`), the unit atomicity of swaps and truncation, toolResult merge runs, and the cache-breakpoint index simulation (`cache-breakpoints.ts:190-195`) simultaneously.
+1. **View injections vanish under context pressure.** After an observational swap the post-slot view was rebuilt from the source array, and from the activation threshold on the engine stopped building views at all, so anything that existed only in the returned view was missing from every request at or past the threshold, not just the swap turns. That is fixed: the transform passes its injections into compaction, and a swap re-derives the whole view, injections and the new observations included (`ContextPipeline.transform`'s `rebuildView`). Each request-only surface still has to be carried through every rewrite, which is why the log adds none.
+2. **The observational watermark requires reported rewrites.** The ledger tracks indices into the post-slot source history (`compaction/observational/ledger.ts`); every rewrite reports to it (a swap's prefix removal, a failed run's trimmed stubs, an unwound delivery's removals) and it moves its indices with the messages. A foreign insertion nothing reports desyncs the watermark into silent observation loss or an orphaned-toolResult provider 400.
+3. **Tool-call-group adjacency.** Any insertion between an assistant tool call and its consecutive tool results corrupts group detection (`findToolCallGroups` in `compaction/tool-call-groups.ts`), the unit atomicity of swaps and truncation, toolResult merge runs, and the cache-breakpoint index simulation (`computeCacheBreakpointIndices` in `cache-breakpoints.ts`) simultaneously.
 
 ## The Two Sanctioned Channels
 
@@ -61,7 +61,7 @@ Message shape constraints from the audit: user-role, non-whitespace string conte
 
 ### Churn: View Injection Outside BP3
 
-Task headlines and live activity (current tool, duration, token count, last output lines) change every tick and must never enter a transcript or the cached prefix. They use the existing `<background-tasks>` mechanism: view-injected in `transformContext` after the BP3 boundary (`agent-loop.ts:3340-3350`), rebuilt every call, absent on compaction turns by design, never observed, never persisted.
+Task headlines and live activity (current tool, duration, token count, last output lines) change every tick and must never enter a transcript or the cached prefix. They use the existing `<background-tasks>` mechanism: view-injected in `transformContext` after the BP3 boundary (`ContextPipeline.injectedSnapshot` in `agent-loop/context-pipeline.ts`), rebuilt every call, carried through compaction turns, never observed, never persisted.
 
 Rules for the headline block, from the audit:
 
@@ -92,11 +92,11 @@ Every entry carries a monotonic sequence number (timestamps collide under burst)
 
 ## Cache Discipline Per Loop
 
-Each loop keeps its own transcript, its own stable session ID (`sessionId` per instance for prefix-cache routing; children already use taskId, `agent-loop.ts:4917-4918`), and its own cache breakpoints. The composite adds no cross-loop cache coupling:
+Each loop keeps its own transcript, its own stable session ID (`sessionId` per instance for prefix-cache routing; children use their taskId, `agent-loop/child-loop-config.ts`), and its own cache breakpoints. The composite adds no cross-loop cache coupling:
 
 - Talker prefix: system prompt + slots + compacted history. Deliveries append; headlines stay outside BP3. Target: near-total cache reads per utterance.
 - Reasoner prefix: unchanged from today.
-- The step-0 mirror rule holds everywhere: mid-loop writes to `agent.state.messages` (including `setSlot`) are clobbered by the next `transformContext` mirror (`agent-loop.ts:3275`) and never reach pi's loop array. The facade therefore writes slots only between prompts, or uses the per-call re-patch pattern (`agent-loop.ts:3319-3333`) if a mid-loop surface ever becomes necessary.
+- The step-0 mirror rule holds everywhere: mid-loop writes to `agent.state.messages` (including `setSlot`) are clobbered by the next `transformContext` mirror (step 0 of `ContextPipeline.transform`) and never reach pi's loop array. The facade therefore writes slots only between prompts, or uses the per-call re-patch pattern (`ContextPipeline.writeObservationSlot`) if a mid-loop surface ever becomes necessary.
 
 ## Compaction Interactions
 
