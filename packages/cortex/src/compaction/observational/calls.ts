@@ -138,7 +138,8 @@ function isDeadline(reason: unknown): boolean {
   return reason instanceof MemoryCallTimeoutError;
 }
 
-function reasonOf(signal: AbortSignal): Error {
+/** The error a fired signal carries, or an AbortError when it carries none. */
+export function reasonOf(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   if (reason instanceof Error) return reason;
   const error = new Error('Memory call aborted');

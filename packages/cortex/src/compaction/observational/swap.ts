@@ -1,5 +1,5 @@
 /**
- * Where a swap cuts the source history, and what it keeps.
+ * Where a swap cuts the source history, what it keeps, and how it lands.
  *
  * A swap removes observed messages from the front, up to the verbatim tail
  * or the watermark, whichever comes first, on a unit boundary. The latest
@@ -10,6 +10,8 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
+import type { ObservationLedger } from './ledger.js';
+import type { ObservationLog } from './log.js';
 import type { TailSelection } from './tail.js';
 import { unitFloor } from './units.js';
 
@@ -40,4 +42,39 @@ export function removedBy(history: AgentMessage[], swap: SwapCut): AgentMessage[
 /** The source after the cut: the kept latest user message, then the rest. */
 export function keptAfter(history: AgentMessage[], swap: SwapCut): AgentMessage[] {
   return swap.keep !== null ? [history[swap.keep]!, ...history.slice(swap.cut)] : history.slice(swap.cut);
+}
+
+/** What a swap did to the source. */
+export interface AppliedSwap {
+  /** The source after the swap. */
+  kept: AgentMessage[];
+  removed: AgentMessage[];
+  /** The messages whose observations this swap moved into the log. */
+  observed: AgentMessage[];
+}
+
+/**
+ * Land `swap` in the ledger and the log: every chunk covering a removed
+ * message merges into the log, in order, with the latest of their hints;
+ * the ledger moves its indices with the messages. The caller writes
+ * `kept` to the source, synchronously, before anything else can run.
+ */
+export function applySwap(
+  history: AgentMessage[],
+  swap: SwapCut,
+  ledger: ObservationLedger,
+  log: ObservationLog,
+): AppliedSwap {
+  const priorPrefix = ledger.observedPrefix;
+  const consumed = ledger.removePrefix(swap.cut, swap.keep ?? undefined);
+  const observedEnd = consumed.length > 0 ? consumed[consumed.length - 1]!.endIndex : priorPrefix;
+  if (consumed.length > 0) {
+    const swapped = log.merge(consumed);
+    log.append(swapped.observations, swapped.hint);
+  }
+  return {
+    kept: keptAfter(history, swap),
+    removed: removedBy(history, swap),
+    observed: history.slice(priorPrefix, observedEnd),
+  };
 }

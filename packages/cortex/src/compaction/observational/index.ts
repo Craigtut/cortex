@@ -32,16 +32,16 @@ import type {
   MemoryGapInfo,
 } from './types.js';
 import { OBSERVATIONAL_MEMORY_DEFAULTS } from './constants.js';
-import { runObserver } from './observer.js';
 import { Reflection } from './reflection.js';
-import { BufferingCoordinator, chunkFromOutput } from './buffering.js';
+import { BufferingCoordinator } from './buffering.js';
 import { estimateTokens } from '../../token-estimator.js';
-import { MemoryCallError, RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
+import { RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
+import { InBandObserver } from './in-band.js';
 import { messageTokens, pieceEnd, unitCeil } from './units.js';
 import { selectTail } from './tail.js';
-import { keptAfter, removedBy, removesAny, swapCut } from './swap.js';
+import { applySwap, removedBy, removesAny, swapCut } from './swap.js';
 import { gapNote, timeSpan, truncateView } from './emergency.js';
 import type { SwapCut } from './swap.js';
 import { ObservationLog } from './log.js';
@@ -87,25 +87,6 @@ export type {
  */
 export const DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS = 60_000;
 
-/** Whether `promise` settled before `signal` fired. Never rejects. */
-function settledUnlessAborted(promise: Promise<unknown>, signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    const onAbort = (): void => resolve(false);
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(true);
-      },
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(true);
-      },
-    );
-  });
-}
-
 /** The continuation hint an observer output carries, if it carries one. */
 function hintOf(output: ObserverOutput): ContinuationHint | null {
   if (!output.currentTask && !output.suggestedResponse) return null;
@@ -145,6 +126,7 @@ export class ObservationalMemoryEngine {
   private completeFn: CompleteFn | null = null;
   private readonly log: ObservationLog;
   private readonly reflection: Reflection;
+  private readonly inBand: InBandObserver;
   private contextWindow: number = 0;
   private utilityModelContextWindow: number = 0;
   private slotIndex: number;
@@ -177,6 +159,15 @@ export class ObservationalMemoryEngine {
       policy: () => this.callPolicy(),
       windows: () => ({ contextWindow: this.contextWindow, utilityModelContextWindow: this.utilityModelContextWindow }),
       config: () => this.config,
+      logger: () => this.logger,
+    });
+    this.inBand = new InBandObserver({
+      buffering: this.buffering,
+      health: this.health,
+      completeFn: () => this.completeFn,
+      logText: () => this.log.text,
+      observerConfig: () => this.buildObserverConfig(),
+      policy: () => this.callPolicy(),
       logger: () => this.logger,
     });
   }
@@ -336,7 +327,7 @@ export class ObservationalMemoryEngine {
       this.utilizationAfter(sourceHistory, swapCut(sourceHistory, tail, this.buffering.getWatermark()), utilization)
         >= this.config.activationThreshold
     ) {
-      sync = await this.catchUp(sourceHistory, tail.start, passSignal, isStale);
+      sync = (await this.inBand.catchUp(sourceHistory, tail.start, 'activation', passSignal, isStale)).observed;
     }
 
     // An abandoned or aborted pass applies nothing: its rewrite would be
@@ -347,24 +338,17 @@ export class ObservationalMemoryEngine {
     // Step 2: Swap, synchronously: cut, merge, rewrite.
     const swap = swapCut(sourceHistory, tail, this.buffering.getWatermark());
     if (removesAny(swap)) {
-      const priorPrefix = this.buffering.ledger.observedPrefix;
-      const consumed = this.buffering.ledger.removePrefix(swap.cut, swap.keep ?? undefined);
-      const observedEnd = consumed.length > 0 ? consumed[consumed.length - 1]!.endIndex : priorPrefix;
       const before = this.log.tokenCount;
-      if (consumed.length > 0) {
-        const swapped = this.log.merge(consumed);
-        this.log.append(swapped.observations, swapped.hint);
-      }
-      const removedMessages = removedBy(sourceHistory, swap);
-      setSourceHistory(keptAfter(sourceHistory, swap));
+      const applied = applySwap(sourceHistory, swap, this.buffering.ledger, this.log);
+      setSourceHistory(applied.kept);
 
       // Step 3: Report it (the pass is known live: stale returned above).
       const tokensBefore = Math.round(utilization * this.contextWindow);
-      const removedTokens = removedMessages.reduce((sum, message) => sum + messageTokens(message), 0);
+      const removedTokens = applied.removed.reduce((sum, message) => sum + messageTokens(message), 0);
       this.fireObservationEvent({
         trigger: 'activation',
-        observedMessages: sourceHistory.slice(priorPrefix, observedEnd),
-        removedMessages,
+        observedMessages: applied.observed,
+        removedMessages: applied.removed,
         observations: this.log.text,
         contextUtilization: utilization,
         tokensBefore,
@@ -432,39 +416,6 @@ export class ObservationalMemoryEngine {
     return utilization - (removedTokens - slotTokens) / this.contextWindow;
   }
 
-  /**
-   * Observe [watermark, end) while the caller waits, so a swap can cut up to
-   * the tail. The observer already in flight goes first: it is the cheapest
-   * way to cover its messages, and starting another over them would observe
-   * them twice. Then pieces within the observer's input cap, until `end`,
-   * a failed call, the pass signal, or an abandoned pass. Returns whether
-   * anything was observed here.
-   */
-  private async catchUp(
-    history: AgentMessage[],
-    end: number,
-    signal: AbortSignal,
-    isStale?: () => boolean,
-  ): Promise<boolean> {
-    if (this.buffering.isObserverInFlight()) {
-      const settled = await settledUnlessAborted(this.buffering.waitForObserverSettled(), signal);
-      if (!settled) return false;
-    }
-    let observed = false;
-    while (this.buffering.getWatermark() < end) {
-      if (signal.aborted || isStale?.()) return observed;
-      const from = this.buffering.getWatermark();
-      const to = Math.min(pieceEnd(history, from, this.observerInputCap()), end);
-      if (to <= from) return observed;
-      const messages = history.slice(from, to);
-      const output = await this.observeInBand(messages, 'activation', signal);
-      if (!output || isStale?.()) return observed;
-      this.buffering.ledger.record(chunkFromOutput(output, messages), to);
-      observed = true;
-    }
-    return observed;
-  }
-
   // -------------------------------------------------------------------------
   // Emergency: the provider rejected a request as too long
   // -------------------------------------------------------------------------
@@ -494,12 +445,7 @@ export class ObservationalMemoryEngine {
     }
     if (!removesAny(swap) && droppedIndices.size === 0) return null;
 
-    const priorPrefix = ledger.observedPrefix;
-    const consumed = ledger.removePrefix(swap.cut, keep ?? undefined);
-    if (consumed.length > 0) {
-      const swapped = this.log.merge(consumed);
-      this.log.append(swapped.observations, swapped.hint);
-    }
+    const applied = applySwap(source, swap, ledger, this.log);
     const dropped = [...droppedIndices].map((i) => source[i]!);
     if (dropped.length > 0) {
       // Every dropped index is past the observed region; only a pending
@@ -521,13 +467,11 @@ export class ObservationalMemoryEngine {
         note,
       });
     }
-    const removed = removedBy(source, swap);
-    if (removed.length > 0) {
-      const observedEnd = consumed.length > 0 ? consumed[consumed.length - 1]!.endIndex : priorPrefix;
+    if (applied.removed.length > 0) {
       this.fireObservationEvent({
         trigger: 'emergency',
-        observedMessages: source.slice(priorPrefix, observedEnd),
-        removedMessages: removed,
+        observedMessages: applied.observed,
+        removedMessages: applied.removed,
         observations: this.log.text,
         contextUtilization: 0,
         tokensBefore: 0,
@@ -751,20 +695,8 @@ export class ObservationalMemoryEngine {
     const history = messages.slice(historyStart);
     if (!this.completeFn || history.length === 0) return;
 
-    let output: ObserverOutput;
-    try {
-      output = await runObserver(
-        this.completeFn,
-        history,
-        this.log.text || null,
-        this.buildObserverConfig(),
-        { policy: this.callPolicy() },
-      );
-      this.health.succeeded();
-    } catch (err) {
-      this.recordInBandFailure('observe', 'observe-now', err);
-      throw err instanceof MemoryCallError ? err.lastError : err;
-    }
+    const output = await this.inBand.observe(history, 'observe-now');
+    if (output instanceof Error) throw output;
 
     this.log.append(output.observations, hintOf(output));
 
@@ -944,7 +876,7 @@ export class ObservationalMemoryEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Private: In-band calls
+  // Private: Call policy
   // -------------------------------------------------------------------------
 
   /** The retry and timeout policy every observer and reflector call runs under. */
@@ -954,50 +886,6 @@ export class ObservationalMemoryEngine {
       maxAttempts: this.config.maxAttempts,
       backoffMs: RETRY_BACKOFF_MS,
     };
-  }
-
-  /**
-   * Observe `messages` while a caller waits. Null when the call produced
-   * nothing usable; the failure is recorded, and nothing it would have
-   * covered may leave the source.
-   */
-  private async observeInBand(
-    messages: AgentMessage[],
-    trigger: MemoryCallTrigger,
-    signal: AbortSignal,
-  ): Promise<ObserverOutput | null> {
-    if (!this.completeFn) return null;
-    try {
-      const output = await runObserver(
-        this.completeFn,
-        messages,
-        this.log.text || null,
-        this.buildObserverConfig(),
-        { policy: this.callPolicy(), signal },
-      );
-      this.health.succeeded();
-      return output;
-    } catch (err) {
-      this.recordInBandFailure('observe', trigger, err);
-      return null;
-    }
-  }
-
-  /**
-   * Record a waited-on call that produced no result. Nothing it would have
-   * recorded changes: the log stays, and unobserved messages stay in the
-   * source. An abort is the caller's choice, not the memory model's failure.
-   */
-  private recordInBandFailure(operation: 'observe' | 'reflect', trigger: MemoryCallTrigger, err: unknown): void {
-    const error = err instanceof MemoryCallError ? err.lastError : err instanceof Error ? err : new Error(String(err));
-    this.logger?.warn(`${operation === 'observe' ? 'Observer' : 'Reflector'} call failed (${trigger}): ${error.message}`);
-    if (err instanceof MemoryCallError && err.aborted) return;
-    this.health.failed({
-      operation,
-      trigger,
-      error,
-      attempts: err instanceof MemoryCallError ? err.attempts : 1,
-    });
   }
 
   // -------------------------------------------------------------------------
