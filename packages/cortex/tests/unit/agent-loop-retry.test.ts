@@ -661,7 +661,7 @@ describe('AgentLoop reactive overflow handling', () => {
 
     // The failure reached the turn runner and was retried as a rate limit.
     expect(scheduled).toHaveBeenCalledTimes(1);
-    expect(scheduled.mock.calls[0][0].category).toBe('rate_limit');
+    expect(scheduled.mock.calls[0]![0].category).toBe('rate_limit');
     expect(mock.continueCalls).toBe(1);
     expect(truncate).not.toHaveBeenCalled();
   });

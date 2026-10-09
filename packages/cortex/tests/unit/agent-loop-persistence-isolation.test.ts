@@ -69,7 +69,7 @@ async function runOversizedBash(pi: PiAgent, toolCallId: string): Promise<string
   const bash = tools.find((t) => t.name === 'Bash');
   if (!bash) throw new Error('Bash tool not registered');
   const result = await bash.execute(toolCallId, {
-    command: `node -e "process.stdout.write('x'.repeat(${DEFAULT_TOOL_THRESHOLDS.Bash * 4 + 5_000}))"`,
+    command: `node -e "process.stdout.write('x'.repeat(${DEFAULT_TOOL_THRESHOLDS['Bash']! * 4 + 5_000}))"`,
   });
   return result.content[0]?.text ?? '';
 }
