@@ -42,7 +42,14 @@ import {
   FAILSAFE_DEFAULTS,
 } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
-import type { ObservationalMemoryConfig, ObservationalMemoryState, ObservationEvent, ReflectionEvent } from './observational/types.js';
+import type {
+  ObservationalMemoryConfig,
+  ObservationalMemoryState,
+  ObservationEvent,
+  ReflectionEvent,
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
+} from './observational/types.js';
 import { resolvePromptCacheTtlMs } from '../provider-registry.js';
 import type { CacheRetention } from '../provider-registry.js';
 import type { ModelPromptCacheLifetimes } from '../model-wrapper.js';
@@ -58,7 +65,18 @@ export type { CompleteFn } from './compaction.js';
 export { emergencyTruncate, shouldTruncate, isContextOverflow } from './failsafe.js';
 export type { FailsafeTruncationResult } from './failsafe.js';
 export { ObservationalMemoryEngine } from './observational/index.js';
-export type { ObservationalMemoryConfig, ObservationalMemoryState, ObservationChunk, ObservationEvent, ReflectionEvent, RecallResult, RecallConfig } from './observational/types.js';
+export type {
+  ObservationalMemoryConfig,
+  ObservationalMemoryState,
+  ObservationChunk,
+  ObservationEvent,
+  ReflectionEvent,
+  RecallResult,
+  RecallConfig,
+  MemoryCallTrigger,
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
+} from './observational/types.js';
 export { createRecallTool } from './observational/recall-tool.js';
 // computeAdaptiveThreshold is defined below in this file and exported at the declaration site
 
@@ -584,6 +602,16 @@ export class CompactionManager {
    */
   onReflection(handler: (event: ReflectionEvent) => void): void {
     this.observationalEngine?.onReflection(handler);
+  }
+
+  /** Register a handler for memory calls that failed after all attempts. */
+  onMemoryError(handler: (info: MemoryErrorInfo) => void): void {
+    this.observationalEngine?.onMemoryError(handler);
+  }
+
+  /** Register a handler for the first successful memory call after failures. */
+  onMemoryRecovered(handler: (info: MemoryRecoveredInfo) => void): void {
+    this.observationalEngine?.onMemoryRecovered(handler);
   }
 
   /**

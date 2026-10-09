@@ -28,6 +28,8 @@ import type {
   RecallConfig,
   ObserverOutput,
   ReflectorOutput,
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
 } from './types.js';
 import {
   OBSERVATIONAL_MEMORY_DEFAULTS,
@@ -64,6 +66,9 @@ export type {
   ObserverOutput,
   ReflectorOutput,
   BufferState,
+  MemoryCallTrigger,
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -117,7 +122,7 @@ export class ObservationalMemoryEngine {
   private utilityModelContextWindow: number = 0;
   private slotIndex: number;
   private logger: { warn: (msg: string) => void; info: (msg: string) => void } | null = null;
-  private readonly health = new MemoryHealth();
+  private readonly health = new MemoryHealth((message) => this.logger?.warn(message));
 
   // Event handler arrays (method-level registration, multiple handlers)
   private observationHandlers: Array<(event: ObservationEvent) => void> = [];
@@ -186,6 +191,16 @@ export class ObservationalMemoryEngine {
    */
   onReflection(handler: (event: ReflectionEvent) => void): void {
     this.reflectionHandlers.push(handler);
+  }
+
+  /** Register a handler for observer or reflector calls that failed after all attempts. */
+  onMemoryError(handler: (info: MemoryErrorInfo) => void): void {
+    this.health.onError(handler);
+  }
+
+  /** Register a handler for the first successful memory call after failures. */
+  onMemoryRecovered(handler: (info: MemoryRecoveredInfo) => void): void {
+    this.health.onRecovered(handler);
   }
 
   // -------------------------------------------------------------------------

@@ -203,6 +203,8 @@ export const AGENT_LOOP_DELEGATION = {
   onBackgroundResultDeadLettered: 'forwarded',
   onObservation: 'forwarded',
   onReflection: 'forwarded',
+  onMemoryError: 'forwarded',
+  onMemoryRecovered: 'forwarded',
 } as const satisfies Record<keyof AgentLoop, AgentLoopMemberDisposition>;
 
 type DelegationTable = typeof AGENT_LOOP_DELEGATION;

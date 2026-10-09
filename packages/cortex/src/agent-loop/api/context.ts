@@ -6,7 +6,13 @@
  */
 
 import type { CompactionManager } from '../../compaction/index.js';
-import type { ObservationEvent, ObservationalMemoryState, ReflectionEvent } from '../../compaction/observational/types.js';
+import type {
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
+  ObservationEvent,
+  ObservationalMemoryState,
+  ReflectionEvent,
+} from '../../compaction/observational/types.js';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { AgentContext, ContextManager } from '../../context-manager.js';
 import type { CompactionDegradedInfo, CompactionExhaustedInfo, CompactionResult, CompactionTarget, LoopOriginContext } from '../../types.js';
@@ -183,6 +189,25 @@ export interface LoopContextApi {
    */
   onReflection(
     handler: (event: ReflectionEvent, origin: LoopOriginContext) => void,
+  ): void;
+
+  /**
+   * Register a handler for observer or reflector calls that failed after
+   * all their attempts. Nothing is lost when it fires: unobserved messages
+   * stay in context and a failed reflection keeps the current log. While
+   * failures continue, the loop stops blocking requests on memory calls;
+   * `info.consecutiveFailures` is 1 on the call that started the episode.
+   */
+  onMemoryError(
+    handler: (info: MemoryErrorInfo, origin: LoopOriginContext) => void,
+  ): void;
+
+  /**
+   * Register a handler for the first successful memory call after one or
+   * more failures: the episode `onMemoryError` started is over.
+   */
+  onMemoryRecovered(
+    handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void,
   ): void;
 
   /**

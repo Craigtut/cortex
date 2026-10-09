@@ -273,6 +273,45 @@ export interface ReflectionEvent {
   timestamp: Date;
 }
 
+/** What started a memory (observer or reflector) call. */
+export type MemoryCallTrigger = 'buffer' | 'activation' | 'idle' | 'compact-now' | 'observe-now';
+
+/**
+ * An observer or reflector call that failed after all its attempts.
+ *
+ * Registered via `agent.onMemoryError()`. Nothing is lost when this fires:
+ * an observation that failed leaves its messages in context, and a
+ * reflection that failed keeps the current log. While failures continue
+ * the loop stops blocking requests on memory calls; background calls keep
+ * trying, and `onMemoryRecovered` fires on the first success.
+ */
+export interface MemoryErrorInfo {
+  operation: 'observe' | 'reflect';
+  trigger: MemoryCallTrigger;
+  /** The last attempt's error. */
+  error: Error;
+  attempts: number;
+  /** Failed calls in a row, this one included: 1 when memory just became degraded. */
+  consecutiveFailures: number;
+  /**
+   * What the failure left behind:
+   * - 'retry-later': nothing changed; a later background call tries again.
+   * - 'partial-swap': the activation swapped in only what was already
+   *   observed; the request went out as it stood.
+   * - 'unchanged': the log and history are as they were (a failed
+   *   reflection, or an explicit call that reports the failure itself).
+   */
+  outcome: 'retry-later' | 'partial-swap' | 'unchanged';
+}
+
+/** The first successful memory call after one or more failures. */
+export interface MemoryRecoveredInfo {
+  /** Failed calls in a row before this success. */
+  failures: number;
+  /** How long memory was degraded. */
+  degradedForMs: number;
+}
+
 // ---------------------------------------------------------------------------
 // Recall
 // ---------------------------------------------------------------------------

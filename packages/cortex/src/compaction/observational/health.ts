@@ -9,8 +9,9 @@
  * what recovers the engine.
  */
 
-/** What started a memory call. */
-export type MemoryCallTrigger = 'buffer' | 'activation' | 'idle' | 'compact-now' | 'observe-now';
+import type { MemoryCallTrigger, MemoryErrorInfo, MemoryRecoveredInfo } from './types.js';
+
+export type { MemoryCallTrigger };
 
 /** A memory call that failed after all its attempts. */
 export interface MemoryCallFailure {
@@ -29,20 +30,67 @@ export interface MemoryCallOutcomes {
 
 export class MemoryHealth implements MemoryCallOutcomes {
   private consecutiveFailures = 0;
+  private degradedSince: number | null = null;
+  private readonly errorHandlers: Array<(info: MemoryErrorInfo) => void> = [];
+  private readonly recoveredHandlers: Array<(info: MemoryRecoveredInfo) => void> = [];
+
+  /** @param onHandlerError - told when a consumer handler throws */
+  constructor(private readonly onHandlerError: (message: string) => void = () => {}) {}
 
   get isDegraded(): boolean {
     return this.consecutiveFailures > 0;
   }
 
-  get failures(): number {
-    return this.consecutiveFailures;
+  onError(handler: (info: MemoryErrorInfo) => void): void {
+    this.errorHandlers.push(handler);
+  }
+
+  onRecovered(handler: (info: MemoryRecoveredInfo) => void): void {
+    this.recoveredHandlers.push(handler);
   }
 
   succeeded(): void {
+    if (this.consecutiveFailures === 0) return;
+    const info: MemoryRecoveredInfo = {
+      failures: this.consecutiveFailures,
+      degradedForMs: Date.now() - (this.degradedSince ?? Date.now()),
+    };
     this.consecutiveFailures = 0;
+    this.degradedSince = null;
+    this.dispatch(this.recoveredHandlers, info, 'onMemoryRecovered');
   }
 
-  failed(_failure: MemoryCallFailure): void {
+  failed(failure: MemoryCallFailure): void {
     this.consecutiveFailures++;
+    this.degradedSince ??= Date.now();
+    this.dispatch(this.errorHandlers, {
+      ...failure,
+      consecutiveFailures: this.consecutiveFailures,
+      outcome: outcomeOf(failure),
+    }, 'onMemoryError');
+  }
+
+  private dispatch<T>(handlers: Array<(info: T) => void>, info: T, name: string): void {
+    for (const handler of handlers) {
+      try {
+        handler(info);
+      } catch (err) {
+        this.onHandlerError(`${name} handler threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+}
+
+/** What a failed call left behind (see MemoryErrorInfo.outcome). */
+function outcomeOf(failure: MemoryCallFailure): MemoryErrorInfo['outcome'] {
+  if (failure.operation === 'reflect') return 'unchanged';
+  switch (failure.trigger) {
+    case 'buffer':
+    case 'idle':
+      return 'retry-later';
+    case 'activation':
+      return 'partial-swap';
+    default:
+      return 'unchanged';
   }
 }

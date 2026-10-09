@@ -1092,6 +1092,8 @@ const POST_DESTROY_PROBES: Record<ForwardedLoopMember, PostDestroyProbe> = {
   onBackgroundResultDeadLettered: { call: (t) => t.onBackgroundResultDeadLettered(() => {}) },
   onObservation: { call: (t) => t.onObservation(() => {}) },
   onReflection: { call: (t) => t.onReflection(() => {}) },
+  onMemoryError: { call: (t) => t.onMemoryError(() => {}) },
+  onMemoryRecovered: { call: (t) => t.onMemoryRecovered(() => {}) },
 };
 
 /**

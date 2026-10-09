@@ -15,7 +15,13 @@
 import type { BudgetGuard } from './budget-guard.js';
 import type { DirectCompletionContext } from './cache-breakpoints.js';
 import type { CompactionManager } from './compaction/index.js';
-import type { ObservationalMemoryState, ObservationEvent, ReflectionEvent } from './compaction/observational/types.js';
+import type {
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
+  ObservationalMemoryState,
+  ObservationEvent,
+  ReflectionEvent,
+} from './compaction/observational/types.js';
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core';
 import type { AgentContext, AgentMessage, ContextManager } from './context-manager.js';
 import { classifyError } from './error-classifier.js';
@@ -467,6 +473,12 @@ export class AgentLoop implements
   }
   onReflection(handler: (event: ReflectionEvent, origin: LoopOriginContext) => void): void {
     this.parts.compactionManager.onReflection((event) => handler(event, this.parts.origin));
+  }
+  onMemoryError(handler: (info: MemoryErrorInfo, origin: LoopOriginContext) => void): void {
+    this.parts.compactionManager.onMemoryError((info) => handler(info, this.parts.origin));
+  }
+  onMemoryRecovered(handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void): void {
+    this.parts.compactionManager.onMemoryRecovered((info) => handler(info, this.parts.origin));
   }
   onBeforeCompaction(handler: (target: CompactionTarget, origin: LoopOriginContext) => Promise<void>): void {
     this.parts.compactionManager.onBeforeCompaction((target) => handler(target, this.parts.origin));

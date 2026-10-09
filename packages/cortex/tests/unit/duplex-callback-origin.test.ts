@@ -147,6 +147,26 @@ describe('fan-out callback origin', () => {
     expect(observed).toEqual(['reasoner', 'talker']);
   });
 
+  it('labels memory failures with the loop whose memory call failed', async () => {
+    // A failing talker memory model is a conversation about to degrade; the
+    // consumer must be able to tell it from the reasoner's.
+    const h = await createRealDuplexScenario({
+      contextWindowLimit: 20_000,
+      compaction: { observational: { maxAttempts: 1 } },
+    });
+    const failed: string[] = [];
+    h.facade.onMemoryError((_info, origin) => failed.push(origin.loopPath));
+    const talker = h.talkerLoop as DigestibleLoop;
+    talker.getCompactionManager().setObservationalCompleteFn(
+      (async () => { throw new Error('500 internal server error'); }) as unknown as CompleteFn,
+    );
+    seedHistory(h.talkerPi);
+
+    await talker.digestIdle({ observerTimeoutMs: 5_000 });
+
+    expect(failed).toEqual(['talker']);
+  });
+
   it('keeps one-argument handlers working, which is what made the omission survivable', async () => {
     // Consumers wrote `(info) => ...` against the old signatures. Adding a
     // trailing argument must not break them, or every consumer breaks on

@@ -77,6 +77,8 @@ import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { BudgetGuard } from '../budget-guard.js';
 import type { SkillRegistry } from '../skill-registry.js';
 import type {
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
   ObservationEvent,
   ObservationalMemoryState,
   ReflectionEvent,
@@ -496,5 +498,13 @@ export abstract class LoopSurface {
 
   onReflection(handler: (event: ReflectionEvent, origin: LoopOriginContext) => void): void {
     for (const loop of this.topology.resident) loop.onReflection(handler);
+  }
+
+  onMemoryError(handler: (info: MemoryErrorInfo, origin: LoopOriginContext) => void): void {
+    for (const loop of this.topology.resident) loop.onMemoryError(handler);
+  }
+
+  onMemoryRecovered(handler: (info: MemoryRecoveredInfo, origin: LoopOriginContext) => void): void {
+    for (const loop of this.topology.resident) loop.onMemoryRecovered(handler);
   }
 }
