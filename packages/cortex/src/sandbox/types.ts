@@ -64,6 +64,7 @@ export type SandboxBackend =
   | 'seatbelt'
   | 'bubblewrap'
   | 'win-restricted-token'
+  | 'mxc-base-container'
   | 'none';
 
 /**

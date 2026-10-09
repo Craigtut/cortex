@@ -1,24 +1,17 @@
 /** Platform backends for Cortex-managed sessions and advanced integrations.
- * macOS/Linux use an isolated runtime process; Windows uses the native helper.
+ * macOS/Linux use an isolated runtime process; Windows uses MXC BaseContainer.
  */
 import type { SandboxRuntimeProviderOptions } from './backends/runtime.js';
 import { SandboxRuntimeProcess } from './backends/runtime-process.js';
-import {
-  WindowsRestrictedTokenProvider,
-  type WindowsRestrictedTokenProviderOptions,
-} from './backends/windows.js';
+import { MxcSandboxProvider } from './backends/mxc.js';
 import type { SandboxProvider } from './types.js';
 
 /**
- * The superset of options across providers. Each provider receives only the
- * subset it understands; the rest are ignored on that platform. `onDegraded`
- * and `credentialEnvVars` are shared; `onNetworkRequest` is POSIX-only (Tier-1
- * Windows has no egress proxy to ask); the helper/cap-SID/integrity knobs are
- * Windows-only.
+ * Options shared by every platform provider: `onNetworkRequest` answers shell
+ * egress the policy leaves open, `onDegraded` hears reduced enforcement, and
+ * `credentialEnvVars` lists the variables scrubbed from contained commands.
  */
-export interface CreateSandboxProviderOptions
-  extends SandboxRuntimeProviderOptions,
-    WindowsRestrictedTokenProviderOptions {}
+export type CreateSandboxProviderOptions = SandboxRuntimeProviderOptions;
 
 /**
  * Construct the platform-appropriate provider. `platform` is injectable purely
@@ -30,7 +23,9 @@ export function createSandboxProvider(
   platform: NodeJS.Platform = process.platform,
 ): SandboxProvider {
   if (platform === 'win32') {
-    return new WindowsRestrictedTokenProvider(options);
+    // MXC when its probe passes at initialize; otherwise honest `none` with
+    // the reason. There is no weaker Windows fallback.
+    return new MxcSandboxProvider(options);
   }
   return new SandboxRuntimeProcess(options);
 }

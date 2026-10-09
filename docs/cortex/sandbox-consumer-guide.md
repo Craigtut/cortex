@@ -56,7 +56,7 @@ Paths resolve relative to `workingDirectory`. `workspaceRoots` replaces the defa
 | `allowedDomains`, `deniedDomains` | `[]` | Extend network policy. |
 | `requireEnforcement` | `true` | Refuse setup/execution if the requested OS boundary is unavailable or partial. |
 | `onStatusChange` | absent | Observe effective policy and enforcement. |
-| `windowsHelperPath` | bundled helper location | Supply a native Windows helper when available. |
+| `windowsHelperPath` | absent | Ignored. Windows uses MXC; the restricted-token helper is no longer selected. |
 | `provider` | platform backend | Advanced backend override; Cortex initializes and disposes it. |
 
 A host that cannot enforce the requested policy causes `CortexAgent.create()` to reject. An enforcement failure during the session blocks later tool execution. To explicitly allow degraded operation, set `requireEnforcement: false` and use `onStatusChange` or `getSandboxState()` to display what is actually enforced. This does not turn missing OS protections into working protections.
@@ -98,7 +98,7 @@ Built-in Read, Write, Edit, UndoEdit, and Glob receive in-process path checks. B
 
 Single-command Bash escalation is still a separate approval. Cortex uses `BASH_ESCALATION_PERMISSION_NAME` (`Bash(escalate)`) and refuses escalation without a permission resolver. A consumer resolver must treat it as a request to leave containment, rather than blindly allowing it.
 
-Native Windows remains limited by its helper availability and Tier 1 protections. The current helper does not enforce secret-file read denial or network restrictions. Strict setup therefore refuses workspace/restricted containment there. See the [Windows build runbook](./windows-sandbox-build.md).
+Native Windows uses Microsoft eXecution Containers (MXC), BaseContainer tier only. It needs Windows 11 24H2/25H2 with the August 2026 update (KB5120998) or 26H1/26H2, Node 24.21+ (or 26.8+), and `@microsoft/mxc-sdk` installed next to Cortex: `npm install @microsoft/mxc-sdk`. Cortex declares the SDK as an optional peer dependency, so macOS and Linux installs never download it. When any requirement is missing, status is `none` with the reason and strict setup refuses; Cortex never substitutes weaker containment. Contained HTTP(S) clients must honor `HTTP_PROXY`/`HTTPS_PROXY`, because direct egress is blocked. See the [Windows runbook](./windows-sandbox-build.md) for the validation checklist.
 
 ## Advanced providers and migration
 

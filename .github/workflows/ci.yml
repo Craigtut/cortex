@@ -73,11 +73,17 @@ jobs:
 
       # Exercise real PowerShell 7 and 5.1 processes. Browser launching uses a
       # mocked OS handler because hosted runners have no interactive desktop.
+      # The MXC tests run the launcher entry point and proxy on win32 against a
+      # fake SDK; this Windows Server image cannot run real MXC containment.
       - name: Test Windows command execution and OAuth setup
         run: >-
           npx vitest run
           packages/cortex/tests/unit/tools/bash-shell.test.ts
           packages/cortex/tests/unit/tools/bash-windows.integration.test.ts
+          packages/cortex/tests/unit/sandbox/mxc-request.test.ts
+          packages/cortex/tests/unit/sandbox/mxc-launcher.test.ts
+          packages/cortex/tests/unit/sandbox/mxc.test.ts
+          packages/cortex/tests/unit/sandbox/factory.test.ts
           packages/cortex-code/tests/providers/browser-auth.test.ts
           packages/cortex-code/tests/providers/setup-tui-render.test.ts
           packages/cortex-code/tests/providers/setup-tui-input.test.ts

@@ -41,7 +41,6 @@ export class SandboxSession implements SandboxProvider {
     if (parsed.enabled === false) return undefined;
     const session = new SandboxSession(parsed, resolve(cwd), decide);
     session.backend = parsed.provider ?? createSandboxProvider({
-      ...(parsed.windowsHelperPath ? { helperPath: parsed.windowsHelperPath } : {}),
       onNetworkRequest: async (request) => (await session.shellResolver({ ...request, via: 'shell' })).decision === 'allow',
       onDegraded: () => session.publishStatus(),
     });

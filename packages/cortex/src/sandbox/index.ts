@@ -41,6 +41,9 @@ export type {
   WindowsHelperPolicy,
   HelperSelfTestResult,
 } from './backends/windows.js';
+export { MxcSandboxProvider } from './backends/mxc.js';
+export { resolveMxcSdk } from './backends/mxc-host.js';
+export type { MxcSandboxProviderOptions, MxcProviderDeps, MxcDomainProxy } from './backends/mxc.js';
 export { createSandboxProvider } from './factory.js';
 export type { CreateSandboxProviderOptions } from './factory.js';
 export { denialFromViolations, denialFromFailureHeuristic } from './classify.js';

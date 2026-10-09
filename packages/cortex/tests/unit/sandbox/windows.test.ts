@@ -14,8 +14,6 @@ import {
   DEFAULT_CAPABILITY_SID_NAME,
 } from '../../../src/sandbox/backends/windows.js';
 import { existsSync } from 'node:fs';
-import { createSandboxProvider } from '../../../src/sandbox/factory.js';
-import { SandboxRuntimeProcess } from '../../../src/sandbox/backends/runtime-process.js';
 import { buildDefaultPolicy } from '../../../src/sandbox/policy.js';
 import type { SandboxPolicy, SandboxSpawnSpec } from '../../../src/index.js';
 
@@ -590,23 +588,7 @@ describe('isHelperSetupFailure', () => {
   });
 });
 
-describe('createSandboxProvider factory', () => {
-  it('returns the Windows provider on win32', () => {
-    const p = createSandboxProvider({ helperPath: 'h.exe', fileExists: () => true }, 'win32');
-    expect(p).toBeInstanceOf(WindowsRestrictedTokenProvider);
-  });
-
-  it('returns the sandbox-runtime provider on darwin and linux', () => {
-    expect(createSandboxProvider({}, 'darwin')).toBeInstanceOf(SandboxRuntimeProcess);
-    expect(createSandboxProvider({}, 'linux')).toBeInstanceOf(SandboxRuntimeProcess);
-  });
-
-  it('falls back to the sandbox-runtime provider on an unknown platform', () => {
-    expect(createSandboxProvider({}, 'freebsd' as NodeJS.Platform)).toBeInstanceOf(
-      SandboxRuntimeProcess,
-    );
-  });
-
+describe('WindowsRestrictedTokenProvider capability SID default', () => {
   it('derives the capability SID name from the default base when the consumer omits it', async () => {
     let writtenJson = '';
     const provider = new WindowsRestrictedTokenProvider({

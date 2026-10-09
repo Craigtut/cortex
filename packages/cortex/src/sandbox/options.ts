@@ -18,7 +18,7 @@ export interface SandboxOptions {
   requireEnforcement?: boolean;
   /** Advanced: Cortex initializes and disposes this provider instead of the built-in backend. */
   provider?: SandboxProvider;
-  /** Optional path to a separately installed native Windows helper. */
+  /** Ignored. The Windows restricted-token helper is no longer selected; Windows uses MXC. */
   windowsHelperPath?: string;
   onStatusChange?: (state: SandboxState) => void;
 }

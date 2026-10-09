@@ -37,7 +37,11 @@ That separated a framework capability from the framework that needed to own its 
 | `sandbox/backends/runtime-process.ts` | Private macOS/Linux worker lifecycle and IPC. |
 | `sandbox/backends/runtime-worker.ts` | Worker-side runtime adapter. |
 | `sandbox/backends/runtime.ts` | Translation to pinned sandbox-runtime and OS wrapper generation. |
-| `sandbox/backends/windows.ts` | Native Windows helper integration and status. |
+| `sandbox/backends/mxc.ts` | Windows MXC BaseContainer provider: probe, domain proxy, per-command request, status. |
+| `sandbox/backends/mxc-request.ts` | Pure `SandboxPolicy` to MXC request mapping and Windows command-line quoting. |
+| `sandbox/backends/mxc-launcher.ts` | Self-contained per-command launcher process that owns the MXC SDK. |
+| `sandbox/backends/mxc-host.ts` | Host I/O for the MXC provider: SDK location, launcher copy, read-set snapshot, probe, proxy. |
+| `sandbox/backends/windows.ts` | Former restricted-token helper integration (no longer selected). |
 | `sandbox/classify.ts` | Structured denial diagnostics. |
 
 Platform modules never depend on Cortex Code. The facade has a thin lifecycle integration, and AgentLoop borrows the provider contract. The native helper source and future bundled artifacts live under `packages/cortex/windows-helper` and `packages/cortex/vendor`.
@@ -63,7 +67,7 @@ On macOS and Linux, Cortex uses pinned `@anthropic-ai/sandbox-runtime` 0.0.79. I
 
 The upstream runtime owns process-global policy, proxy state, and temporary-directory environment. Each managed root agent therefore gets a private worker process. Two agents can use different roots and policies without overwriting each other's runtime state. Disposing one agent leaves the other agent's backend active. The host environment is not modified.
 
-Native Windows uses Cortex's restricted-token helper. Tier 1 confines writes and scrubs credential environment variables, but does not enforce secret-file read denial or network restrictions. It reports filesystem `partial` and network `none`. A missing or unusable helper reports `none`. Signed helper distribution and stronger Windows containment remain separate work; see [the build runbook](./windows-sandbox-build.md).
+Native Windows uses MXC BaseContainer, described in the next section. When MXC is available it reports filesystem and network `enforced`. Otherwise it reports `none` with the reason; there is no weaker Windows backend. Real-host validation is pending; see the checklist in [the Windows runbook](./windows-sandbox-build.md).
 
 `SandboxStatus` reports actual enforcement. Managed setup requires all requested dimensions by default and refuses unavailable or partial enforcement. `requireEnforcement: false` explicitly permits degraded operation. Cortex Code chooses that fallback explicitly to retain its existing behavior and displays the result; this is a consumer preference, not a framework default.
 
@@ -76,8 +80,9 @@ Native Windows moves to Microsoft eXecution Containers (MXC 1.0.0, `@microsoft/m
 | Module | Responsibility |
 | --- | --- |
 | `mxc.ts` | `MxcSandboxProvider`: probe, host-side proxy, per-command request, status, lifecycle. Runs in the agent process and never loads the SDK. |
-| `mxc-request.ts` | Pure mapping from `SandboxPolicy` to an MXC `ContainerRequest`, Windows command-line quoting, and the launcher's env transport. |
-| `mxc-launcher.ts` | Per-command launcher process. It is the only code that imports the SDK. Self-contained: Node builtins and the SDK only. |
+| `mxc-request.ts` | Pure mapping from `SandboxPolicy` to an MXC `ContainerRequest` and Windows command-line quoting. |
+| `mxc-launcher.ts` | Per-command launcher process and its environment transport. It is the only code that imports the SDK. Self-contained: Node builtins and the SDK only. |
+| `mxc-host.ts` | Real host I/O behind the provider's injectable seams. |
 
 **Contract fit: a launcher process, not a contract change.** MXC's SDK owns the spawn. `spawn(request)` creates the contained process in-process through `mxc_ffi.dll` and returns an `MxcProcess` with Node streams. `wrapSpawn` and `wrapExec` return `{file, args, env}`, and four call sites depend on that shape: Bash, Grep, skill shell markers, and stdio MCP. The MCP SDK's stdio transport spawns from a command and argument list itself and cannot adopt a process someone else started. Changing the contract would touch all four and need a custom MCP transport. So the provider returns `{ file: process.execPath, args: [launcher, '--run'], env }` instead. As in Codex, the request travels in launcher-only environment chunks so the command keeps Windows' command-line budget. The launcher strips those chunks, re-runs the tier gate, calls `spawn`, pipes stdin, stdout, and stderr both ways, and exits with the workload's exit code. If the gate or spawn fails, it prints `cortex-mxc-launcher:` and a reason, exits 125, and never runs the command uncontained.
 
@@ -115,7 +120,7 @@ The cost is one extra Node process per command (startup plus SDK load). In retur
 - `getAvailableBackends()` lists `processcontainer` at tier `base-container`, with `filesystemDeniedPaths` when deny paths exist and `ingressHostLoopbackAllow` when loopback is allowed.
 - `probe(request)` selects `base-container` without DACL augmentation.
 
-`getPlatformSupport()` is not used. It is always true on win32, and it runs `dism` and `wxc-exec --probe`, which can restore leftover DACLs. The launcher repeats the backend and `probe(request)` gate before every spawn. The requests Cortex builds for networked rungs (explicit egress rules, `hostLoopback: allow`) cannot fall back to an AppContainer tier anyway; MXC rejects them with a typed error. If the probe passes, status is filesystem and network `enforced` with backend `mxc-base-container`. Any failure reports `none` with the reason (for example a missing SDK, an OS build without PSEC, or a missing capability). There is no fallback to another backend and no partial mode.
+`getPlatformSupport()` is not used. It is always true on win32, and it runs `dism` and `wxc-exec --probe`, which can restore leftover DACLs. The launcher repeats the backend and `probe(request)` gate before every spawn. The requests Cortex builds for networked rungs (explicit egress rules, `hostLoopback: allow`) cannot fall back to an AppContainer tier anyway; MXC rejects them with a typed error. If the probe passes, status is filesystem and network `enforced` with backend `mxc-base-container`. Any failure reports `none` with the reason (for example a missing SDK, an OS build without PSEC, or a missing capability). There is no fallback to another backend. The one `partial` case is host-side code inside a writable root: when the SDK or `node.exe` lives in the workspace (a project that installs Cortex locally), it is carved out read-only, but a contained command could still shadow the SDK's dependencies through Node module resolution, and the launcher runs that code on the host. The launcher itself is always run from a private copy outside every writable root.
 
 **Factory selection.** On win32, `createSandboxProvider` returns the MXC provider. If its probe passes, commands are contained. Otherwise status is `none` with the reason, and strict managed setup refuses. MXC needs Windows 11 24H2 or 25H2 at build `.9278` or later (KB5120998), or 26H1/26H2. The build number is never compared: KB5120998 rolls MXC out gradually and Windows Server has a different revision line, so only the runtime probe decides.
 
@@ -139,6 +144,6 @@ Bash, Grep, skill shell markers (`` !`cmd` ``), and framework-owned stdio MCP su
 
 Custom tools, skill script markers (`!{script: ...}`, which run in-process), direct consumer subprocesses, remote MCP servers, and host-side network clients do not become contained merely because the agent has a sandbox. Custom tools must honor policy or use an isolated execution path. Glob checks its requested search root; it does not hide every denied descendant name from directory listings. Read denial applies when contents are opened by the built-in Read tool or the OS-contained subprocess.
 
-macOS/Linux network control is proxy-oriented, so arbitrary raw socket protocols are not a general supported egress interface. Loopback access and OS-required paths retain the backend's documented exceptions. Windows Tier 1 has the larger limitations described above.
+macOS/Linux network control is proxy-oriented, so arbitrary raw socket protocols are not a general supported egress interface. On Windows, MXC denies direct non-loopback egress at the OS level, so only proxy-aware HTTP(S) clients reach the network. Loopback access and OS-required paths retain the backend's documented exceptions.
 
-Tests cover policy, denials, credential scrubbing, managed cleanup and transitions, in-process file gates, platform adapters, and real macOS containment. The two-root integration test proves simultaneous worker isolation and surviving-agent operation after teardown. Native Windows containment tests require a Windows host and helper.
+Tests cover policy, denials, credential scrubbing, managed cleanup and transitions, in-process file gates, platform adapters, and real macOS containment. The two-root integration test proves simultaneous worker isolation and surviving-agent operation after teardown. The MXC backend's tests run the policy mapping, the provider against a faked host boundary, the launcher entry point against a fake SDK, and the real host-side proxy on any platform. Real MXC containment needs a Windows 11 host with PSEC; the runbook lists what remains unverified.
