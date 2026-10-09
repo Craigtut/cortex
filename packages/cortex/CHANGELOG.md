@@ -4,6 +4,7 @@ All notable changes to `@animus-labs/cortex` are documented here.
 
 ## Unreleased
 
+- Export pi's credential types (`CredentialStore`, `Credential`, `ApiKeyCredential`, `OAuthCredential`, `CredentialInfo`, `AuthOperationOptions`) and `InMemoryCredentialStore`, so a consumer can implement ProviderManager's `credentials` store without depending on pi-ai.
 - OAuth follows pi-ai 1.x's login flows. The branded callback page (`renderCallbackPage`) matches the callback the authorization URL names, so it now shows on Anthropic's fallback port and OpenRouter's ephemeral one. Without `onSelect`, a `select` prompt takes the first option (Anthropic's browser login) instead of asking for an option id as text. `onManualCodeInput` receives the prompt's abort signal, aborted when the browser callback wins.
 - Breaking: remove the callback-port pre-check and its `probeCallbackPortInUse` option. It refused a flow before pi-ai could fall back from a taken port; `callback_port_in_use` now reports pi-ai's own port-in-use failure.
 - ProviderManager runs on pi-ai's `Models` and a `CredentialStore`. New options `credentials` (pi's store interface, in memory by default) and `ambientCredentials`, and new methods `getAuth(provider)` and `logout(provider)`. `initiateOAuth()` stores the credential it obtains; `getAuth()` refreshes an expiring OAuth token under the store's lock, so a duplex talker, reasoner, and utility calls starting together refresh a rotating token once instead of racing (Anthropic invalidates the spent refresh token).

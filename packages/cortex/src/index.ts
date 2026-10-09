@@ -130,11 +130,17 @@ export type {
 } from '@earendil-works/pi-agent-core';
 export type {
   Api,
+  ApiKeyCredential,
   AssistantMessage,
+  AuthOperationOptions,
+  Credential,
+  CredentialInfo,
+  CredentialStore,
   ImageContent,
   Message,
   Model,
   ModelAuth,
+  OAuthCredential,
   StopReason,
   SystemMessage,
   TextContent,
@@ -144,6 +150,8 @@ export type {
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
+// pi's in-memory credential store, ProviderManager's default.
+export { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 
 // Context Manager (Phase 1B)
 export { ContextManager } from './context-manager.js';
