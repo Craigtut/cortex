@@ -37,11 +37,15 @@ export function selectTail(history: AgentMessage[], budgetTokens: number): TailS
   return { start, latestUser: latestUserIndex(history) };
 }
 
-/** The latest message a user (or a delivery) sent, past tool results and declarations. */
-export function latestUserIndex(history: AgentMessage[]): number | null {
+/**
+ * The latest message a user (or a delivery) sent, past tool results and
+ * declarations, and past `skip` (a request's view-only injections, which
+ * are user-role but nobody's words).
+ */
+export function latestUserIndex(history: AgentMessage[], skip?: ReadonlySet<AgentMessage>): number | null {
   for (let i = history.length - 1; i >= 0; i--) {
     const message = history[i]!;
-    if (message.role === 'user' && !isToolResultMessage(message)) return i;
+    if (message.role === 'user' && !isToolResultMessage(message) && !skip?.has(message)) return i;
   }
   return null;
 }

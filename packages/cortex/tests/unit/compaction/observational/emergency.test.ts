@@ -19,13 +19,15 @@ import { makeToolCallMsg, makeToolResultMsg, assertNoOrphans } from '../helpers.
 const userMsg = (content: string, timestamp = 0): AgentMessage => ({ role: 'user', content, timestamp });
 const assistantMsg = (content: string, timestamp = 0): AgentMessage => ({ role: 'assistant', content, timestamp });
 
-function failingManager(): CompactionManager {
+function failingManager(cache: 'warm' | 'cold' = 'warm'): CompactionManager {
   const manager = new CompactionManager(buildCompactionConfig({ observational: { maxAttempts: 1 } }), 1);
   manager.setContextWindow(100_000);
   manager.setModelContextWindow(100_000);
   manager.setObservationalCompleteFn(vi.fn<CompleteFn>().mockRejectedValue(new Error('500 internal server error')));
-  // A warm prompt cache keeps tool-result trimming (L1) out of the way.
-  manager.setCacheInfo('anthropic', 'short');
+  if (cache === 'warm') {
+    // A warm prompt cache keeps tool-result trimming (L1) out of the way.
+    manager.setCacheInfo('anthropic', 'short');
+  }
   return manager;
 }
 
@@ -73,6 +75,102 @@ describe('in-band emergency', () => {
     expect(view).not.toContain(work[1]);
     expect(String(view[0]!.content)).toContain('are not shown');
     assertNoOrphans(view.slice(1));
+  });
+});
+
+describe('the view cut with tool-result trimming (L1) active', () => {
+  /** Tool groups whose results L1 trims (copies), with long assistant prose between. */
+  function history(): AgentMessage[] {
+    const h: AgentMessage[] = [userMsg('do the task')];
+    for (let i = 0; i < 8; i++) {
+      h.push(makeToolCallMsg([{ id: `t${i}`, name: 'Bash' }]));
+      h.push(makeToolResultMsg(`t${i}`, 'Bash', `r${i} ` + 'x'.repeat(12_000)));
+      h.push(assistantMsg(`thinking out loud ${i} ` + 'y'.repeat(48_000)));
+    }
+    return h;
+  }
+
+  it('never keeps a trimmed tool result whose call it dropped (memory out of reach)', async () => {
+    // Activation never fires: only L1 and L3 act.
+    const manager = new CompactionManager(buildCompactionConfig({ observational: { activationThreshold: 2 } }), 1);
+    manager.setContextWindow(100_000);
+    manager.setModelContextWindow(100_000);
+    const h = history();
+
+    const view = await transform(manager, h);
+
+    // Precondition: the view was cut, with a note for the span.
+    expect(view.length).toBeLessThan(h.length);
+    expect(String(view[0]!.content)).toContain('are not shown');
+    expect(view).toContain(h[0]);
+    expect(view.at(-1)).toBe(h.at(-1));
+    assertNoOrphans(view.slice(1));
+  });
+
+  it('never keeps a trimmed tool result whose call it dropped (memory model failing)', async () => {
+    const manager = failingManager('cold');
+    const h = history();
+
+    const view = await transform(manager, h);
+
+    expect(String(view[0]!.content)).toContain('are not shown');
+    expect(view).toContain(h[0]);
+    assertNoOrphans(view.slice(1));
+  });
+});
+
+describe('the view cut in a loop', () => {
+  it('keeps the injected context, drops whole units, and keeps the real latest user message', async () => {
+    const piAgent = {
+      state: { messages: [] as AgentMessage[], systemPrompt: '', tools: [] },
+      subscribe() { return () => {}; },
+      async prompt() { return {}; },
+      async continue() { return {}; },
+      abort() {},
+      async waitForIdle() {},
+      reset() {},
+      steer() {},
+      clearSteeringQueue() {},
+      hasQueuedMessages() { return false; },
+    } as unknown as PiAgent;
+    const raw = { provider: 'anthropic', name: 'model', contextWindow: 200_000 } as PiModel;
+    const loop = new (AgentLoop as unknown as new (
+      agent: PiAgent, config: AgentLoopConfig, tools?: unknown[], options?: Record<string, unknown>,
+    ) => AgentLoop)(
+      piAgent,
+      {
+        model: wrapModel(raw, raw.provider, raw.name, raw.contextWindow),
+        workingDirectory: '/tmp/test-workspace',
+        initialBasePrompt: 'Test prompt',
+        slots: [],
+        contextWindowLimit: 20_000,
+        // Activation never fires: L1 (a cold cache) and L3 act alone.
+        compaction: { observational: { activationThreshold: 2 } },
+      },
+      [],
+      { enableSubAgentTool: false, enableLoadSkillTool: false },
+    );
+    const ask = userMsg('do the task');
+    const messages = (piAgent as unknown as { state: { messages: AgentMessage[] } }).state.messages;
+    messages.push(ask);
+    for (let i = 0; i < 8; i++) {
+      messages.push(makeToolCallMsg([{ id: `t${i}`, name: 'Bash' }]));
+      messages.push(makeToolResultMsg(`t${i}`, 'Bash', `r${i} ` + 'x'.repeat(2_400)));
+      messages.push(assistantMsg(`thinking out loud ${i} ` + 'y'.repeat(9_600)));
+    }
+    loop.getContextManager().setEphemeral('EPHEMERAL-MARKER');
+    const historyStart = loop.getContextManager().historyStart;
+
+    const out = await loop.getTransformContextHook()({
+      systemPrompt: '', model: null, messages, tools: [], thinkingLevel: 'medium',
+    } as AgentContext);
+    const view = out.messages.slice(historyStart);
+
+    // Precondition: the view was cut (a note stands in for the span).
+    expect(JSON.stringify(view)).toContain('are not shown');
+    expect(JSON.stringify(view)).toContain('EPHEMERAL-MARKER');
+    expect(view).toContain(ask);
+    assertNoOrphans(view);
   });
 });
 

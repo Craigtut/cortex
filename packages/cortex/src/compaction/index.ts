@@ -81,6 +81,24 @@ export { createRecallTool } from './observational/recall-tool.js';
  */
 const OVERFLOW_TARGET_RATIO = 0.8;
 
+const NO_INJECTIONS: ReadonlySet<AgentMessage> = new Set();
+
+/** Options for one transform pass (see CompactionManager.applyInTransformContext). */
+export interface TransformPassOptions {
+  /** Overrides the configured nonBlocking posture for this pass. */
+  allowBlocking?: boolean;
+  /** Whether the pass was abandoned (a timed-out or preempted digestion). */
+  isStale?: () => boolean;
+  /** The run's abort: ends the pass's memory calls. */
+  signal?: AbortSignal;
+  /**
+   * The messages the caller added to this request's view only (ephemeral
+   * context, loaded skills, task state, a headline). The failsafe never
+   * drops them, and drops every other message before the tail whole.
+   */
+  injections?: ReadonlySet<AgentMessage>;
+}
+
 export const DEFAULT_COMPACTION_CONFIG: CortexCompactionConfig = {
   microcompaction: MICROCOMPACTION_DEFAULTS,
   failsafe: FAILSAFE_DEFAULTS,
@@ -744,6 +762,7 @@ export class CompactionManager {
    *   suppresses the matching event dispatch, so a consumer never sees an
    *   observation reported for a rewrite that never landed.
    *   signal is the run's abort, which ends the pass's memory calls.
+   *   injections are the view's request-only messages.
    * @returns Modified context with compacted history
    */
   async applyInTransformContext(
@@ -752,7 +771,7 @@ export class CompactionManager {
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory: () => AgentMessage[],
     setSourceHistory: (history: AgentMessage[]) => boolean | void,
-    options?: { allowBlocking?: boolean; isStale?: () => boolean; signal?: AbortSignal },
+    options?: TransformPassOptions,
   ): Promise<AgentContext> {
     // pi requires transformContext never to throw. Every layer keeps its
     // state coherent on its own, so a failure here sends the request as it
@@ -773,7 +792,7 @@ export class CompactionManager {
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory: () => AgentMessage[],
     setSourceHistory: (history: AgentMessage[]) => boolean | void,
-    options?: { allowBlocking?: boolean; isStale?: () => boolean; signal?: AbortSignal },
+    options?: TransformPassOptions,
   ): Promise<AgentContext> {
     if (this._contextWindow <= 0) {
       // contextWindow not set, skip compaction
@@ -845,7 +864,7 @@ export class CompactionManager {
     const ceiling = this._contextWindow * this.config.failsafe.threshold;
     if (slotTokens + this.estimateHistoryTokens(history) >= ceiling) {
       const truncated = this.observationalEngine.truncateView(
-        history, getSourceHistory(), Math.max(0, ceiling - slotTokens),
+        history, options?.injections ?? NO_INJECTIONS, Math.max(0, ceiling - slotTokens),
       );
       if (truncated) {
         this.logger.warn('[Compaction] context over the emergency ceiling; older messages are not shown this request', {

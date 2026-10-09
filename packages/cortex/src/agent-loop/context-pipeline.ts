@@ -226,7 +226,8 @@ export class ContextPipeline {
     // stays last, and history before it stays cache-readable (pi-ai puts
     // BP4 on the last user message).
     const boundary = this.ports.boundary();
-    let result = this.injectedSnapshot(context, boundary);
+    const view = this.injectedSnapshot(context, boundary);
+    let result = view.context;
 
     // Step 2: Compaction. Source-history rewrites land in pi's loop
     // transcript and agent.state; the returned context only affects this
@@ -272,6 +273,7 @@ export class ContextPipeline {
         ...(this.forceBlockingCompaction ? { allowBlocking: true } : {}),
         isStale: passIsStale,
         signal: this.ports.runSignal(),
+        injections: view.injections,
       },
     );
     if (passIsStale()) return result;
@@ -330,12 +332,14 @@ export class ContextPipeline {
 
   /**
    * `context` with the view injections inserted at `boundary` (after old
-   * history, before the current tick's messages), then sanitized.
+   * history, before the current tick's messages), then sanitized, and the
+   * injected messages themselves: compaction must tell them from the
+   * transcript.
    */
   private injectedSnapshot(
     context: AgentContext,
     boundary: number,
-  ): AgentContext {
+  ): { context: AgentContext; injections: ReadonlySet<AgentMessage> } {
     let result = context;
     // Ordered by stability so BP3 can sit after the stable ones. Volatile
     // content is still built here so estimation and compaction see it.
@@ -344,21 +348,23 @@ export class ContextPipeline {
     const injections: AgentMessage[] = [...stable, ...volatile, ...(headline ? [headline] : [])]
       .map((content) => ({ role: 'user' as const, content, timestamp: Date.now() }));
 
+    let insertIdx = 0;
     if (injections.length > 0) {
       const messages = [...result.messages];
       // Never ahead of history: the system head must stay first (pi reads
       // the prompt only from index 0) and the slots right behind it. The
       // boundary may also exceed the array on the first tick or after reset.
-      const insertIdx = Math.min(Math.max(boundary, this.ports.slots.historyStart), messages.length);
+      insertIdx = Math.min(Math.max(boundary, this.ports.slots.historyStart), messages.length);
       messages.splice(insertIdx, 0, ...injections);
       result = { ...result, messages };
     }
 
     // System messages are declarations, not turns: an empty one is valid.
+    const messages = result.messages.map((message) =>
+      isSystemMessage(message) ? message : withPlaceholderContent(message));
     return {
-      ...result,
-      messages: result.messages.map((message) =>
-        isSystemMessage(message) ? message : withPlaceholderContent(message)),
+      context: { ...result, messages },
+      injections: new Set(messages.slice(insertIdx, insertIdx + injections.length)),
     };
   }
 
@@ -367,11 +373,11 @@ export class ContextPipeline {
     const boundary = this.ports.isPrompting()
       ? this.ports.boundary()
       : this.ports.agentState().messages.length;
-    const snapshot = this.injectedSnapshot(
+    const { context } = this.injectedSnapshot(
       this.snapshot(),
       boundary,
     );
-    return this.ports.compaction().estimateCurrentContextTokens(snapshot);
+    return this.ports.compaction().estimateCurrentContextTokens(context);
   }
 
   /** {@link CompactionManager.compactNow} under the loop gate. */

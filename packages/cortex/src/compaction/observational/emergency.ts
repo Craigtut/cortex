@@ -18,26 +18,30 @@ import type { ObservationLedger } from './ledger.js';
 import type { ObservationLog } from './log.js';
 import { applySwap, removesAny, swapCut } from './swap.js';
 import type { AppliedSwap } from './swap.js';
-import { selectTail } from './tail.js';
+import { latestUserIndex, selectTail } from './tail.js';
 import type { MemoryGapInfo } from './types.js';
 import { unitCeil } from './units.js';
 
 /**
  * The request's history with the oldest units dropped so the rest fits
- * `budgetTokens`, keeping the latest user message and the last unit. Only
- * transcript messages (in `source`) are dropped; view-only injections
- * stay. Null when nothing needs dropping.
+ * `budgetTokens`, keeping the latest user message and the last unit.
+ * `injections` are the messages the pipeline added to this request only
+ * (ephemeral context, loaded skills, task state, the headline): they stay,
+ * and every other message before the tail goes, so a unit always leaves
+ * whole, whatever copies Layer 1 made of its tool results. Null when
+ * nothing needs dropping.
  */
 export function truncateView(
   view: AgentMessage[],
-  source: ReadonlySet<AgentMessage>,
+  injections: ReadonlySet<AgentMessage>,
   budgetTokens: number,
 ): AgentMessage[] | null {
   const tail = selectTail(view, budgetTokens);
+  const latestUser = latestUserIndex(view, injections);
   const dropped: AgentMessage[] = [];
   const kept: AgentMessage[] = [];
   view.forEach((message, index) => {
-    if (index < tail.start && index !== tail.latestUser && source.has(message)) dropped.push(message);
+    if (index < tail.start && index !== latestUser && !injections.has(message)) dropped.push(message);
     else kept.push(message);
   });
   if (dropped.length === 0) return null;

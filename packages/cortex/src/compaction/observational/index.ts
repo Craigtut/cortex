@@ -455,9 +455,11 @@ export class ObservationalMemoryEngine {
   /**
    * The request's history cut to fit `budgetTokens` in the view only (see
    * emergency.ts truncateView). The source keeps every message.
+   *
+   * @param injections - the view's request-only messages, which stay
    */
-  truncateView(view: AgentMessage[], source: AgentMessage[], budgetTokens: number): AgentMessage[] | null {
-    return truncateView(view, new Set(source), budgetTokens);
+  truncateView(view: AgentMessage[], injections: ReadonlySet<AgentMessage>, budgetTokens: number): AgentMessage[] | null {
+    return truncateView(view, injections, budgetTokens);
   }
 
   // -------------------------------------------------------------------------
