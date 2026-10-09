@@ -336,12 +336,10 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
 // ---------------------------------------------------------------------------
 
 /**
- * Provider IDs that support OAuth login flows.
- *
- * A STATIC FALLBACK, not the source of truth. pi owns which providers ship an
- * OAuth flow and adds to that set between releases, so prefer
- * `ProviderManager.listOAuthCapableProviders()`, which reads the installed
- * pi. This list is only used when pi cannot be loaded at all.
+ * Provider IDs Cortex supports an OAuth login for. pi owns which providers
+ * ship an OAuth flow; `ProviderManager.listOAuthCapableProviders()` is this
+ * list limited to the logins the installed pi has. pi's other logins (Sign
+ * in with ChatGPT on 'openai') are out of scope.
  */
 export const OAUTH_PROVIDER_IDS: string[] = [
   'anthropic',

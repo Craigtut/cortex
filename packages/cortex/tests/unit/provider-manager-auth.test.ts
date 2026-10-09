@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { getModelRuntime } from '../../src/model-runtime.js';
 import { ProviderManager } from '../../src/provider-manager.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -55,6 +56,16 @@ describe('ProviderManager request auth', () => {
 
     await manager.logout('openai');
     expect(await credentials.read('openai')).toBeUndefined();
+  });
+
+  it('offers no OAuth login Cortex does not support, such as Sign in with ChatGPT', async () => {
+    // Precondition: the installed pi ships an OAuth login for 'openai'.
+    expect(getModelRuntime().models.getProvider('openai')?.auth.oauth).toBeDefined();
+
+    const capable = await new ProviderManager().listOAuthCapableProviders();
+
+    expect(capable).not.toContain('openai');
+    expect(capable).toEqual(expect.arrayContaining(['anthropic', 'github-copilot', 'openai-codex']));
   });
 
   it('ignores provider env vars unless ambient credentials are enabled', async () => {

@@ -8,7 +8,7 @@
 
 import type { AuthEvent, AuthInteraction, AuthPrompt, OAuthAuth } from '@earendil-works/pi-ai';
 import type { ModelRuntime } from '../model-runtime.js';
-import { PROVIDER_REGISTRY } from '../provider-registry.js';
+import { OAUTH_PROVIDER_IDS } from '../provider-registry.js';
 import { OAuthError } from './oauth-types.js';
 import type {
   OAuthAuthInfo,
@@ -390,16 +390,16 @@ export class OAuthFlows {
     }
   }
 
-  /** OAuth-capable provider ids from the installed pi, limited to providers Cortex models. */
+  /** OAuth-capable provider ids from the installed pi, limited to the logins Cortex supports. */
   async listCapableProviders(): Promise<string[]> {
     const fromPi = this.runtime().models.getProviders()
       .filter((provider) => provider.auth.oauth)
       .map((provider) => provider.id)
       .sort();
-    // Intersect with what Cortex models: a provider without a
-    // PROVIDER_REGISTRY entry would offer a login the rest of the stack
-    // cannot follow through on.
-    const known = new Set(PROVIDER_REGISTRY.map(p => p.id));
-    return fromPi.filter(id => known.has(id));
+    // Intersect with Cortex's OAuth set: pi also ships logins Cortex does
+    // not follow through on (Sign in with ChatGPT on 'openai' requires a
+    // device id Cortex does not supply, so it always fails).
+    const supported = new Set(OAUTH_PROVIDER_IDS);
+    return fromPi.filter(id => supported.has(id));
   }
 }

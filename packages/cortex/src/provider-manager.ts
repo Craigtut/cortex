@@ -207,11 +207,9 @@ export class ProviderManager implements IProviderManager {
   }
 
   /**
-   * Provider ids whose installed pi definition ships an OAuth flow.
-   *
-   * Read from pi rather than from Cortex's static list, so a provider pi
-   * gains OAuth for becomes available without a Cortex release. Falls back to
-   * the static list if pi cannot be loaded.
+   * Provider ids Cortex supports an OAuth login for (OAUTH_PROVIDER_IDS)
+   * whose installed pi definition ships one. A login pi drops disappears
+   * from the list; one pi adds appears once Cortex lists it.
    */
   async listOAuthCapableProviders(): Promise<string[]> {
     return this.oauth.listCapableProviders();
