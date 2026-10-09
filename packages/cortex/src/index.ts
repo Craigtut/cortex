@@ -89,7 +89,7 @@ export { NOOP_LOGGER } from './noop-logger.js';
 export { zodToTypebox } from './schema-converter.js';
 
 // Token Estimator
-export { estimateTokens } from './token-estimator.js';
+export { charsForTokens, estimateTokens } from './token-estimator.js';
 
 // Working Tags Parser
 export {

@@ -19,6 +19,7 @@ import * as path from 'node:path';
 import type { SkillConfig, SkillEntry } from './types.js';
 import type { SandboxProvider } from './sandbox/types.js';
 import { preprocessSkillBody } from './skill-preprocessor.js';
+import { estimateTokens } from './token-estimator.js';
 
 // ---------------------------------------------------------------------------
 // Frontmatter parsing
@@ -296,10 +297,7 @@ export class SkillRegistry {
     const visibleSkills: SkillEntry[] = [];
 
     for (const entry of invocableSkills) {
-      const approxTokens = Math.max(
-        32,
-        Math.ceil((entry.name.length + entry.description.trim().length) / 4),
-      );
+      const approxTokens = Math.max(32, estimateTokens(entry.name + entry.description.trim()));
 
       if (visibleSkills.length > 0 && usedTokens + approxTokens > maxTokens) {
         continue;

@@ -7,6 +7,7 @@
  * never stall on a multi-second observer or summarization call.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { estimateTokens } from '../../../src/token-estimator.js';
 import { CompactionManager, buildCompactionConfig } from '../../../src/compaction/index.js';
 import { ObservationalMemoryEngine } from '../../../src/compaction/observational/index.js';
 import type { CompleteFn } from '../../../src/compaction/observational/types.js';
@@ -136,7 +137,7 @@ describe('ObservationalMemoryEngine allowSync', () => {
     engine.restoreState({
       observations: bigObservations,
       continuationHint: null,
-      observationTokenCount: Math.ceil(bigObservations.length / 4),
+      observationTokenCount: estimateTokens(bigObservations),
       generationCount: 0,
       bufferedChunks: [],
       bufferWatermark: 0,

@@ -134,18 +134,18 @@ describe('parseReflectorOutput', () => {
 
 describe('validateCompression', () => {
   it('returns true when output tokens are under threshold', () => {
-    // "short" is 5 chars, ~2 tokens at 4 chars/token
+    // "short" is 5 chars, 2 tokens at 3.5 chars/token
     expect(validateCompression('short', 100)).toBe(true);
   });
 
   it('returns true when output tokens equal threshold', () => {
-    // 400 chars = 100 tokens at 4 chars/token
-    const text = 'x'.repeat(400);
+    // 350 chars = 100 tokens at 3.5 chars/token
+    const text = 'x'.repeat(350);
     expect(validateCompression(text, 100)).toBe(true);
   });
 
   it('returns false when output tokens exceed threshold', () => {
-    // 1000 chars = 250 tokens at 4 chars/token
+    // 1000 chars = 286 tokens at 3.5 chars/token
     const text = 'x'.repeat(1000);
     expect(validateCompression(text, 100)).toBe(false);
   });

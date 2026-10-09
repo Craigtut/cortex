@@ -27,7 +27,7 @@ import type { AgentContext, AgentMessage, ContextManager } from '../context-mana
 import { errorMessageOf } from '../error-classifier.js';
 import { withPlaceholderContent } from '../pi-message.js';
 import { isSystemMessage, spliceHistory } from '../system-transcript.js';
-import { estimateTokens } from '../token-estimator.js';
+import { charsForTokens, estimateTokens } from '../token-estimator.js';
 import type { CortexLogger } from '../types.js';
 import { ABORTED, raceAbort, raceTimeout } from './run-control.js';
 import type { LoopGate } from './run-control.js';
@@ -124,7 +124,7 @@ export class HeadlineFeed {
     // Hard cap: cut at the estimator's character budget, marker included.
     const budgetChars = Math.max(
       0,
-      this.maxTokens * 4 - HEADLINE_TRUNCATION_MARKER.length,
+      charsForTokens(this.maxTokens) - HEADLINE_TRUNCATION_MARKER.length,
     );
     return content.slice(0, budgetChars) + HEADLINE_TRUNCATION_MARKER;
   }

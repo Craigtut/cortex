@@ -628,7 +628,7 @@ If the consumer uses a utility model with a very small context window, both obse
 ### Token estimation
 
 Uses the existing dual-tracking approach:
-- Heuristic: `estimateTokens(text)` = `Math.ceil(text.length / 4)`. A message weighs the heuristic over its text as the observer reads it (tool calls rendered with their arguments; images and thinking not counted). Every layer measures history on that one basis (`compaction/message-tokens.ts`): turn-end buffering and idle digestion's floor, observer pieces, the verbatim tail, a chunk's observed size, Layer 1's hot zone, the context estimate and the view cut
+- Heuristic: `estimateTokens(text)` = `Math.ceil(text.length / 3.5)`, pi-ai's `estimateTextTokens`, so Cortex and pi agree on what a text costs. A message weighs the heuristic over its text as the observer reads it (tool calls rendered with their arguments; images and thinking not counted). Every layer measures history on that one basis (`compaction/message-tokens.ts`): turn-end buffering and idle digestion's floor, observer pieces, the verbatim tail, a chunk's observed size, Layer 1's hot zone, the context estimate and the view cut
 - Post-hoc: the measured input of the last parent call
 - Working value: `Math.max(heuristic, postHoc)` to avoid underestimating
 

@@ -13,6 +13,7 @@ import {
   MICROCOMPACTION_DEFAULTS,
 } from '../../../src/compaction/microcompaction.js';
 import { extractTextContent } from '../../../src/compaction/tool-messages.js';
+import { charsForTokens } from '../../../src/token-estimator.js';
 import type { AgentMessage } from '../../../src/context-manager.js';
 import type { MicrocompactionConfig } from '../../../src/types.js';
 import {
@@ -46,9 +47,9 @@ function generateLargeContent(wordCount: number): string {
   return words.join(' ');
 }
 
-// Content of approximately N tokens (estimateTokens uses chars/4).
+// Content of N tokens, as estimateTokens counts them (to within one).
 function makeContentOfTokens(tokens: number): string {
-  return 'x'.repeat(tokens * 4);
+  return 'x'.repeat(charsForTokens(tokens));
 }
 
 // ---------------------------------------------------------------------------

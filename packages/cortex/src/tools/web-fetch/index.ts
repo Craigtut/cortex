@@ -17,6 +17,7 @@ import { Type, type Static } from 'typebox';
 import type { ToolContentDetails } from '../../types.js';
 import type { ResolveNetworkAccess } from '../../sandbox/types.js';
 import { WebFetchCache } from './cache.js';
+import { charsForTokens } from '../../token-estimator.js';
 import type { CortexToolRuntime } from '../runtime.js';
 import { attachRuntimeAwareTool } from '../runtime.js';
 
@@ -604,7 +605,7 @@ export function createWebFetchTool(config: WebFetchToolConfig): {
  * result-persistence interceptor (which protects main-agent context).
  */
 function capForUtilityModel(content: string): string {
-  const maxChars = MAX_UTILITY_MODEL_INPUT_TOKENS * 4;
+  const maxChars = charsForTokens(MAX_UTILITY_MODEL_INPUT_TOKENS);
   if (content.length <= maxChars) return content;
   return content.slice(0, maxChars) + '\n\n[Content truncated for summarization input]';
 }

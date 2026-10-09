@@ -4,6 +4,7 @@
  * the whole log and drop the newer observations.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { estimateTokens } from '../../../../src/token-estimator.js';
 import { ObservationalMemoryEngine } from '../../../../src/compaction/observational/index.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
@@ -21,7 +22,7 @@ function newEngine(complete: CompleteFn, observations: string): ObservationalMem
   engine.restoreState({
     observations,
     continuationHint: null,
-    observationTokenCount: Math.ceil(observations.length / 4),
+    observationTokenCount: estimateTokens(observations),
     generationCount: 0,
     bufferedChunks: [],
     bufferWatermark: 0,

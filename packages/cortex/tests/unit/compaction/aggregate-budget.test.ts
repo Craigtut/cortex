@@ -5,7 +5,7 @@ import {
 } from '../../../src/compaction/index.js';
 import type { AgentMessage } from '../../../src/context-manager.js';
 import type { MicrocompactionConfig, PersistResultFn } from '../../../src/types.js';
-import { estimateTokens } from '../../../src/token-estimator.js';
+import { charsForTokens, estimateTokens } from '../../../src/token-estimator.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,10 +60,10 @@ function makeRuntimeToolResultMsg(text: string, toolName: string): AgentMessage 
 
 /**
  * Generate a string of approximately the given token count.
- * estimateTokens uses chars/4, so we generate chars = tokens * 4.
+ * Sized with charsForTokens, the inverse of estimateTokens.
  */
 function generateContent(targetTokens: number): string {
-  const chars = targetTokens * 4;
+  const chars = charsForTokens(targetTokens);
   const words: string[] = [];
   let totalChars = 0;
   let i = 0;

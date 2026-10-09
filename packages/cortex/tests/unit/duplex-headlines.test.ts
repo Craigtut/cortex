@@ -10,6 +10,7 @@ import type { DuplexHeadlinePorts } from '../../src/duplex/headlines.js';
 import type { SessionUsage, SubAgentSnapshot } from '../../src/types.js';
 import type { DelegationSnapshot } from '../../src/duplex/router.js';
 import { TALKER_HEADLINE_MAX_TOKENS } from '../../src/duplex/assembly.js';
+import { charsForTokens } from '../../src/token-estimator.js';
 
 function usage(overrides?: Partial<SessionUsage>): SessionUsage {
   return {
@@ -306,10 +307,10 @@ describe('DuplexHeadlines', () => {
     // The delegation count here is sized to overshoot the budget, not to
     // claim a threshold: it takes closer to fifty realistic delegations to
     // reach the cap, and the point of the test is the ordering, not the
-    // number. BUDGET_CHARS mirrors agent-loop.ts buildHeadlineInjection
-    // (maxTokens * 4, minus the truncation marker) at the facade's
-    // TALKER_HEADLINE_MAX_TOKENS.
-    const BUDGET_CHARS = TALKER_HEADLINE_MAX_TOKENS * 4 - '\n[headline block truncated]'.length;
+    // number. BUDGET_CHARS mirrors HeadlineFeed's cap in
+    // agent-loop/context-pipeline.ts (charsForTokens(maxTokens), minus the
+    // truncation marker) at the facade's TALKER_HEADLINE_MAX_TOKENS.
+    const BUDGET_CHARS = charsForTokens(TALKER_HEADLINE_MAX_TOKENS) - '\n[headline block truncated]'.length;
     const { headlines, state } = createHeadlines();
     state.delegations = Array.from({ length: 120 }, (_, index) => ({
       alias: `task-${index + 1}`,

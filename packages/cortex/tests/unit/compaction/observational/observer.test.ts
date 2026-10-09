@@ -11,6 +11,7 @@ import { OBSERVER_SYSTEM_PROMPT } from '../../../../src/compaction/observational
 import { MemoryReplyError } from '../../../../src/compaction/observational/reply.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
+import { estimateTokens } from '../../../../src/token-estimator.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -256,7 +257,7 @@ describe('buildObserverMessages', () => {
 
   it('truncates previous observations to token budget', () => {
     // Create observations that exceed the budget
-    const longObs = 'x'.repeat(50_000); // ~12500 tokens at 4 chars/token
+    const longObs = 'x'.repeat(50_000); // 14,286 tokens at 3.5 chars/token
     const messages = [userMsg('Hello')];
     const result = buildObserverMessages(messages, longObs, 500); // 500 token budget
 
@@ -265,6 +266,9 @@ describe('buildObserverMessages', () => {
     expect(first.content).toContain('[...truncated...]');
     // Should be much shorter than the original
     expect(first.content.length).toBeLessThan(longObs.length);
+    // What is kept fits the budget, as the estimator counts it.
+    const marker = '[...truncated...]\n';
+    expect(estimateTokens(first.content.slice(first.content.indexOf(marker) + marker.length))).toBeLessThanOrEqual(500);
   });
 });
 

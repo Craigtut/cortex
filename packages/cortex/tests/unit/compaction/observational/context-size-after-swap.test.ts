@@ -98,7 +98,8 @@ describe('context size after a swap', () => {
     loop.getCompactionManager().memory.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
-      { role: 'assistant', content: 'done '.repeat(3000), timestamp: 2 },
+      // About 3,700 tokens: inside the 4,000-token tail with the question.
+      { role: 'assistant', content: 'done '.repeat(2600), timestamp: 2 },
       { role: 'user', content: 'latest question', timestamp: 3 },
     );
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);

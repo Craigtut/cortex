@@ -20,6 +20,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, homedir: () => currentHome() };
 });
 
+import { charsForTokens } from '@animus-labs/cortex';
 import type { CompleteFn } from '@animus-labs/cortex';
 import type { TranscriptWriter } from '../src/persistence/transcript-writer.js';
 import { createPassthroughSession, destroyHarnessAgents } from './helpers/duplex-harness.js';
@@ -82,7 +83,7 @@ describe('the durable marker for an overflow drop', () => {
     const manager = agent.getCompactionManager();
     const capacity = manager.modelContextWindow || manager.contextWindow;
     // Twice the window, in twenty messages; the first four are observed.
-    const size = Math.ceil((capacity * 2 * 4) / 20);
+    const size = charsForTokens(Math.ceil((capacity * 2) / 20));
     const history = Array.from({ length: 20 }, (_, i) =>
       ({ role: i % 2 ? 'assistant' : 'user', content: String(i).repeat(size), timestamp: i + 1 }));
     manager.memory.restoreState({

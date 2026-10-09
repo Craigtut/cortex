@@ -9,7 +9,7 @@ import { CompactionManager, buildCompactionConfig } from '../../../src/compactio
 import { ObservationalMemoryEngine } from '../../../src/compaction/observational/index.js';
 import type { CompleteFn } from '../../../src/compaction/observational/types.js';
 import { historyTokens } from '../../../src/compaction/message-tokens.js';
-import { estimateTokens } from '../../../src/token-estimator.js';
+import { charsForTokens, estimateTokens } from '../../../src/token-estimator.js';
 import type { AgentMessage } from '../../../src/context-manager.js';
 import type { ObservationEvent } from '../../../src/compaction/observational/types.js';
 import { makeToolCallMsg, makeToolResultMsg } from './helpers.js';
@@ -73,7 +73,7 @@ describe('one token basis for history', () => {
     manager.setModelContextWindow(100_000);
     manager.updateCurrentContextTokenCount(150_000);
     const history = Array.from({ length: 20 }, (_, i) =>
-      ({ role: i % 2 ? 'assistant' : 'user', content: String(i % 10).repeat(30_000), timestamp: i + 1 }) as AgentMessage);
+      ({ role: i % 2 ? 'assistant' : 'user', content: String(i % 10).repeat(charsForTokens(7_500)), timestamp: i + 1 }) as AgentMessage);
     manager.memory.restoreState({
       observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
       bufferedChunks: [{ observations: '* (10:00) the first exchanges', messageTokensObserved: 30_000, createdAt: new Date(), endIndex: 4 }],

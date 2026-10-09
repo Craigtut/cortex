@@ -15,7 +15,7 @@ import type { CompleteFn } from './types.js';
 import type { AgentMessage } from '../../context-manager.js';
 import type { ObserverOutput } from './types.js';
 import { OBSERVER_SYSTEM_PROMPT } from './constants.js';
-import { estimateTokens } from '../../token-estimator.js';
+import { charsForTokens, estimateTokens } from '../../token-estimator.js';
 import { isSystemMessage } from '../../system-transcript.js';
 import { MemoryReplyError, readObservationsBlock } from './reply.js';
 import { applyBookend } from '../microcompaction.js';
@@ -267,7 +267,7 @@ export function fitMessagesToObserverBudget(messages: AgentMessage[], maxInputTo
   if (resultCount === 0) return messages;
   // Results share half the budget; the rest of the conversation keeps the other half.
   const shareTokens = Math.max(500, Math.floor(maxInputTokens / 2 / resultCount));
-  const sideChars = shareTokens * 2;
+  const sideChars = Math.floor(charsForTokens(shareTokens) / 2);
   const bookend = (text: string): string => {
     const tokens = estimateTokens(text);
     return tokens > shareTokens ? applyBookend(text, sideChars, sideChars, tokens) : text;
@@ -463,8 +463,7 @@ function tailTruncateToTokenBudget(text: string, tokenBudget: number): string {
   const currentTokens = estimateTokens(text);
   if (currentTokens <= tokenBudget) return text;
 
-  // Estimate chars to keep (tokens * 4 chars/token approximation)
-  const charsToKeep = tokenBudget * 4;
+  const charsToKeep = charsForTokens(tokenBudget);
   if (charsToKeep >= text.length) return text;
 
   const truncated = text.slice(text.length - charsToKeep);
