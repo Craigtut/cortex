@@ -2,7 +2,7 @@
 
 All notable changes to `@animus-labs/cortex` are documented here.
 
-## Unreleased
+## 0.7.0
 
 - npm installs Microsoft's MXC sandbox SDK with Cortex on Windows, and never on macOS or Linux. Each release also publishes `@animus-labs/cortex@<version>-win32` under the `win32` dist-tag: package.json only, `"os": ["win32"]`, depending on `@microsoft/mxc-sdk` `1.0.0` exactly. The published package lists it as the optional dependency `@animus-labs/cortex-win32` (an npm alias). Cortex has no `@microsoft/mxc-sdk` peer dependency, and nothing needs installing by hand. Cortex finds the SDK from its own location first (an SDK the project installed itself wins), then through `@animus-labs/cortex-win32`, so npm's nested and linked install strategies and pnpm work too. If the SDK is missing (optional dependencies omitted, or `node_modules` or a lockfile from another OS), the sandbox status says so and says to run `npm install` on the Windows machine.
 - Breaking (types): Cortex types its transcript with pi's own message types throughout. `AgentStateAccessor.state.messages` and `AgentContext.messages` are pi-agent-core's `AgentMessage` (pi's system, user, assistant and tool-result messages) instead of Cortex's looser stand-in, which admitted string assistant content and content parts of any shape; a scripted agent or a `transformContext` hook written against the loose shape no longer type-checks. `PiAgent.transformContext` takes pi's signature, `(messages: AgentMessage[], signal?) => Promise<AgentMessage[]>`. The build now checks pi's `AgentState` and `transformContext` against the loop's ports, as it already checked pi's `Agent` methods. Restored history is still read defensively at runtime: string assistant content and legacy `tool_result` parts keep working.
