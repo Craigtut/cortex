@@ -13,7 +13,24 @@ No npm publish token should be stored in GitHub.
 
 Each workflow rejects the release if the tag does not match the package version, if the changelog is missing that version, or if the package version is already published on npm.
 
-The verify job builds and packs the tarball without OIDC publish permissions. The stage job has OIDC permission, but it does not check out repository code or install project dependencies. It only downloads the verified tarball artifact and stages that tarball on npm.
+The verify job builds and packs the tarball without OIDC publish permissions. The stage job has OIDC permission, but it does not check out repository code or install project dependencies. It only downloads the verified tarball artifact (two tarballs for Cortex, below) and stages it on npm.
+
+### Cortex's Windows variant
+
+Every Cortex release publishes two versions of `@animus-labs/cortex`:
+
+| Version | Dist-tag | Contents |
+| --- | --- | --- |
+| `X.Y.Z-win32` | `win32` | package.json only: `"os": ["win32"]` and one dependency, `@microsoft/mxc-sdk` pinned exactly |
+| `X.Y.Z` | `latest` | the package, whose package.json also lists `"optionalDependencies": { "@animus-labs/cortex-win32": "npm:@animus-labs/cortex@X.Y.Z-win32" }` |
+
+npm installs the variant, and through it Microsoft's MXC sandbox SDK, only on Windows. The alias is not in `packages/cortex/package.json`; `tools/release/stage-cortex.mjs` adds it when it stages both tarballs, and the main tarball otherwise holds exactly what `npm pack` selects. The architecture is in [`cortex/sandboxing.md`](./cortex/sandboxing.md) ("Dependency strategy").
+
+The Cortex workflow's verify job stages both tarballs and runs `tools/release/verify-cortex-install.mjs` against them: it publishes them to a throwaway local registry (verdaccio) the way the stage job does, checks the dist-tags, and installs the main package into fresh projects. A second job repeats the install on Windows, where the variant and the SDK must be installed and the installed Cortex must find the SDK, hoisted and in npm's nested layout; on Linux neither may be installed. The stage job then stages the variant first, with `--tag win32` (npm refuses a prerelease without a tag, and the tag keeps `latest` on the main package), and the main package second, and lists both stage ids in its summary.
+
+**Approve the `-win32` stage first.** npm installs a package without an optional dependency it cannot resolve and records nothing for it, so while the main package is live and the variant is not, Windows installs get no SDK, and their lockfiles then fail `npm ci` once the variant appears (`npm install` repairs them). If the stage job fails between the two, reject the staged variant (`npm stage reject <stage-id>`) before rerunning, because a staged version cannot be staged again.
+
+There is no `publish:cortex` script: a plain `npm publish` of the package would ship it without the variant.
 
 ## One-time GitHub setup
 
@@ -77,7 +94,7 @@ npm run release:check:cortex-code
 
 Publish and approve Cortex `0.6.0` through its tag workflow first, then Cortex Code `0.6.0`. Sandboxing ships inside Cortex; there is no third package or sandbox release workflow.
 
-The Cortex tarball contains no native binary. Windows containment uses Microsoft's MXC runtime through the optional peer `@microsoft/mxc-sdk`, which Windows consumers install themselves. Managed sandboxing defaults to refusing unavailable or partial enforcement. Cortex Code explicitly retains degraded operation and Windows opt-in. Native Windows containment claims still depend on the real-host validation checklist in `docs/cortex/windows-sandbox-build.md`.
+The Cortex tarball contains no native binary. Windows containment uses Microsoft's MXC runtime from `@microsoft/mxc-sdk`, which npm installs on Windows through the release's `-win32` variant (see "Cortex's Windows variant" above). Managed sandboxing defaults to refusing unavailable or partial enforcement. Cortex Code explicitly retains degraded operation and Windows opt-in. Native Windows containment claims still depend on the real-host validation checklist in `docs/cortex/windows-sandbox-build.md`.
 
 These are publishing instructions, not actions performed by local release preparation. npm and GitHub approvals still apply.
 
@@ -108,14 +125,19 @@ git push origin main
 git push origin cortex-vX.Y.Z
 ```
 
-After the workflow stages the package, review and approve the staged release on npmjs.com or with the npm CLI:
+After the workflow stages the two packages, review and approve them on npmjs.com or with the npm CLI, the `X.Y.Z-win32` variant first:
 
 ```bash
 npm stage list @animus-labs/cortex
 npm stage view <stage-id>
 npm stage download <stage-id>
-npm stage approve <stage-id>
+npm stage approve <variant-stage-id>
+npm view @animus-labs/cortex@X.Y.Z-win32 version   # live before the main package
+npm stage approve <main-stage-id>
+npm view @animus-labs/cortex dist-tags             # latest: X.Y.Z, win32: X.Y.Z-win32
 ```
+
+`npm run release:check:cortex` runs the same staging and install checks locally (it needs network access for the throwaway registry and dependencies).
 
 ## Prepare a Cortex Code release
 

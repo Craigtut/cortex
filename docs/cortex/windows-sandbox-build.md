@@ -13,11 +13,17 @@ on a real Windows 11 machine. The design and its tradeoffs are in
   never compares build numbers; the runtime probe decides.
 - Node 24.21 or later in the 24 line, or 26.8 or later (MXC's native stdio
   transfer).
-- `@microsoft/mxc-sdk` 1.x installed where Cortex can resolve it:
-  `npm install @microsoft/mxc-sdk` in the project that depends on Cortex, or
-  `npm install -g @microsoft/mxc-sdk` next to a global Cortex Code install.
-  Cortex declares it as an optional peer dependency so macOS and Linux installs
-  never download its roughly 105 MB (plus node-pty).
+- `@microsoft/mxc-sdk`, which npm installs with Cortex on Windows: the
+  published package lists the Windows variant `@animus-labs/cortex-win32`
+  (an alias of `@animus-labs/cortex@<version>-win32`) as an optional
+  dependency, and that variant depends on the pinned SDK. macOS and Linux
+  installs skip it and never download the SDK's roughly 105 MB (plus
+  node-pty). Nothing to install by hand, for a project or for a global
+  Cortex Code install. If the SDK is missing, optional dependencies were
+  omitted (`--omit=optional`) or `node_modules` or the lockfile came from
+  another OS: run `npm install` on the Windows machine, or delete the
+  lockfile and `node_modules` and reinstall. An SDK the project installs
+  itself takes precedence over the pinned one.
 
 Install Cortex and the SDK outside the agent's workspace. When they live inside
 a writable root, the provider carves them out read-only but still reports
@@ -49,22 +55,50 @@ on Windows.
 
 ## Real-host validation checklist
 
-Nothing below has run on Windows yet. The MXC backend is covered on any OS by
-unit tests (policy mapping, provider against a faked SDK boundary, launcher
-entry point against a fake SDK module, real host-side proxy). Every item here
-needs a real Windows 11 host with PSEC, and none of it can run on GitHub's
-`windows-latest` (Windows Server 2025; MXC documents Windows 11 only and its
-own hosted-runner jobs skip real sandbox tests). Run it on a self-hosted
-Windows 11 machine; the `windows-11-arm` hosted image (build 26200.9457) is
-worth one attempt, but whether PSEC is enabled there is unknown.
+The MXC backend is covered on any OS by unit tests (policy mapping, provider
+against a faked SDK boundary, launcher entry point against a fake SDK module,
+real host-side proxy, SDK resolution through fake install layouts). Every item
+here needs a real Windows 11 host with PSEC, which GitHub's `windows-latest`
+(Windows Server 2025) is not: MXC documents Windows 11 only, and its own
+hosted-runner jobs skip real sandbox tests.
+
+**Automated.** `packages/cortex/tests/unit/sandbox/mxc-real-host.integration.test.ts`
+automates every item that can run headless, numbered as below. It runs on
+Windows when the real provider's probe reports BaseContainer and skips
+otherwise; `CORTEX_MXC_REAL_HOST=1` makes an unavailable host a failure. The
+CI job `windows-11-arm` (Windows 11 25H2 on ARM64, pushes to `main` and
+manual runs) installs the pinned SDK, runs `tools/mxc/probe-report.mjs`
+(Windows build, Node, the SDK Cortex resolves, `getAvailableBackends()`, and
+Cortex's status, in the job summary), and runs the suite only when the probe
+passes. When it does not, the job passes on packaging alone, with a warning
+that Windows containment was NOT validated. Whether PSEC is enabled on that
+image has not been observed yet. What an item asks to record, the suite
+prints and adds to the job summary.
+
+To run it on your own Windows 11 machine from a source checkout (the
+repository itself never depends on the SDK):
+
+```powershell
+npm ci; npm run build
+npm install --no-save @microsoft/mxc-sdk@1.0.0
+node tools/mxc/probe-report.mjs
+$env:CORTEX_MXC_REAL_HOST = '1'; npx vitest run packages/cortex/tests/unit/sandbox/mxc-real-host.integration.test.ts
+```
+
+**Still manual.** Synthetic input (`SendKeys`) and where `Start-Process
+notepad` shows a window (item 8), `taskkill /F` of the agent process (item
+9), the clipboard when the host has no interactive session, x64 Windows 11
+(the hosted image is ARM64 only), and a second drive when the host has none.
+The suite records which of these it skipped.
 
 **Setup.**
 
 - Windows 11 24H2/25H2 at build `.9278` or later (KB5120998), or 26H1/26H2.
   KB5120998 rolls MXC out gradually, so a matching build alone proves nothing;
   the probe decides.
-- Node 24.21+ (or 26.8+), Cortex built, and `npm install @microsoft/mxc-sdk`
-  next to Cortex, outside the test workspace.
+- Node 24.21+ (or 26.8+), and Cortex either installed from npm (the SDK
+  comes with it) or built from source with the pinned SDK installed as above,
+  outside the test workspace.
 - An agent created with `sandbox: true` (strict) and a `workingDirectory` that
   is a git repository, plus a second run with `{ rung: 'restricted' }`.
 - Record `getSandboxState()` and, from the launcher's probe, the SDK's
