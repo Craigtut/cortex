@@ -3,6 +3,7 @@
  * OpenAI-compatible endpoint, and for a native Ollama model.
  */
 
+import { CUSTOM_MODEL_KEY_FIELD, CUSTOM_PROVIDER_ID } from '../model-runtime.js';
 import { wrapModel } from '../model-wrapper.js';
 import type { CortexModel } from '../model-wrapper.js';
 import type { OllamaModelConfig } from '../providers/ollama/runtime.js';
@@ -16,7 +17,12 @@ export interface CustomModelConfig {
   modelId: string;
   /** Context window size (default: 128,000). */
   contextWindow?: number | undefined;
-  /** Optional API key (some local servers don't require one). */
+  /**
+   * The endpoint's API key, sent when the agent's `getAuth` or `getApiKey`
+   * returns no key for the `custom` provider. Omit it for a keyless local
+   * server; a placeholder is sent, since OpenAI-compatible clients require a
+   * non-empty key.
+   */
   apiKey?: string | undefined;
   /** Compatibility settings for non-standard servers. */
   compat?: {
@@ -65,7 +71,7 @@ export async function createCustomModel(config: CustomModelConfig): Promise<Cort
     name: config.modelId,
     api: 'openai-completions',
     baseUrl: config.baseUrl,
-    provider: 'custom',
+    provider: CUSTOM_PROVIDER_ID,
     contextWindow: config.contextWindow ?? 128_000,
     // Conservative compat for OpenAI-compatible endpoints: disable
     // features that are OpenAI-specific or may not be supported.
@@ -78,12 +84,12 @@ export async function createCustomModel(config: CustomModelConfig): Promise<Cort
       ...config.compat,
     },
   };
-  // Set API key, using a placeholder for keyless endpoints (e.g., Ollama).
-  // The OpenAI SDK client requires a non-empty apiKey value.
-  (piModel as Record<string, unknown>)['apiKey'] = config.apiKey ?? 'sk-no-key-required';
+  // The request's key when the consumer's callback supplies none, with a
+  // placeholder for keyless endpoints: the OpenAI SDK requires a non-empty key.
+  (piModel as Record<string, unknown>)[CUSTOM_MODEL_KEY_FIELD] = config.apiKey ?? 'sk-no-key-required';
   return wrapModel(
     piModel,
-    'custom',
+    CUSTOM_PROVIDER_ID,
     config.modelId,
     config.contextWindow ?? 128_000,
   );

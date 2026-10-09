@@ -263,7 +263,11 @@ interface CustomModelConfig {
   modelId: string;
   /** Context window size (default: 128,000) */
   contextWindow?: number;
-  /** Optional API key (some local servers don't require one) */
+  /**
+   * The endpoint's API key, sent when the agent's getAuth or getApiKey returns
+   * no key for the 'custom' provider. Omit it for a keyless local server; a
+   * placeholder is sent, since OpenAI-compatible clients require a key.
+   */
   apiKey?: string;
   /** Compatibility settings for non-standard servers */
   compat?: {

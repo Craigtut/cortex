@@ -89,6 +89,20 @@ export interface SimpleModelRequestOptions extends SimpleStreamOptions, Credenti
 export const CUSTOM_PROVIDER_ID = 'custom';
 
 /**
+ * The field of a custom-endpoint model that holds the key `createCustomModel()`
+ * was configured with (a placeholder for a keyless endpoint). A request uses it
+ * when the consumer's `getAuth` or `getApiKey` supplies no key.
+ */
+export const CUSTOM_MODEL_KEY_FIELD = 'apiKey';
+
+/** The key a custom-endpoint model was configured with, if it is one. */
+function configuredKeyOf(model: Model<Api>): string | undefined {
+  if (model.provider !== CUSTOM_PROVIDER_ID) return undefined;
+  const key = (model as unknown as Record<string, unknown>)[CUSTOM_MODEL_KEY_FIELD];
+  return typeof key === 'string' ? nonEmpty(key) : undefined;
+}
+
+/**
  * The built-in API implementations, by API id: what a model whose provider
  * pi does not know (a consumer's own `wrapModel()`) is streamed with.
  */
@@ -109,7 +123,8 @@ function builtinApis(): Partial<Record<Api, ProviderStreams>> {
 
 /**
  * Models on an OpenAI-compatible endpoint pi has no definition for. Its
- * credential is whatever the request carries; nothing is stored or ambient.
+ * credential is whatever the request carries, else the key the model was
+ * configured with ({@link configuredKeyOf}); nothing ambient.
  */
 function customProvider(): Provider {
   return createProvider({
@@ -220,13 +235,14 @@ export class ModelRuntime {
  * The request as the caller's credentials shape it, or null when the caller
  * resolved none: auth headers go under the request's own headers, and an
  * auth base URL replaces the model's (GitHub Copilot's per-account endpoint).
+ * A custom-endpoint model with no key from the caller uses its configured one.
  */
 function withCallerAuth<T extends StreamOptions & { auth?: ModelAuth | undefined }>(
   model: Model<Api>,
   options: T,
 ): { model: Model<Api>; options: Omit<T, 'auth'> } | null {
   const { auth, ...rest } = options;
-  const apiKey = nonEmpty(auth?.apiKey) ?? nonEmpty(rest.apiKey);
+  const apiKey = nonEmpty(auth?.apiKey) ?? nonEmpty(rest.apiKey) ?? configuredKeyOf(model);
   const authHeaders = auth?.headers && Object.keys(auth.headers).length > 0 ? auth.headers : undefined;
   if (!apiKey && !authHeaders) return null;
   const headers = authHeaders ? mergeHeaders(authHeaders, rest.headers) : rest.headers;
