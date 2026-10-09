@@ -111,7 +111,7 @@ function toCredential(entry: CachedProviderCredentials | undefined): Credential 
 function toCacheEntry(credential: Credential): CachedProviderCredentials {
   return credential.type === 'oauth'
     ? { type: 'oauth', oauthCredentials: JSON.stringify(credential), lastUsed: Date.now() }
-    : { type: 'api_key', apiKey: credential.key, lastUsed: Date.now() };
+    : { type: 'api_key', ...(credential.key ? { apiKey: credential.key } : {}), lastUsed: Date.now() };
 }
 
 /**
