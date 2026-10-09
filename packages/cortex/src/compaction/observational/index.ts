@@ -38,11 +38,12 @@ import {
 } from './constants.js';
 import { runObserver } from './observer.js';
 import { runReflector, computeEffectiveReflectionThreshold, applyReflection } from './reflector.js';
-import { BufferingCoordinator } from './buffering.js';
+import { BufferingCoordinator, chunkFromOutput } from './buffering.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { MemoryCallError, RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
+import { pieceEnd } from './units.js';
 import type { MemoryCallTrigger } from './health.js';
 
 // ---------------------------------------------------------------------------
@@ -281,17 +282,17 @@ export class ObservationalMemoryEngine {
     // so a failed or abandoned observer call can never leave messages
     // removed whose observations were not recorded.
     const sourceHistory = getSourceHistory();
-    const { chunks, watermark: chunkWatermark } = this.buffering.getCompletedChunks();
+    const { chunks, watermark } = this.buffering.getCompletedChunks();
     const merged = chunks.length > 0 ? this.mergeChunks(chunks) : null;
-    const chunkMessages = merged ? sourceHistory.slice(0, chunkWatermark) : [];
-    const unbufferedMessages = merged ? sourceHistory.slice(chunkWatermark) : sourceHistory;
+    const observedMessages = sourceHistory.slice(0, watermark);
+    const unbufferedMessages = sourceHistory.slice(watermark);
 
-    // Step 1: Would swapping in the completed chunks alone be enough?
+    // Step 1: Would swapping in what is already observed be enough?
     // Account for the full slot overhead (preamble, XML wrappers,
     // continuation hints) rather than just the raw observation text, since
     // the slot is always larger.
     const trimmedMessageTokens = estimateTokens(
-      chunkMessages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n'),
+      observedMessages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n'),
     );
     const slotOverheadTokens = merged
       ? estimateTokens(this.buildSlotContentForEstimate(merged.observations))
@@ -309,7 +310,7 @@ export class ObservationalMemoryEngine {
     ) {
       // These messages are about to be observed here; an in-flight observer
       // covering them must not land a second chunk for them.
-      this.buffering.advanceEpoch();
+      this.buffering.invalidateObserver();
       syncOutput = await this.observeInBand(unbufferedMessages, 'activation', passSignal);
     }
 
@@ -318,33 +319,25 @@ export class ObservationalMemoryEngine {
     // did not consume stay buffered.
     if (isStale?.() || runSignal?.aborted) return context;
 
-    // Step 3: Apply, synchronously.
+    // Step 3: Apply, synchronously: record, cut, merge.
+    let cut = watermark;
+    if (syncOutput) {
+      this.buffering.ledger.record(chunkFromOutput(syncOutput, unbufferedMessages), sourceHistory.length);
+      cut = sourceHistory.length;
+    }
     let compactedMessages: AgentMessage[] = [];
     let newObservationText = '';
-    if (merged) {
-      newObservationText = merged.observations;
-      if (merged.hint) this.continuationHint = merged.hint;
-      compactedMessages = chunkMessages;
-    }
-    if (syncOutput) {
-      newObservationText = newObservationText
-        ? newObservationText + '\n\n' + syncOutput.observations
-        : syncOutput.observations;
-      if (syncOutput.currentTask || syncOutput.suggestedResponse) {
-        this.continuationHint = {
-          currentTask: syncOutput.currentTask ?? '',
-          suggestedResponse: syncOutput.suggestedResponse ?? '',
-        };
+    if (cut > 0) {
+      const consumed = this.buffering.ledger.removePrefix(cut);
+      if (consumed.length > 0) {
+        const swapped = this.mergeChunks(consumed);
+        newObservationText = swapped.observations;
+        if (swapped.hint) this.continuationHint = swapped.hint;
       }
-      compactedMessages = [...compactedMessages, ...unbufferedMessages];
+      compactedMessages = sourceHistory.slice(0, cut);
+      setSourceHistory(sourceHistory.slice(cut));
     }
     const activatedSync = syncOutput !== null;
-    if (merged || syncOutput) {
-      setSourceHistory(syncOutput ? [] : unbufferedMessages);
-      // Resets chunks and the watermark and advances the epoch: every
-      // message the buffer described has just left the source.
-      this.buffering.commitActivation();
-    }
 
     // Merge new observations into existing
     if (newObservationText) {
@@ -427,15 +420,17 @@ export class ObservationalMemoryEngine {
     const currentUtilization = totalTokens / contextWindow;
     const tokensUntilActivation = (this.config.activationThreshold - currentUtilization) * contextWindow;
 
-    // Already past threshold, activation will handle it in transformContext
-    if (tokensUntilActivation <= 0) return;
-
-    const bufferInterval = this.buffering.computeBufferInterval(tokensUntilActivation, {
-      bufferTargetCycles: this.config.bufferTargetCycles,
-      bufferTokenCap: this.config.bufferTokenCap,
-      bufferMinTokens: this.config.bufferMinTokens,
-      utilityModelContextWindow: this.utilityModelContextWindow,
-    });
+    // Past the threshold, keep buffering at the floor interval: activation
+    // can only swap in what is observed, and a non-blocking or degraded
+    // pass does not observe in-band.
+    const bufferInterval = tokensUntilActivation <= 0
+      ? Math.min(this.config.bufferMinTokens, this.observerInputCap())
+      : this.buffering.computeBufferInterval(tokensUntilActivation, {
+        bufferTargetCycles: this.config.bufferTargetCycles,
+        bufferTokenCap: this.config.bufferTokenCap,
+        bufferMinTokens: this.config.bufferMinTokens,
+        utilityModelContextWindow: this.utilityModelContextWindow,
+      });
 
     // Skip slot messages to avoid processing them as conversation content
     const history = messages.slice(historyStart);
@@ -451,19 +446,36 @@ export class ObservationalMemoryEngine {
     }, 0);
 
     if (this.buffering.shouldBuffer(unobservedTokens, bufferInterval)) {
-      // Snapshot the unobserved messages
-      const snapshot = [...unobservedMessages];
-      const endIndex = watermark + unobservedMessages.length;
-
-      this.buffering.launchObserver(
-        this.completeFn,
-        snapshot,
-        endIndex,
-        this.observations || null,
-        this.buildObserverConfig(),
-        this.logger ?? undefined,
-      );
+      this.launchPiece(history, watermark, 'buffer');
     }
+  }
+
+  /**
+   * Launch an observer over the next piece of unobserved history from
+   * `watermark`: whole units, as many as fit the observer's input cap.
+   */
+  private launchPiece(history: AgentMessage[], watermark: number, trigger: MemoryCallTrigger): void {
+    if (!this.completeFn) return;
+    const end = pieceEnd(history, watermark, this.observerInputCap());
+    this.buffering.launchObserver(
+      this.completeFn,
+      history.slice(watermark, end),
+      end,
+      this.observations || null,
+      this.buildObserverConfig(),
+      this.logger ?? undefined,
+      trigger,
+    );
+  }
+
+  /**
+   * Most tokens of history one observer call takes: the buffer cap, bounded
+   * by 60% of the utility model's window so the input fits it.
+   */
+  private observerInputCap(): number {
+    return this.utilityModelContextWindow > 0
+      ? Math.min(this.config.bufferTokenCap, this.utilityModelContextWindow * 0.6)
+      : this.config.bufferTokenCap;
   }
 
   // -------------------------------------------------------------------------
@@ -473,7 +485,8 @@ export class ObservationalMemoryEngine {
   /**
    * Run pending observation buffering OUTSIDE a prompt: wait for any
    * in-flight observer to land its chunk, then observe the still-unobserved
-   * tail (when it clears the buffering floor) and wait for that chunk too.
+   * tail (when it clears the buffering floor) one piece at a time, each
+   * within the observer's input cap, waiting for each chunk.
    *
    * Chunks stay buffered rather than activating here: activation trims raw
    * history, which is a threshold decision, while this call only ensures the
@@ -509,8 +522,7 @@ export class ObservationalMemoryEngine {
     }
 
     const history = messages.slice(historyStart);
-    const watermark = this.buffering.getWatermark();
-    const unobserved = history.slice(watermark);
+    const unobserved = history.slice(this.buffering.getWatermark());
     if (unobserved.length === 0) return false;
 
     const unobservedTokens = unobserved.reduce((sum, msg) => {
@@ -523,25 +535,25 @@ export class ObservationalMemoryEngine {
     // thrashes the utility model for nothing.
     if (unobservedTokens < this.config.bufferMinTokens) return false;
 
-    this.buffering.launchObserver(
-      this.completeFn,
-      [...unobserved],
-      watermark + unobserved.length,
-      this.observations || null,
-      this.buildObserverConfig(),
-      this.logger ?? undefined,
-      'idle',
-    );
-    if (!this.buffering.isObserverInFlight()) {
-      // launchObserver declined (the coordinator was aborted): no observer
-      // ran, so do not report one.
-      return false;
+    // One piece at a time, each within the observer's input cap, until the
+    // tail is observed, a call fails, or the budget runs out.
+    let observerRan = false;
+    while (this.buffering.getWatermark() < history.length) {
+      const before = this.buffering.getWatermark();
+      this.launchPiece(history, before, 'idle');
+      if (!this.buffering.isObserverInFlight()) {
+        // launchObserver declined (the coordinator was aborted): no
+        // observer ran, so do not report one.
+        return observerRan;
+      }
+      if (!(await this.buffering.waitForObserverSettledWithin(deadline - Date.now()))) {
+        this.logger?.warn('Idle digestion timed out waiting for its observer call');
+        return false;
+      }
+      if (this.buffering.getWatermark() <= before) return observerRan;
+      observerRan = true;
     }
-    if (!(await this.buffering.waitForObserverSettledWithin(deadline - Date.now()))) {
-      this.logger?.warn('Idle digestion timed out waiting for its observer call');
-      return false;
-    }
-    return true;
+    return observerRan;
   }
 
   // -------------------------------------------------------------------------
@@ -672,6 +684,7 @@ export class ObservationalMemoryEngine {
       generationCount: this.generationCount,
       bufferedChunks: buffering.chunks,
       bufferWatermark: buffering.watermark,
+      observedPrefix: buffering.observedPrefix,
     };
   }
 
@@ -682,43 +695,34 @@ export class ObservationalMemoryEngine {
    * then restores the buffer (completed chunks + watermark) so the observer
    * work done in the previous session is not recomputed on resume.
    *
-   * The watermark indexes into post-slot conversation history. Since
+   * The ledger's indices point into post-slot conversation history. Since
    * `restoreConversationHistory()` runs before this and splices the same
-   * messages back at the same positions, the watermark aligns: the restored
-   * chunks observe `messages[0:watermark]`, and the next activation trims
-   * exactly those messages when it merges the chunk observations (no
-   * duplication). No observer is launched on restore; the genuinely
-   * unobserved remainder after the watermark is observed lazily on the next
-   * `onTurnEnd` once it crosses the dynamic buffer interval.
+   * messages back at the same positions, they align: each restored chunk
+   * covers its saved range, and the next activation removes exactly the
+   * messages it merges (no duplication). Older state restores leniently
+   * (see ObservationLedger.restore). No observer is launched on restore;
+   * the unobserved remainder after the watermark is observed lazily on the
+   * next `onTurnEnd` once it crosses the dynamic buffer interval.
    *
    * @param state - the persisted observational memory state
    * @param historyLength - length of the restored post-slot conversation
-   *   history. Used to clamp a watermark that drifted ahead of the saved
-   *   history (possible only on a hard crash; graceful save keeps them in
-   *   sync). Defaults to the saved watermark (no clamp) when omitted.
+   *   history. Indices that drifted ahead of the saved history (possible
+   *   only on a hard crash; graceful save keeps them in sync) are clamped
+   *   to it. Omitted: no clamp.
    */
   restoreState(state: ObservationalMemoryState, historyLength?: number): void {
     this.observations = state.observations;
     this.continuationHint = state.continuationHint;
     this.observationTokenCount = state.observationTokenCount;
     this.generationCount = state.generationCount;
-
-    // Legacy sessions saved before buffer persistence have no watermark.
-    // Their chunks cannot be safely aligned with the restored history, so
-    // discard them (the observer re-observes naturally). This preserves the
-    // pre-persistence behavior for old session files.
-    if (typeof state.bufferWatermark !== 'number') {
-      this.buffering.restoreState({ chunks: [], watermark: 0 });
-      return;
-    }
-
-    const maxWatermark = historyLength ?? state.bufferWatermark;
-    const watermark = Math.max(0, Math.min(state.bufferWatermark, maxWatermark));
-
-    this.buffering.restoreState({
-      chunks: rehydrateChunks(state.bufferedChunks ?? []),
-      watermark,
-    });
+    this.buffering.restoreState(
+      {
+        chunks: rehydrateChunks(state.bufferedChunks ?? []),
+        ...(typeof state.bufferWatermark === 'number' ? { watermark: state.bufferWatermark } : {}),
+        ...(typeof state.observedPrefix === 'number' ? { observedPrefix: state.observedPrefix } : {}),
+      },
+      historyLength,
+    );
   }
 
   /**
@@ -731,7 +735,7 @@ export class ObservationalMemoryEngine {
     this.continuationHint = null;
     this.observationTokenCount = 0;
     this.generationCount = 0;
-    this.buffering.restoreState({ chunks: [], watermark: 0 });
+    this.buffering.reset();
   }
 
   /**
@@ -1027,9 +1031,10 @@ export class ObservationalMemoryEngine {
    * Build the observer config object without assigning undefined to optional
    * properties (exactOptionalPropertyTypes is enabled).
    */
-  private buildObserverConfig(): { previousObserverTokens: number; observerInstruction?: string } {
-    const config: { previousObserverTokens: number; observerInstruction?: string } = {
+  private buildObserverConfig(): { previousObserverTokens: number; observerInstruction?: string; maxInputTokens: number } {
+    const config: { previousObserverTokens: number; observerInstruction?: string; maxInputTokens: number } = {
       previousObserverTokens: this.config.previousObserverTokens,
+      maxInputTokens: this.observerInputCap(),
     };
     if (this.config.observerInstruction !== undefined) {
       config.observerInstruction = this.config.observerInstruction;

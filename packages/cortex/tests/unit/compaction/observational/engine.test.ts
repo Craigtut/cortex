@@ -385,10 +385,16 @@ describe('ObservationalMemoryEngine', () => {
       expect(mockComplete).not.toHaveBeenCalled();
     });
 
-    it('does not trigger when already past activation threshold', () => {
-      // Utilization = 95000/100000 = 95%, above 90% threshold
-      const msg = userMsg('x'.repeat(50_000));
-      engine.onTurnEnd(95_000, 100_000, [msg], 0);
+    it('keeps buffering past the activation threshold, at the floor interval', () => {
+      // Utilization = 95000/100000 = 95%, above 90% threshold. Activation
+      // can only swap in what is observed, so observing continues.
+      engine.onTurnEnd(95_000, 100_000, [userMsg('x'.repeat(50_000))], 0);
+
+      expect(mockComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('past the threshold, still skips an unobserved tail below the floor', () => {
+      engine.onTurnEnd(95_000, 100_000, [userMsg('x'.repeat(400))], 0);
 
       expect(mockComplete).not.toHaveBeenCalled();
     });
@@ -544,7 +550,8 @@ describe('ObservationalMemoryEngine', () => {
         activationThreshold: 0.9,
         bufferMinTokens: 1_000,
         bufferTargetCycles: 4,
-        bufferTokenCap: 30_000,
+        // One observer call takes all four messages.
+        bufferTokenCap: 100_000,
       }, 0);
       engine.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
       engine.setContextWindow(100_000);

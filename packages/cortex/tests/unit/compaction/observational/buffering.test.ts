@@ -237,7 +237,7 @@ describe('BufferingCoordinator', () => {
   // Tests: chunk lifecycle
   // -------------------------------------------------------------------------
 
-  describe('hasCompletedChunks / getCompletedChunks / commitActivation', () => {
+  describe('hasCompletedChunks / getCompletedChunks', () => {
     it('has no chunks initially', () => {
       expect(coordinator.hasCompletedChunks()).toBe(false);
       const { chunks } = coordinator.getCompletedChunks();
@@ -265,7 +265,7 @@ describe('BufferingCoordinator', () => {
       expect(first.chunks.length).toBe(second.chunks.length);
     });
 
-    it('commitActivation clears chunks and resets watermark', async () => {
+    it('removing every observed message consumes the chunks and resets the watermark', async () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(VALID_OBSERVER_OUTPUT);
 
       coordinator.launchObserver(
@@ -280,7 +280,7 @@ describe('BufferingCoordinator', () => {
       expect(coordinator.hasCompletedChunks()).toBe(true);
       expect(coordinator.getWatermark()).toBe(5);
 
-      coordinator.commitActivation();
+      expect(coordinator.ledger.removePrefix(5)).toHaveLength(1);
 
       expect(coordinator.hasCompletedChunks()).toBe(false);
       expect(coordinator.getWatermark()).toBe(0);
@@ -574,9 +574,10 @@ describe('BufferingCoordinator', () => {
       expect(coordinator.getWatermark()).toBe(0);
     });
 
-    it('can be set manually', () => {
-      coordinator.setWatermark(42);
+    it('restores with no chunks as an observed prefix', () => {
+      coordinator.restoreState({ chunks: [], watermark: 42 });
       expect(coordinator.getWatermark()).toBe(42);
+      expect(coordinator.getState().observedPrefix).toBe(42);
     });
   });
 
@@ -586,32 +587,32 @@ describe('BufferingCoordinator', () => {
 
   describe('onSourceTruncated', () => {
     it('shifts the watermark down by the dropped-front count', () => {
-      coordinator.setWatermark(4);
+      coordinator.restoreState({ chunks: [], watermark: 4 });
       coordinator.onSourceTruncated(2);
       expect(coordinator.getWatermark()).toBe(2);
     });
 
     it('clamps to 0 when more front messages are dropped than observed', () => {
-      coordinator.setWatermark(3);
+      coordinator.restoreState({ chunks: [], watermark: 3 });
       coordinator.onSourceTruncated(10);
       expect(coordinator.getWatermark()).toBe(0);
     });
 
     it('is a no-op for zero or negative counts', () => {
-      coordinator.setWatermark(5);
+      coordinator.restoreState({ chunks: [], watermark: 5 });
       coordinator.onSourceTruncated(0);
       expect(coordinator.getWatermark()).toBe(5);
       coordinator.onSourceTruncated(-3);
       expect(coordinator.getWatermark()).toBe(5);
     });
 
-    it('advances the epoch so an in-flight observer discards its stale result', async () => {
+    it('moves an in-flight observer past the dropped messages with its range', async () => {
       let resolvePromise: ((value: string) => void) | undefined;
       const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
         new Promise<string>((resolve) => { resolvePromise = resolve; }),
       );
 
-      coordinator.setWatermark(4);
+      coordinator.restoreState({ chunks: [], watermark: 4 });
       coordinator.launchObserver(
         mockComplete,
         [userMsg('test')],
@@ -620,19 +621,43 @@ describe('BufferingCoordinator', () => {
         { previousObserverTokens: 2000 },
       );
 
-      // Front truncation happens while the observer is in flight.
+      // Front truncation of observed messages while the observer is in flight.
       coordinator.onSourceTruncated(2);
 
       resolvePromise!(VALID_OBSERVER_OUTPUT);
       await flushPromises();
 
-      // The observer captured a now-stale end index; its result is discarded
-      // and the shifted watermark is left intact (not overwritten to 10).
-      expect(coordinator.hasCompletedChunks()).toBe(false);
-      expect(coordinator.getWatermark()).toBe(2);
+      // Its messages moved down by 2 and so did its range: it lands aligned.
+      expect(coordinator.hasCompletedChunks()).toBe(true);
+      expect(coordinator.getWatermark()).toBe(8);
     });
 
-    it('does not advance the epoch on a no-op count (keeps in-flight observer)', async () => {
+    it('invalidates an in-flight observer whose messages were dropped', async () => {
+      let resolvePromise: ((value: string) => void) | undefined;
+      const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
+        new Promise<string>((resolve) => { resolvePromise = resolve; }),
+      );
+
+      coordinator.restoreState({ chunks: [], watermark: 4 });
+      coordinator.launchObserver(
+        mockComplete,
+        [userMsg('test')],
+        10,
+        null,
+        { previousObserverTokens: 2000 },
+      );
+
+      coordinator.onSourceTruncated(6);
+
+      resolvePromise!(VALID_OBSERVER_OUTPUT);
+      await flushPromises();
+
+      expect(coordinator.hasCompletedChunks()).toBe(false);
+      expect(coordinator.getWatermark()).toBe(0);
+      expect(coordinator.isObserverInFlight()).toBe(false);
+    });
+
+    it('keeps the in-flight observer on a no-op count', async () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(VALID_OBSERVER_OUTPUT);
 
       coordinator.launchObserver(
@@ -658,13 +683,13 @@ describe('BufferingCoordinator', () => {
 
   describe('onSourceTailTrimmed', () => {
     it('clamps a watermark past the surviving source length', () => {
-      coordinator.setWatermark(5);
+      coordinator.restoreState({ chunks: [], watermark: 5 });
       coordinator.onSourceTailTrimmed(3);
       expect(coordinator.getWatermark()).toBe(3);
     });
 
     it('leaves a watermark at or below the surviving length untouched', () => {
-      coordinator.setWatermark(3);
+      coordinator.restoreState({ chunks: [], watermark: 3 });
       coordinator.onSourceTailTrimmed(3);
       expect(coordinator.getWatermark()).toBe(3);
       coordinator.onSourceTailTrimmed(7);
@@ -672,7 +697,7 @@ describe('BufferingCoordinator', () => {
     });
 
     it('treats a negative length as 0', () => {
-      coordinator.setWatermark(4);
+      coordinator.restoreState({ chunks: [], watermark: 4 });
       coordinator.onSourceTailTrimmed(-1);
       expect(coordinator.getWatermark()).toBe(0);
     });
@@ -736,8 +761,35 @@ describe('BufferingCoordinator', () => {
   // Tests: activation epoch (race condition guard)
   // -------------------------------------------------------------------------
 
-  describe('activation epoch', () => {
-    it('discards in-flight observer result after commitActivation', async () => {
+  describe('in-flight observer across rewrites', () => {
+    it('lands at its shifted range after a swap removes observed messages before it', async () => {
+      let resolvePromise: ((value: string) => void) | undefined;
+      const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
+        new Promise<string>((resolve) => { resolvePromise = resolve; }),
+      );
+      coordinator.restoreState({
+        chunks: [{ observations: 'first', messageTokensObserved: 1, createdAt: new Date(), endIndex: 4 }],
+        watermark: 4,
+      });
+
+      coordinator.launchObserver(
+        mockComplete,
+        [userMsg('test')],
+        10,
+        null,
+        { previousObserverTokens: 2000 },
+      );
+      // A swap removes the four observed messages.
+      expect(coordinator.ledger.removePrefix(4)).toHaveLength(1);
+
+      resolvePromise!(VALID_OBSERVER_OUTPUT);
+      await flushPromises();
+
+      expect(coordinator.getCompletedChunks().chunks.map((c) => c.endIndex)).toEqual([6]);
+      expect(coordinator.getWatermark()).toBe(6);
+    });
+
+    it('discards its result after invalidateObserver', async () => {
       let resolvePromise: ((value: string) => void) | undefined;
       const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
         new Promise<string>((resolve) => { resolvePromise = resolve; }),
@@ -751,34 +803,8 @@ describe('BufferingCoordinator', () => {
         { previousObserverTokens: 2000 },
       );
 
-      // Simulate activation consuming chunks (advances epoch)
-      coordinator.commitActivation();
-
-      // Now the in-flight observer completes
-      resolvePromise!(VALID_OBSERVER_OUTPUT);
-      await flushPromises();
-
-      // The stale result should be discarded
-      expect(coordinator.hasCompletedChunks()).toBe(false);
-      expect(coordinator.getWatermark()).toBe(0);
-    });
-
-    it('discards in-flight observer result after advanceEpoch', async () => {
-      let resolvePromise: ((value: string) => void) | undefined;
-      const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
-        new Promise<string>((resolve) => { resolvePromise = resolve; }),
-      );
-
-      coordinator.launchObserver(
-        mockComplete,
-        [userMsg('test')],
-        10,
-        null,
-        { previousObserverTokens: 2000 },
-      );
-
-      // Simulate sync activation advancing epoch
-      coordinator.advanceEpoch();
+      // An in-band observation of the same messages takes over.
+      coordinator.invalidateObserver();
 
       resolvePromise!(VALID_OBSERVER_OUTPUT);
       await flushPromises();
@@ -787,7 +813,7 @@ describe('BufferingCoordinator', () => {
       expect(coordinator.getWatermark()).toBe(0);
     });
 
-    it('accepts in-flight result when epoch has not changed', async () => {
+    it('accepts the in-flight result when nothing changed', async () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(VALID_OBSERVER_OUTPUT);
 
       coordinator.launchObserver(
@@ -800,7 +826,7 @@ describe('BufferingCoordinator', () => {
 
       await flushPromises();
 
-      // No epoch change, so the result should land normally
+      // Nothing changed, so the result should land normally
       expect(coordinator.hasCompletedChunks()).toBe(true);
       expect(coordinator.getWatermark()).toBe(10);
     });

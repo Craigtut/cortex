@@ -18,6 +18,7 @@ import { OBSERVER_SYSTEM_PROMPT } from './constants.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { isSystemMessage } from '../../system-transcript.js';
 import { MemoryReplyError, readObservationsBlock } from './reply.js';
+import { applyBookend, extractTextContent } from '../microcompaction.js';
 import { callWithPolicy, SINGLE_ATTEMPT } from './calls.js';
 import type { CallPolicy } from './calls.js';
 
@@ -246,6 +247,53 @@ function extractToolResultContent(
 function truncateValue(value: string, maxLen: number): string {
   if (value.length <= maxLen) return value;
   return value.slice(0, maxLen) + '...';
+}
+
+/**
+ * Bookend oversized tool results so the observer's input fits
+ * `maxInputTokens`. A piece of history is chosen to fit the observer's
+ * budget, but one tool-call group is never split, and a single result can
+ * be larger than the utility model takes. The observer extracts takeaways,
+ * so the head and tail of an oversized result serve it; an input it cannot
+ * take would fail every attempt and leave the messages unobservable.
+ *
+ * Messages are copied, never mutated. Under budget, returns them unchanged.
+ */
+export function fitMessagesToObserverBudget(messages: AgentMessage[], maxInputTokens: number): AgentMessage[] {
+  const total = messages.reduce((sum, msg) => sum + estimateTokens(extractTextContent(msg)), 0);
+  if (total <= maxInputTokens) return messages;
+  const resultCount = messages.reduce((count, msg) => count + toolResultTexts(msg), 0);
+  if (resultCount === 0) return messages;
+  // Results share half the budget; the rest of the conversation keeps the other half.
+  const shareTokens = Math.max(500, Math.floor(maxInputTokens / 2 / resultCount));
+  const sideChars = shareTokens * 2;
+  const bookend = (text: string): string => {
+    const tokens = estimateTokens(text);
+    return tokens > shareTokens ? applyBookend(text, sideChars, sideChars, tokens) : text;
+  };
+  return messages.map((msg) => {
+    if (msg.role === 'toolResult' && typeof msg.content === 'string') {
+      return { ...msg, content: bookend(msg.content) };
+    }
+    if (!Array.isArray(msg.content) || toolResultTexts(msg) === 0) return msg;
+    return {
+      ...msg,
+      content: msg.content.map((part) =>
+        isToolResultText(msg, part) ? { ...part, text: bookend(part.text as string) } : part),
+    };
+  });
+}
+
+/** How many tool-result text parts a message carries. */
+function toolResultTexts(msg: AgentMessage): number {
+  if (msg.role === 'toolResult' && typeof msg.content === 'string') return 1;
+  if (!Array.isArray(msg.content)) return 0;
+  return msg.content.filter((part) => isToolResultText(msg, part)).length;
+}
+
+function isToolResultText(msg: AgentMessage, part: { type: string; text?: string }): boolean {
+  if (typeof part.text !== 'string') return false;
+  return part.type === 'tool_result' || (msg.role === 'toolResult' && part.type === 'text');
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +547,8 @@ export async function runObserver(
   config: {
     previousObserverTokens: number;
     observerInstruction?: string;
+    /** Bound on the observed messages' size (see fitMessagesToObserverBudget). */
+    maxInputTokens?: number;
   },
   call: { policy?: CallPolicy; signal?: AbortSignal } = {},
 ): Promise<ObserverOutput> {
@@ -509,7 +559,9 @@ export async function runObserver(
   );
 
   const observerMessages = buildObserverMessages(
-    messages,
+    config.maxInputTokens !== undefined
+      ? fitMessagesToObserverBudget(messages, config.maxInputTokens)
+      : messages,
     previousObservations,
     config.previousObserverTokens,
   );

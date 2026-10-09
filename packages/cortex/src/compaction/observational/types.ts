@@ -182,13 +182,22 @@ export interface ObservationalMemoryState {
   bufferedChunks: ObservationChunk[];
 
   /**
-   * Index into post-slot conversation history up to which `bufferedChunks`
-   * cover messages. Completed chunks observe `messages[0:bufferWatermark]`.
+   * Index into post-slot conversation history up to which messages are
+   * observed: `[0, observedPrefix)` already in the log, then the buffered
+   * chunks up to here.
    * Persisted so the buffer can be restored without re-observing already
    * buffered messages. Absent on sessions saved before buffer persistence
    * was added; in that case chunks are discarded on restore (legacy safe).
    */
   bufferWatermark?: number;
+
+  /**
+   * Messages at the front of post-slot history that are already in
+   * `observations` and still in history (a swap kept them verbatim).
+   * Buffered chunks cover `[observedPrefix, bufferWatermark)`. Absent on
+   * older sessions: 0.
+   */
+  observedPrefix?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +220,13 @@ export interface ObservationChunk {
 
   /** When this chunk was created. */
   createdAt: Date;
+
+  /**
+   * End (exclusive) of the post-slot history range the chunk covers; it
+   * starts where the previous chunk ended. Absent on chunks saved before
+   * ranges were recorded, which restore merged into one chunk.
+   */
+  endIndex?: number;
 
   /** Current task extracted from this observation. Latest chunk wins on activation. */
   currentTask?: string;

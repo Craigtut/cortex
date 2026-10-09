@@ -6,8 +6,10 @@
  * buffer intervals, and handling abort/cleanup.
  *
  * The coordinator does not own the observation slot or conversation
- * history. It produces observation chunks and buffered reflections that
- * the ObservationalMemoryEngine consumes during activation.
+ * history. It produces observation chunks, recorded in its
+ * ObservationLedger at the message range each covers, and buffered
+ * reflections; the ObservationalMemoryEngine consumes both during
+ * activation.
  *
  * References:
  *   - observational-memory-architecture.md (Observer System, Reflector System)
@@ -18,6 +20,8 @@
 import type { CompleteFn } from '../compaction.js';
 import type { AgentMessage } from '../../context-manager.js';
 import type { ObservationChunk, ObserverOutput, ReflectorOutput } from './types.js';
+import { ObservationLedger } from './ledger.js';
+import type { LedgerState, RangedChunk } from './ledger.js';
 import { runObserver } from './observer.js';
 import { runReflector } from './reflector.js';
 import { estimateTokens } from '../../token-estimator.js';
@@ -45,10 +49,9 @@ import type { MemoryCallOutcomes, MemoryCallTrigger } from './health.js';
 export class BufferingCoordinator {
   // --- Internal state ---
 
-  private chunks: ObservationChunk[] = [];
-  private bufferWatermark: number = 0;
-  private inFlightObserver: Promise<ObserverOutput> | null = null;
-  private inFlightObserverEndIndex: number | null = null;
+  /** Which messages are observed, buffered, or pending, by index. */
+  readonly ledger = new ObservationLedger();
+  private inFlightObserver: { promise: Promise<ObserverOutput>; token: number } | null = null;
   private inFlightReflector: Promise<ReflectorOutput> | null = null;
   private bufferedReflection: { observations: string; compressionLevel: number; input: string } | null = null;
   private aborted: boolean = false;
@@ -56,15 +59,6 @@ export class BufferingCoordinator {
   private readonly lifetime = new AbortController();
   private readonly policy: () => CallPolicy;
   private readonly outcomes: MemoryCallOutcomes | null;
-
-  /**
-   * Activation epoch. Incremented each time activation consumes chunks or
-   * a sync observer trims messages. In-flight observers capture the epoch
-   * at launch and discard their result if the epoch has changed by the time
-   * they complete. This prevents stale chunks from landing after sync
-   * activation has already processed those messages.
-   */
-  private activationEpoch: number = 0;
 
   /**
    * @param options.policy - Retry and timeout policy for each background
@@ -138,13 +132,13 @@ export class BufferingCoordinator {
   }
 
   /**
-   * Launch an async observer call. Does NOT await it.
+   * Launch an async observer call over [watermark, endIndex). Does NOT await
+   * it.
    *
-   * Stores the in-flight promise and tracks the end index of messages
-   * being processed. When the observer completes, its output is converted
-   * to an {@link ObservationChunk} and appended to the internal chunk
-   * list. If the coordinator has been aborted before the observer
-   * completes, the result is discarded.
+   * The call's range is pending in the ledger, which moves it with every
+   * rewrite of the source. When the observer completes, its output lands as
+   * a chunk covering that range. A call invalidated meanwhile (a restore, a
+   * reset, an in-band observation of the same messages) lands nothing.
    *
    * @param complete - the LLM completion function
    * @param messages - the unobserved messages to process (snapshot)
@@ -159,73 +153,30 @@ export class BufferingCoordinator {
     messages: AgentMessage[],
     endIndex: number,
     previousObservations: string | null,
-    config: { previousObserverTokens: number; observerInstruction?: string },
+    config: { previousObserverTokens: number; observerInstruction?: string; maxInputTokens?: number },
     logger?: { warn: (msg: string) => void },
     trigger: MemoryCallTrigger = 'buffer',
   ): void {
     if (this.aborted) return;
 
-    // Estimate tokens from the message snapshot for the chunk metadata
-    const messageTokensObserved = messages.reduce((sum, msg) => {
-      if (typeof msg.content === 'string') {
-        return sum + estimateTokens(msg.content);
-      }
-      if (Array.isArray(msg.content)) {
-        const text = msg.content
-          .map((part) => {
-            if (typeof part.text === 'string') return part.text;
-            return JSON.stringify(part);
-          })
-          .join(' ');
-        return sum + estimateTokens(text);
-      }
-      return sum;
-    }, 0);
-
+    const token = this.ledger.begin(endIndex);
     const promise = runObserver(complete, messages, previousObservations, config, {
       policy: this.policy(),
       signal: this.lifetime.signal,
     });
-    this.inFlightObserver = promise;
-    this.inFlightObserverEndIndex = endIndex;
-
-    // Capture the activation epoch at launch. If activation fires (sync or
-    // chunk-based) before this observer completes, the epoch will have
-    // advanced and the result is stale (those messages were already observed).
-    const launchEpoch = this.activationEpoch;
+    const flight = { promise, token };
+    this.inFlightObserver = flight;
 
     promise
       .then((output: ObserverOutput) => {
         if (this.aborted) return;
         this.outcomes?.succeeded('observe');
-        // Invalidated (a restore or reset replaced the buffer): this call
-        // no longer owns the in-flight slot, which may hold a newer call.
-        if (this.inFlightObserver !== promise) return;
-
-        // Discard if activation already processed these messages
-        if (this.activationEpoch !== launchEpoch) {
-          this.inFlightObserver = null;
-          this.inFlightObserverEndIndex = null;
-          return;
-        }
-
-        const chunk: ObservationChunk = {
-          observations: output.observations,
-          messageTokensObserved,
-          createdAt: new Date(),
-        };
-
-        if (output.currentTask) {
-          chunk.currentTask = output.currentTask;
-        }
-        if (output.suggestedResponse) {
-          chunk.suggestedResponse = output.suggestedResponse;
-        }
-
-        this.chunks.push(chunk);
-        this.bufferWatermark = this.inFlightObserverEndIndex ?? endIndex;
+        // Invalidated: this call no longer owns the in-flight slot, which
+        // may hold a newer call, and its range no longer maps.
+        if (this.inFlightObserver !== flight) return;
         this.inFlightObserver = null;
-        this.inFlightObserverEndIndex = null;
+
+        this.ledger.land(token, chunkFromOutput(output, messages));
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
@@ -233,9 +184,9 @@ export class BufferingCoordinator {
           logger.warn(`Observer buffer call failed: ${message}`);
         }
         this.reportFailure('observe', trigger, err);
-        if (this.inFlightObserver !== promise) return;
+        if (this.inFlightObserver !== flight) return;
         this.inFlightObserver = null;
-        this.inFlightObserverEndIndex = null;
+        this.ledger.drop(token);
       });
   }
 
@@ -243,31 +194,25 @@ export class BufferingCoordinator {
    * Check if there are completed buffer chunks ready for activation.
    */
   hasCompletedChunks(): boolean {
-    return this.chunks.length > 0;
+    return this.ledger.completedChunks().length > 0;
   }
 
   /**
-   * Get all completed chunks and the watermark up to which messages
-   * are covered.
-   *
-   * Does NOT clear state. Call {@link commitActivation} after
-   * successfully activating.
+   * Get all completed chunks (each with the end of its range) and the
+   * watermark up to which messages are observed.
    */
-  getCompletedChunks(): { chunks: ObservationChunk[]; watermark: number } {
-    return { chunks: [...this.chunks], watermark: this.bufferWatermark };
+  getCompletedChunks(): { chunks: RangedChunk[]; watermark: number } {
+    return { chunks: this.ledger.completedChunks(), watermark: this.ledger.watermark };
   }
 
   /**
-   * Called after successful activation to reset buffer state.
-   *
-   * Clears accumulated chunks and resets the watermark to 0 since the
-   * messages it pointed to have been removed from the conversation
-   * history.
+   * Forget the in-flight observer: its messages are about to be observed
+   * by a caller that waits, and its result must not land a second chunk
+   * for them.
    */
-  commitActivation(): void {
-    this.chunks = [];
-    this.bufferWatermark = 0;
-    this.activationEpoch++;
+  invalidateObserver(): void {
+    this.ledger.invalidatePending();
+    this.inFlightObserver = null;
   }
 
   // -------------------------------------------------------------------------
@@ -398,24 +343,33 @@ export class BufferingCoordinator {
    * Get the current state for session persistence.
    *
    * In-flight operations are NOT included (they are lost on session
-   * save). Only completed chunks and the watermark are persisted.
+   * save). Only completed chunks, their ranges, and the observed prefix
+   * are persisted.
    */
-  getState(): { chunks: ObservationChunk[]; watermark: number } {
-    return { chunks: [...this.chunks], watermark: this.bufferWatermark };
+  getState(): LedgerState {
+    return this.ledger.getState();
   }
 
   /**
-   * Restore state from a previous session.
+   * Restore state from a previous session (see ObservationLedger.restore).
    *
    * Work in flight belongs to the replaced state: an observer's indices and a
    * reflection's input describe history and a log that no longer exist, so
    * both are invalidated (they settle unobserved) along with any buffered
    * reflection.
    */
-  restoreState(state: { chunks: ObservationChunk[]; watermark: number }): void {
+  restoreState(
+    state: { chunks: ObservationChunk[]; watermark?: number; observedPrefix?: number },
+    historyLength?: number,
+  ): void {
     this.invalidateInFlight();
-    this.chunks = [...state.chunks];
-    this.bufferWatermark = state.watermark;
+    this.ledger.restore(state, historyLength);
+  }
+
+  /** Nothing observed, buffered, or in flight. */
+  reset(): void {
+    this.invalidateInFlight();
+    this.ledger.reset();
   }
 
   /**
@@ -436,9 +390,8 @@ export class BufferingCoordinator {
 
   /** Forget the work in flight and any buffered reflection. */
   private invalidateInFlight(): void {
-    this.activationEpoch++;
+    this.ledger.invalidatePending();
     this.inFlightObserver = null;
-    this.inFlightObserverEndIndex = null;
     this.inFlightReflector = null;
     this.bufferedReflection = null;
   }
@@ -452,8 +405,8 @@ export class BufferingCoordinator {
   abort(): void {
     this.aborted = true;
     this.lifetime.abort();
+    this.ledger.invalidatePending();
     this.inFlightObserver = null;
-    this.inFlightObserverEndIndex = null;
     this.inFlightReflector = null;
   }
 
@@ -471,7 +424,7 @@ export class BufferingCoordinator {
    * immediately when nothing is in flight; never rejects.
    */
   async waitForObserverSettled(): Promise<void> {
-    const inFlight = this.inFlightObserver;
+    const inFlight = this.inFlightObserver?.promise;
     if (!inFlight) return;
     await inFlight.then(
       () => {},
@@ -489,7 +442,7 @@ export class BufferingCoordinator {
    * forever. Never rejects.
    */
   async waitForObserverSettledWithin(timeoutMs: number): Promise<boolean> {
-    const inFlight = this.inFlightObserver;
+    const inFlight = this.inFlightObserver?.promise;
     if (!inFlight) return true;
     const settled = inFlight.then(
       () => true,
@@ -517,58 +470,27 @@ export class BufferingCoordinator {
 
   /**
    * Get the buffer watermark (index into conversation history marking
-   * where the last completed observation ended).
+   * where the observed messages end).
    */
   getWatermark(): number {
-    return this.bufferWatermark;
-  }
-
-  /**
-   * Set the watermark. Used during initialization or after manual
-   * adjustments to the conversation history.
-   */
-  setWatermark(index: number): void {
-    this.bufferWatermark = index;
-  }
-
-  /**
-   * Advance the activation epoch. Called when a sync activation trims
-   * messages outside of the normal commitActivation() flow (e.g., the
-   * engine's Step 2 sync observer path). This invalidates any in-flight
-   * observers that were launched before the sync activation.
-   */
-  advanceEpoch(): void {
-    this.activationEpoch++;
+    return this.ledger.watermark;
   }
 
   /**
    * Reconcile buffer state after the source conversation history was
-   * truncated from the front (emergency truncation / reactive overflow).
+   * truncated from the front (reactive overflow truncation).
    *
-   * `droppedFrontCount` messages were removed from the head of the source
-   * history, so every surviving message shifted down by that many indices.
-   * The watermark, which counts observed messages from the front, is
-   * clamped by the same amount: observed messages that were dropped no
-   * longer count, and if the whole observed prefix was dropped the
-   * watermark falls to 0. Without this shift the next activation would
-   * slice `sourceHistory.slice(0, staleWatermark)`, silently trimming
-   * still-unobserved messages and potentially leaving an orphaned tool
-   * result at the head of the surviving source (a hard provider 400).
-   *
-   * The activation epoch is advanced so any in-flight observer (whose
-   * captured end index now points at stale positions) discards its result
-   * on completion instead of landing a chunk with a misaligned watermark.
-   *
-   * Completed chunks are kept: their observation text stays valid, and the
-   * clamped watermark keeps them consistent with the truncated source.
+   * Every index shifts down with the messages it points at. Completed chunks
+   * keep their text, which stays valid. An in-flight observer whose
+   * messages were dropped is invalidated; one entirely past the drop moves
+   * with its messages and still lands.
    *
    * @param droppedFrontCount - number of messages removed from the front of
    *   the source history. No-op when zero or negative.
    */
   onSourceTruncated(droppedFrontCount: number): void {
-    if (droppedFrontCount <= 0) return;
-    this.bufferWatermark = Math.max(0, this.bufferWatermark - droppedFrontCount);
-    this.activationEpoch++;
+    this.ledger.onFrontDropped(droppedFrontCount);
+    if (!this.ledger.pendingRange()) this.inFlightObserver = null;
   }
 
   /**
@@ -577,26 +499,42 @@ export class BufferingCoordinator {
    * background delivery being unwound).
    *
    * pi emits turn_end for those messages before Cortex trims them, so an
-   * observer may have launched with an endIndex that counts them, or
-   * already completed and moved the watermark past the new source length.
-   * Without clamping, later messages land at indices the watermark already
-   * claims as observed, and the next activation slices away an unobserved
-   * message (or orphans a tool result at the surviving head).
-   *
-   * Clamping (rather than epoch-advancing) keeps the observation content:
-   * text describing a trimmed stub is harmless, while the clamped index
-   * stays aligned with the surviving source prefix.
+   * observer may have launched with a range that counts them, or already
+   * completed and recorded a chunk past the new source length. Every index
+   * is clamped to the surviving length: text describing a trimmed stub is
+   * harmless, while the clamped index stays aligned with the source.
    *
    * @param postSlotLength - length of the post-slot source history after
    *   the tail trim
    */
   onSourceTailTrimmed(postSlotLength: number): void {
-    const length = Math.max(0, postSlotLength);
-    if (this.bufferWatermark > length) {
-      this.bufferWatermark = length;
-    }
-    if (this.inFlightObserverEndIndex !== null && this.inFlightObserverEndIndex > length) {
-      this.inFlightObserverEndIndex = length;
-    }
+    this.ledger.onTailTrimmed(postSlotLength);
   }
+}
+
+/** The chunk an observer output records for the messages it observed. */
+export function chunkFromOutput(output: ObserverOutput, messages: AgentMessage[]): ObservationChunk {
+  const messageTokensObserved = messages.reduce((sum, msg) => {
+    if (typeof msg.content === 'string') {
+      return sum + estimateTokens(msg.content);
+    }
+    if (Array.isArray(msg.content)) {
+      const text = msg.content
+        .map((part) => {
+          if (typeof part.text === 'string') return part.text;
+          return JSON.stringify(part);
+        })
+        .join(' ');
+      return sum + estimateTokens(text);
+    }
+    return sum;
+  }, 0);
+  const chunk: ObservationChunk = {
+    observations: output.observations,
+    messageTokensObserved,
+    createdAt: new Date(),
+  };
+  if (output.currentTask) chunk.currentTask = output.currentTask;
+  if (output.suggestedResponse) chunk.suggestedResponse = output.suggestedResponse;
+  return chunk;
 }
