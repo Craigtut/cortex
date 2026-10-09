@@ -4,6 +4,7 @@ All notable changes to `@animus-labs/cortex-code` are documented here.
 
 ## Unreleased
 
+- An out-of-credits error (OpenAI `insufficient_quota`, Anthropic "credit balance is too low", OpenRouter's 402) shows an "Out of credits" notice with the provider's own sentence and a pointer to `/model`, instead of the generic error box with the raw JSON body. The session activity file reports its category as `billing`.
 - `/compact` compacts now through Cortex's `compactNow()`, whatever the context usage, keeping the most recent messages verbatim, and says what each loop did; a failure changes nothing. `/model`'s "compact first" does the same.
 - Show memory health in the transcript: one notice when the memory model starts failing, one when it recovers, and one when messages were dropped before memory recorded them.
 - Crash checkpoints always include observational memory; they dropped it whenever an observer was running.

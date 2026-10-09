@@ -112,6 +112,10 @@ describe('normalizeActivityErrorCategory', () => {
     expect(normalizeActivityErrorCategory('unknown')).toBe('other');
     expect(normalizeActivityErrorCategory('rate_limit')).toBe('rate_limit');
   });
+
+  it('reports a billing error as billing, not other', () => {
+    expect(normalizeActivityErrorCategory('billing')).toBe('billing');
+  });
 });
 
 describe('FileSessionActivityReporter', () => {

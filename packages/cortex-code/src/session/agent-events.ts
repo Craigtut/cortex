@@ -64,6 +64,22 @@ export interface AgentEventPorts extends ToolRowPorts, ActivityRecordPorts {
     Pick<TranscriptWriter, 'addAssistantMessage' | 'addError' | 'addCompaction' | 'addSubAgent'>;
 }
 
+/**
+ * A provider error's own sentence: the `message` field of the JSON body
+ * pi-ai puts in the error text, when there is one, else the text itself.
+ */
+function providerSentence(text: string): string {
+  const field = /"message"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(text);
+  if (field) {
+    try {
+      return (JSON.parse(field[1]!) as string).trim();
+    } catch {
+      // Not valid JSON after all: fall back to the whole text.
+    }
+  }
+  return text.trim();
+}
+
 export function wireAgentEvents(agent: CortexAgent, app: AgentEventApp, ports: AgentEventPorts): void {
   const bridge = agent.getEventBridge();
   wireActivityRecords(bridge, ports);
@@ -154,6 +170,15 @@ export function wireAgentEvents(agent: CortexAgent, app: AgentEventApp, ports: A
         app.transcript.addNotification('Authentication expired', '', {
           severity: 'error',
           action: 'run /login to reconnect',
+        });
+        break;
+      case 'billing':
+        // Retrying cannot help until the account is topped up. The
+        // provider's own message says which account and often where.
+        ports.retry.clear();
+        app.transcript.addNotification('Out of credits', providerSentence(error.originalMessage ?? ''), {
+          severity: 'error',
+          action: 'add credits with your provider, or switch with /model',
         });
         break;
       case 'context_overflow':

@@ -32,6 +32,7 @@ export type ActivityEventType =
 export type ActivityErrorCategory =
   | 'rate_limit'
   | 'authentication'
+  | 'billing'
   | 'network'
   | 'context_overflow'
   | 'cancelled'
@@ -254,6 +255,7 @@ export function normalizeActivityErrorCategory(
 ): ActivityErrorCategory {
   switch (category) {
     case 'authentication':
+    case 'billing':
     case 'rate_limit':
     case 'context_overflow':
     case 'network':
