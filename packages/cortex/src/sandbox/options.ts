@@ -18,8 +18,6 @@ export interface SandboxOptions {
   requireEnforcement?: boolean;
   /** Advanced: Cortex initializes and disposes this provider instead of the built-in backend. */
   provider?: SandboxProvider;
-  /** Ignored. The Windows restricted-token helper is no longer selected; Windows uses MXC. */
-  windowsHelperPath?: string;
   onStatusChange?: (state: SandboxState) => void;
 }
 
@@ -49,7 +47,6 @@ const optionsSchema = z.strictObject({
   deniedDomains: z.array(nonempty).optional(),
   requireEnforcement: z.boolean().optional(),
   provider: providerSchema.optional(),
-  windowsHelperPath: nonempty.optional(),
   onStatusChange: z.custom<SandboxOptions['onStatusChange']>((value) => typeof value === 'function').optional(),
 });
 

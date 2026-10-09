@@ -22,25 +22,6 @@ export type {
 
 export { SandboxRuntimeProvider } from './backends/runtime.js';
 export type { SandboxRuntimeProviderOptions } from './backends/runtime.js';
-export {
-  WindowsRestrictedTokenProvider,
-  serializeWindowsPolicy,
-  buildHelperInvocation,
-  deriveWorkspaceCapabilitySidName,
-  defaultHelperPath,
-  isHelperSetupFailure,
-  runHelperSelfTest,
-  WINDOWS_POLICY_VERSION,
-  WINDOWS_HELPER_SETUP_FAILURE_EXIT,
-  WINDOWS_HELPER_SETUP_FAILURE_SENTINEL,
-  WINDOWS_HELPER_SELFTEST_OK,
-  DEFAULT_CAPABILITY_SID_NAME,
-} from './backends/windows.js';
-export type {
-  WindowsRestrictedTokenProviderOptions,
-  WindowsHelperPolicy,
-  HelperSelfTestResult,
-} from './backends/windows.js';
 export { MxcSandboxProvider } from './backends/mxc.js';
 export { resolveMxcSdk } from './backends/mxc-host.js';
 export type { MxcSandboxProviderOptions, MxcProviderDeps, MxcDomainProxy } from './backends/mxc.js';

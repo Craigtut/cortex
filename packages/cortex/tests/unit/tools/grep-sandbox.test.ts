@@ -146,8 +146,8 @@ describe('Grep tool sandbox routing', () => {
   it('runs ripgrep raw when the provider does not implement wrapExec', async () => {
     fs.writeFileSync(path.join(tmpDir, 'match.ts'), 'hello world\n');
 
-    // A provider (e.g. the scaffolded Windows one) that omits wrapExec must not
-    // change behavior: the `sandbox?.wrapExec` guard falls through to a raw run.
+    // A custom provider that omits wrapExec must not change behavior: the
+    // `sandbox?.wrapExec` guard falls through to a raw run.
     const { provider } = makeRecordingProvider({ wrapExec: undefined });
     const grep = createGrepTool({ defaultCwd: tmpDir, sandbox: provider });
 

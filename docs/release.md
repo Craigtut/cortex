@@ -77,7 +77,7 @@ npm run release:check:cortex-code
 
 Publish and approve Cortex `0.6.0` through its tag workflow first, then Cortex Code `0.6.0`. Sandboxing ships inside Cortex; there is no third package or sandbox release workflow.
 
-The Cortex tarball does not yet contain a signed Windows helper. Managed sandboxing defaults to refusing unavailable or partial enforcement. Cortex Code explicitly retains degraded operation and Windows opt-in. Native Windows containment claims still depend on the signing and artifact work described in `docs/cortex/windows-sandbox-build.md`.
+The Cortex tarball contains no native binary. Windows containment uses Microsoft's MXC runtime through the optional peer `@microsoft/mxc-sdk`, which Windows consumers install themselves. Managed sandboxing defaults to refusing unavailable or partial enforcement. Cortex Code explicitly retains degraded operation and Windows opt-in. Native Windows containment claims still depend on the real-host validation checklist in `docs/cortex/windows-sandbox-build.md`.
 
 These are publishing instructions, not actions performed by local release preparation. npm and GitHub approvals still apply.
 

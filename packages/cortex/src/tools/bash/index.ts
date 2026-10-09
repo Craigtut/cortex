@@ -567,14 +567,13 @@ export function createBashTool(config: BashToolConfig): {
           // no note.
           //
           // NOTE: we deliberately do NOT key any containment-state change on a
-          // wrapped command's stderr/exit (e.g. a Windows helper setup-failure
-          // sentinel), because the child fully controls its own stderr and exit
-          // code and could forge such a signal to trick the provider into
-          // degrading to uncontained — a self-inflicted sandbox escape. A genuine
-          // per-command containment-setup failure still surfaces its
-          // human-readable reason via the helper's stderr line; making that
-          // signal unforgeable needs a dedicated status channel (future work,
-          // see docs/cortex/windows-sandbox-build.md).
+          // wrapped command's stderr/exit (e.g. the MXC launcher's
+          // `cortex-mxc-launcher:` failure line), because the child fully
+          // controls its own stderr and exit code and could forge such a signal
+          // to trick the provider into degrading to uncontained — a
+          // self-inflicted sandbox escape. A genuine per-command containment
+          // failure still surfaces its human-readable reason on stderr, and the
+          // command did not run.
           if (sandboxWrapped && !timedOut && code !== null && code !== 0) {
             let denial: SandboxDenial | null = null;
             try {
@@ -624,11 +623,12 @@ export function createBashTool(config: BashToolConfig): {
 
           let text = `Failed to execute command: ${err.message}`;
           if (sandboxWrapped && config.sandbox) {
-            // A wrapped spawn's file IS the sandbox wrapper (e.g. the Windows
-            // helper exe), so a spawn 'error' is the WRAPPER failing to start,
-            // never the user's command (which runs inside it). But ONLY codes
-            // that mean "the wrapper binary could not be found or executed"
-            // (quarantined/blocked by antivirus, missing, wrong-arch) justify
+            // A wrapped spawn's file IS the sandbox wrapper (sandbox-exec,
+            // bwrap, or node.exe for the MXC launcher), so a spawn 'error' is
+            // the WRAPPER failing to start, never the user's command (which
+            // runs inside it). But ONLY codes that mean "the wrapper binary
+            // could not be found or executed" (quarantined/blocked by
+            // antivirus, missing, wrong-arch) justify
             // dropping containment. Transient spawn-environment errors — fd or
             // memory pressure (EMFILE/ENFILE/ENOMEM/EAGAIN) or an over-long
             // command line — are NOT the wrapper's fault; degrading on those
@@ -649,10 +649,10 @@ export function createBashTool(config: BashToolConfig): {
                 ? `The command did not run: the OS sandbox wrapper could not be launched ` +
                   `(${err.message}). This often means security software blocked or quarantined it. ` +
                   `OS containment is now disabled for the rest of this session; re-run the command ` +
-                  `(it will run without the sandbox) or restore the sandbox helper in your security software.`
+                  `(it will run without the sandbox) or check whether your security software is blocking it.`
                 : `The command did not run: the OS sandbox wrapper could not be launched ` +
                   `(${err.message}). This often means security software blocked or quarantined it. ` +
-                  `OS containment is still active; retry, or restore the sandbox helper in your security software.`;
+                  `OS containment is still active; retry, or check whether your security software is blocking it.`;
             } else {
               text =
                 `The command did not run (${err.message}). The OS sandbox is still active; this is ` +

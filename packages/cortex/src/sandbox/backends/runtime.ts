@@ -339,7 +339,7 @@ export class SandboxRuntimeProvider implements SandboxProvider {
    * forge a wrapper-launch failure (the wrapper binary lives outside every
    * writable root, so the child cannot make it un-launchable). Unlikely in
    * practice since both wrappers are OS-managed, but kept so every provider
-   * self-heals identically to the Windows helper.
+   * self-heals the same way.
    */
   notifyWrappedSpawnFailure(error: { code?: string | undefined; message: string }): void {
     if (this.currentStatus.backend === 'none') return;

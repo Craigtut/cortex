@@ -110,15 +110,15 @@ export class PermissionBroker {
       isReadOnlyInProject: (t, a) => this.isReadOnlyInProject(t, a),
       // Sandboxed shell commands past the catastrophic floor and any deny rule
       // auto-run inside the OS boundary instead of prompting. Gate on BOTH axes:
-      // a filesystem-only backend (e.g. future Windows Tier 1, fs enforced but
-      // network none) must keep prompting rather than auto-run with open egress.
+      // a filesystem-only backend (fs enforced but network none) must keep
+      // prompting rather than auto-run with open egress.
       sandboxBashEnforced:
         sandboxStatus?.filesystem === 'enforced' &&
         sandboxStatus?.network === 'enforced',
       // Broad read auto-approve for Read/Grep/Glob, matching the sandboxed
       // shell's view: reads are broad by policy design, denyRead is the only
       // read-side restriction. Requires FULL filesystem enforcement, not
-      // partial: Windows Tier 1 cannot deny secret-file reads to
+      // partial: a partial backend may not deny secret-file reads to
       // subprocesses, and Grep's denyRead guarantee is the kernel containing
       // ripgrep. Network enforcement is irrelevant to reads, so this is
       // deliberately looser than sandboxBashEnforced's both-axes gate.

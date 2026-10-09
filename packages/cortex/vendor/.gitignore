@@ -1,8 +1,0 @@
-# The Tier-1 sandbox helper binaries are prebuilt on Windows CI, Authenticode-
-# signed, and packed into the npm tarball at publish time (the package `files`
-# allowlist includes `vendor/`). They are deliberately NOT committed to git: the
-# repo must never carry an unsigned or unreviewed native binary, and a local
-# `cargo build` drop (for verification) must not be pushed by accident.
-# See docs/cortex/windows-sandbox-build.md.
-win32-x64/*.exe
-win32-arm64/*.exe

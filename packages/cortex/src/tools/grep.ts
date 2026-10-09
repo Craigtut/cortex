@@ -187,10 +187,9 @@ function getRipgrepPath(): string | false {
  * retried in-process, or the fallback hands the model the very secret the sandbox
  * blocked. A provider that reports status is trusted (`none` => not enforcing); a
  * provider with wrapExec but no status() is assumed enforcing (fail safe).
- * `partial` counts as enforcing too: on Windows Tier-1 (writes confined, reads
- * unconfined) that only costs a JS retry on an rg hiccup and buys no read
- * protection, but we accept that over risking a leak on a backend whose
- * `partial` does confine reads.
+ * `partial` counts as enforcing too: a partial backend may still confine reads
+ * (MXC reports `partial` with reads denied when its host-side code sits in the
+ * workspace), so a JS fallback could leak what the OS refused.
  */
 function sandboxEnforcesFilesystem(sandbox?: SandboxProvider | undefined): boolean {
   if (!sandbox) return false;

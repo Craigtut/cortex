@@ -463,7 +463,7 @@ export type {
 export { forcedToolChoiceFor } from './tool-choice.js';
 
 // Built-in sandbox backends and policy settings.
-export { createSandboxProvider, buildDefaultPolicy, matchesAnyDomainPattern, matchesDomainPattern, SEEDED_REGISTRY_DOMAINS, DEFAULT_CREDENTIAL_ENV_VARS, WindowsRestrictedTokenProvider, MxcSandboxProvider } from './sandbox/index.js';
+export { createSandboxProvider, buildDefaultPolicy, matchesAnyDomainPattern, matchesDomainPattern, SEEDED_REGISTRY_DOMAINS, DEFAULT_CREDENTIAL_ENV_VARS, MxcSandboxProvider } from './sandbox/index.js';
 export type { SandboxConfig, SandboxOptions, SandboxState, CreateSandboxProviderOptions, DefaultPolicyOptions, MxcSandboxProviderOptions } from './sandbox/index.js';
 export { getOllamaHost, detectOllama, getOllamaContextWindow } from './providers/ollama/discovery.js';
 export { getOllamaRuntimeInfo } from './providers/ollama/model.js';

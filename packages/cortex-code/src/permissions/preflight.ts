@@ -64,8 +64,7 @@ export interface PreflightDeps {
    * in-process for Read/Glob (1c) and by the kernel for Grep's ripgrep. So
    * the read-only tools auto-approve ANYWHERE, matching what the sandboxed
    * shell can already see, instead of only inside the workspace. False or
-   * absent (sandbox off, or a partial backend like Windows Tier 1 that
-   * cannot deny secret reads to subprocesses) keeps the conservative
+   * absent (sandbox off, or a partial backend) keeps the conservative
    * workspace-only auto-approve.
    */
   sandboxReadsBroad?: boolean;

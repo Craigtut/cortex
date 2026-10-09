@@ -166,9 +166,10 @@ describe('Session.resolveInitialRung (folder-trust default)', () => {
     const { session } = makeSession();
 
     if (process.platform === 'win32') {
-      // Windows: the unsigned Tier-1 helper is opt-in, default 'off', and NOT
-      // persisted, so a later config default or a signed-helper rollout can
-      // still raise it (only /sandbox workspace persists an opt-in).
+      // Windows: MXC containment is opt-in until validated on a real host,
+      // default 'off', and NOT persisted, so a later config default or an
+      // on-by-default rollout can still raise it (only /sandbox workspace
+      // persists an opt-in).
       expect(await resolveRung(session)).toBe('off');
       expect(readPersistedRung()).toBeUndefined();
     } else {

@@ -130,13 +130,12 @@ export class SessionSandbox {
       return configured;
     }
 
-    // On Windows the Tier-1 helper is not yet code-signed, so it is opt-in:
-    // default to 'off' (no helper is ever spawned, so nothing can be flagged by
-    // antivirus). Do NOT persist that 'off': leaving the remembered rung empty
-    // means a later consumer default (sandbox.rung, e.g. once a signed helper
-    // ships) or a future on-by-default flip still takes effect, while
-    // `/sandbox workspace` remains the explicit, remembered opt-in. Persisting
-    // it would make 'off' sticky and defeat the signed-helper rollout.
+    // On Windows, containment (MXC BaseContainer) is opt-in until it has been
+    // validated on a real Windows 11 host: default to 'off'. Do NOT persist
+    // that 'off': leaving the remembered rung empty means a later consumer
+    // default (sandbox.rung) or a future on-by-default flip still takes
+    // effect, while `/sandbox workspace` remains the explicit, remembered
+    // opt-in. Persisting it would make 'off' sticky and defeat that rollout.
     if (process.platform === 'win32') {
       return 'off';
     }

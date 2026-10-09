@@ -9,7 +9,7 @@ import type {
 } from '../types.js';
 
 const statusSchema = z.object({
-  backend: z.enum(['seatbelt', 'bubblewrap', 'win-restricted-token', 'none']),
+  backend: z.enum(['seatbelt', 'bubblewrap', 'none']),
   filesystem: z.enum(['enforced', 'partial', 'none']), network: z.enum(['enforced', 'partial', 'none']),
   degradations: z.array(z.string()),
 });

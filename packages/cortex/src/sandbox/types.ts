@@ -63,14 +63,13 @@ export type SandboxEnforcement = 'enforced' | 'partial' | 'none';
 export type SandboxBackend =
   | 'seatbelt'
   | 'bubblewrap'
-  | 'win-restricted-token'
   | 'mxc-base-container'
   | 'none';
 
 /**
  * The honesty contract. A provider reports what it ACTUALLY enforces on this
  * machine, which may be less than the requested policy (e.g. bubblewrap blocked
- * by AppArmor, or Windows before the native helper ships). It must never claim
+ * by AppArmor, or a Windows build without MXC's BaseContainer). It must never claim
  * more than it delivers; the consumer decides whether to warn, degrade, or refuse.
  */
 export interface SandboxStatus {
@@ -239,16 +238,16 @@ export interface SandboxProvider {
   /**
    * Called by the Bash tool when a sandbox-WRAPPED spawn fails at the process
    * 'error' stage AND the error code means the wrapper binary could not be found
-   * or executed (`ENOENT`/`EACCES`/`EPERM`): the wrapper itself (e.g. the Windows
-   * helper exe) could not launch, so the command did not run. The canonical cause
-   * is security software quarantining/blocking the helper mid-session. The
-   * provider should mark itself uncontained so subsequent spawns pass through
-   * (self-heal to warn-and-continue) and surface the reason via its status /
-   * onDegraded channel.
+   * or executed (`ENOENT`/`EACCES`/`EPERM`): the wrapper itself (sandbox-exec,
+   * bwrap, or node.exe running the MXC launcher) could not launch, so the command
+   * did not run. A likely cause is security software blocking the wrapper
+   * mid-session. The provider should mark itself uncontained so subsequent
+   * spawns pass through (self-heal to warn-and-continue) and surface the reason
+   * via its status / onDegraded channel.
    *
    * This signal is safe to act on because a sandboxed child cannot forge it: the
-   * helper's own spawn either succeeds or fails before any child runs, and the
-   * child cannot make the helper binary un-launchable (it lives outside every
+   * wrapper's own spawn either succeeds or fails before any child runs, and the
+   * child cannot make the wrapper binary un-launchable (it lives outside every
    * writable root). The Bash tool deliberately does NOT call this for transient
    * spawn-environment errors (fd/memory pressure, an over-long command line),
    * which are not the wrapper's fault, nor for a wrapped command's stderr/exit

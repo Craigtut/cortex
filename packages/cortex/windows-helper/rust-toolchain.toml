@@ -1,6 +1,0 @@
-# Pin the toolchain and the Windows target so CI builds are reproducible. The
-# helper is only ever built for Windows MSVC; the target is listed here so
-# `rustup` provisions it on the build agent.
-[toolchain]
-channel = "stable"
-targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]

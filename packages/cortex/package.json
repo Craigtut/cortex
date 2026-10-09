@@ -37,8 +37,7 @@
     "src",
     "LICENSE",
     "README.md",
-    "CHANGELOG.md",
-    "vendor"
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -55,9 +54,7 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:eval": "vitest run --config vitest.config.eval.ts",
-    "prepack": "npm run build",
-    "build:helper:win": "cargo build --release --manifest-path windows-helper/Cargo.toml --target x86_64-pc-windows-msvc",
-    "test:helper:win": "cargo test --manifest-path windows-helper/Cargo.toml --target x86_64-pc-windows-msvc"
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=24.0.0"

@@ -56,7 +56,6 @@ Paths resolve relative to `workingDirectory`. `workspaceRoots` replaces the defa
 | `allowedDomains`, `deniedDomains` | `[]` | Extend network policy. |
 | `requireEnforcement` | `true` | Refuse setup/execution if the requested OS boundary is unavailable or partial. |
 | `onStatusChange` | absent | Observe effective policy and enforcement. |
-| `windowsHelperPath` | absent | Ignored. Windows uses MXC; the restricted-token helper is no longer selected. |
 | `provider` | platform backend | Advanced backend override; Cortex initializes and disposes it. |
 
 A host that cannot enforce the requested policy causes `CortexAgent.create()` to reject. An enforcement failure during the session blocks later tool execution. To explicitly allow degraded operation, set `requireEnforcement: false` and use `onStatusChange` or `getSandboxState()` to display what is actually enforced. This does not turn missing OS protections into working protections.

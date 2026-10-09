@@ -58,11 +58,10 @@ export interface SandboxCodeConfig {
   /**
    * Refuse-to-run instead of the default warn-and-continue. When true, at a
    * contained rung (anything but 'off') where the OS sandbox is NOT actually
-   * enforcing (backend 'none' — e.g. the Windows helper is missing, blocked, or
-   * quarantined), shell commands are BLOCKED rather than run uncontained. A
-   * working backend that only partially enforces (Windows Tier 1: writes
-   * confined, secret reads not) still counts as enforcing and is allowed. For
-   * consumers who would rather fail closed than silently drop containment.
+   * enforcing (backend 'none' — e.g. Windows without MXC BaseContainer or its
+   * SDK, or Linux without a usable bubblewrap), shell commands are BLOCKED
+   * rather than run uncontained. A partially enforcing backend is refused too.
+   * For consumers who would rather fail closed than silently drop containment.
    * Default: false.
    */
   requireEnforcement?: boolean;

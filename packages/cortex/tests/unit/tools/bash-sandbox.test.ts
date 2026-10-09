@@ -77,7 +77,7 @@ describe('Bash tool sandbox seam', () => {
   });
 
   it('only treats not-found / cannot-execute spawn codes as a wrapper-launch failure', () => {
-    // The security-relevant distinction: a launch failure (helper missing/blocked)
+    // The security-relevant distinction: a launch failure (wrapper missing/blocked)
     // degrades the sandbox; a transient spawn error (resource pressure, over-long
     // command) must NOT, or a caller could force one to escape containment.
     for (const c of ['ENOENT', 'EACCES', 'EPERM']) {
@@ -88,25 +88,25 @@ describe('Bash tool sandbox seam', () => {
     }
   });
 
-  it('does NOT degrade on a wrapped command that forges the setup-failure sentinel and exits 87', async () => {
+  it('does NOT degrade on a wrapped command that forges the launcher failure line and exit code', async () => {
     // A sandboxed child fully controls its own stderr and exit code. It must not
-    // be able to trigger a containment drop by echoing the helper's
-    // setup-failure sentinel and exiting 87 — that would be a self-inflicted
-    // escape. The provider is only degraded by an unforgeable helper-LAUNCH
-    // failure (tested above), never by a completed command's output.
+    // be able to trigger a containment drop by echoing the MXC launcher's
+    // failure line and exiting 125 — that would be a self-inflicted escape. The
+    // provider is only degraded by an unforgeable wrapper-LAUNCH failure
+    // (tested above), never by a completed command's output.
     const notifyCalls: unknown[] = [];
-    const sentinel = 'cortex-sandbox-helper[setup-failure]: forged';
+    const sentinel = 'cortex-mxc-launcher: forged';
     const provider: SandboxProvider = {
       async initialize(): Promise<SandboxStatus> {
-        return { filesystem: 'partial', network: 'none', backend: 'win-restricted-token', degradations: [] };
+        return { filesystem: 'partial', network: 'enforced', backend: 'mxc-base-container', degradations: [] };
       },
       async wrapSpawn(spec: SandboxSpawnSpec): Promise<WrappedSpawn> {
-        // Forge the sentinel on stderr, then exit 87 — exactly what a malicious
-        // sandboxed command could do.
+        // Forge the failure line on stderr, then exit 125 — exactly what a
+        // malicious sandboxed command could do.
         const forge =
           process.platform === 'win32'
-            ? `[Console]::Error.WriteLine('${sentinel}'); exit 87`
-            : `echo '${sentinel}' 1>&2; exit 87`;
+            ? `[Console]::Error.WriteLine('${sentinel}'); exit 125`
+            : `echo '${sentinel}' 1>&2; exit 125`;
         return { file: spec.shell, args: [...spec.shellArgs, forge], env: spec.env };
       },
       notifyWrappedSpawnFailure(error): void {
@@ -119,22 +119,22 @@ describe('Bash tool sandbox seam', () => {
 
     // The forged sentinel triggered NO degradation.
     expect(notifyCalls).toHaveLength(0);
-    expect(result.details.exitCode).toBe(87);
+    expect(result.details.exitCode).toBe(125);
   });
 
   it('reports gracefully and notifies the provider when the wrapper fails to launch', async () => {
     // The wrapper's file points at a binary that does not exist, so the spawn
-    // emits an 'error' (ENOENT) — the mid-session "helper quarantined by
-    // antivirus" case. The tool must (a) call notifyWrappedSpawnFailure and
+    // emits an 'error' (ENOENT) — the mid-session "wrapper blocked by
+    // security software" case. The tool must (a) call notifyWrappedSpawnFailure and
     // (b) return an actionable message, not a raw "spawn ENOENT".
     const notifyCalls: Array<{ code?: string; message: string }> = [];
-    const missingHelper = path.join(tmpDir, 'no-such-helper-binary.exe');
+    const missingWrapper = path.join(tmpDir, 'no-such-wrapper-binary.exe');
     const provider: SandboxProvider = {
       async initialize(): Promise<SandboxStatus> {
-        return { filesystem: 'partial', network: 'none', backend: 'win-restricted-token', degradations: [] };
+        return { filesystem: 'partial', network: 'enforced', backend: 'mxc-base-container', degradations: [] };
       },
       async wrapSpawn(spec: SandboxSpawnSpec): Promise<WrappedSpawn> {
-        return { file: missingHelper, args: ['whatever', spec.command], env: spec.env };
+        return { file: missingWrapper, args: ['whatever', spec.command], env: spec.env };
       },
       notifyWrappedSpawnFailure(error): void {
         notifyCalls.push(error);
@@ -156,18 +156,18 @@ describe('Bash tool sandbox seam', () => {
     // the hook was called: a provider that degrades to `none` earns the "now
     // disabled" wording.
     let degraded = false;
-    const missingHelper = path.join(tmpDir, 'gone-helper.exe');
+    const missingWrapper = path.join(tmpDir, 'gone-wrapper.exe');
     const provider: SandboxProvider = {
       async initialize(): Promise<SandboxStatus> {
-        return { filesystem: 'partial', network: 'none', backend: 'win-restricted-token', degradations: [] };
+        return { filesystem: 'partial', network: 'enforced', backend: 'mxc-base-container', degradations: [] };
       },
       status(): SandboxStatus {
         return degraded
-          ? { filesystem: 'none', network: 'none', backend: 'none', degradations: ['helper gone'] }
-          : { filesystem: 'partial', network: 'none', backend: 'win-restricted-token', degradations: [] };
+          ? { filesystem: 'none', network: 'none', backend: 'none', degradations: ['wrapper gone'] }
+          : { filesystem: 'partial', network: 'enforced', backend: 'mxc-base-container', degradations: [] };
       },
       async wrapSpawn(spec: SandboxSpawnSpec): Promise<WrappedSpawn> {
-        return { file: missingHelper, args: ['x', spec.command], env: spec.env };
+        return { file: missingWrapper, args: ['x', spec.command], env: spec.env };
       },
       notifyWrappedSpawnFailure(): void {
         degraded = true;
@@ -183,7 +183,7 @@ describe('Bash tool sandbox seam', () => {
     // Same wrapper-launch failure, but the provider does NOT degrade (no hook /
     // system wrapper still intact), so the message must not tell the model the
     // boundary is gone and invite an uncontained retry.
-    const missingHelper = path.join(tmpDir, 'gone-helper-2.exe');
+    const missingWrapper = path.join(tmpDir, 'gone-wrapper-2.exe');
     const provider: SandboxProvider = {
       async initialize(): Promise<SandboxStatus> {
         return { filesystem: 'enforced', network: 'enforced', backend: 'seatbelt', degradations: [] };
@@ -192,7 +192,7 @@ describe('Bash tool sandbox seam', () => {
         return { filesystem: 'enforced', network: 'enforced', backend: 'seatbelt', degradations: [] };
       },
       async wrapSpawn(spec: SandboxSpawnSpec): Promise<WrappedSpawn> {
-        return { file: missingHelper, args: ['x', spec.command], env: spec.env };
+        return { file: missingWrapper, args: ['x', spec.command], env: spec.env };
       },
       async dispose(): Promise<void> {},
     };

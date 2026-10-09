@@ -41,10 +41,9 @@ That separated a framework capability from the framework that needed to own its 
 | `sandbox/backends/mxc-request.ts` | Pure `SandboxPolicy` to MXC request mapping and Windows command-line quoting. |
 | `sandbox/backends/mxc-launcher.ts` | Self-contained per-command launcher process that owns the MXC SDK. |
 | `sandbox/backends/mxc-host.ts` | Host I/O for the MXC provider: SDK location, launcher copy, read-set snapshot, probe, proxy. |
-| `sandbox/backends/windows.ts` | Former restricted-token helper integration (no longer selected). |
 | `sandbox/classify.ts` | Structured denial diagnostics. |
 
-Platform modules never depend on Cortex Code. The facade has a thin lifecycle integration, and AgentLoop borrows the provider contract. The native helper source and future bundled artifacts live under `packages/cortex/windows-helper` and `packages/cortex/vendor`.
+Platform modules never depend on Cortex Code. The facade has a thin lifecycle integration, and AgentLoop borrows the provider contract. Cortex ships no native binaries: macOS and Linux use the runtime's system wrappers, and Windows uses Microsoft's MXC runtime, installed as an optional peer dependency.
 
 ## Policy and approval
 
@@ -73,7 +72,7 @@ Native Windows uses MXC BaseContainer, described in the next section. When MXC i
 
 ## Windows backend: MXC BaseContainer (design)
 
-Native Windows moves to Microsoft eXecution Containers (MXC 1.0.0, `@microsoft/mxc-sdk`), following the approach of Codex's `codex-rs/mxc-sandbox`. Only the BaseContainer tier is used. It is enforced by the OS through the process security environment (PSEC, `CreateProcessSecurityEnvironment`), needs no elevation, and makes no host ACL changes. The AppContainer tiers (`appcontainer-bfs`, `appcontainer-dacl`) are never accepted. They are weaker and the DACL tier edits host ACLs. The restricted-token helper is removed rather than kept as a fallback.
+Native Windows uses Microsoft eXecution Containers (MXC 1.0.0, `@microsoft/mxc-sdk`), following the approach of Codex's `codex-rs/mxc-sandbox`. Only the BaseContainer tier is used. It is enforced by the OS through the process security environment (PSEC, `CreateProcessSecurityEnvironment`), needs no elevation, and makes no host ACL changes. The AppContainer tiers (`appcontainer-bfs`, `appcontainer-dacl`) are never accepted. They are weaker and the DACL tier edits host ACLs. MXC replaced Cortex's earlier restricted-token helper (unsigned, write confinement only, no network boundary), which was removed rather than kept as a fallback.
 
 **Provider shape.** Three modules under `sandbox/backends/`:
 

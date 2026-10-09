@@ -1,4 +1,0 @@
-/target
-# Cargo.lock IS committed for this binary crate: a security helper wants
-# reproducible, pinned dependency builds. It will be generated on the first
-# Windows build.
