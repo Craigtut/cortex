@@ -45,13 +45,13 @@ export interface PiAgent extends AgentStateAccessor, PiEventSource {
    * Pi applies steering after the current assistant turn and tool batch finish.
    * Only effective while a prompt() call is in progress.
    */
-  steer(message: { role: string; content: string }): void;
+  steer(message: QueuedUserMessage): void;
 
   /**
    * Queue a message that pi injects only at a would-stop point: after the
    * model has produced what would otherwise be the run's final answer.
    */
-  followUp?(message: { role: string; content: string }): void;
+  followUp?(message: QueuedUserMessage): void;
 
   /** Drain mode of pi's steering queue ('all' | 'one-at-a-time'). */
   steeringMode?: string;
@@ -70,6 +70,16 @@ export interface PiAgent extends AgentStateAccessor, PiEventSource {
 
   /** Context transformation hook installed by Cortex. */
   transformContext?: (messages: unknown[]) => Promise<unknown[]>;
+}
+
+/**
+ * A user message the loop queues on pi's steering or follow-up queue. pi
+ * pushes it into the transcript as given, so it carries its own timestamp.
+ */
+export interface QueuedUserMessage {
+  role: 'user';
+  content: string;
+  timestamp: number;
 }
 
 /** Drain mode for pi's steering and follow-up queues. */

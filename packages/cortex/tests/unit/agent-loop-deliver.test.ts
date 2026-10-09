@@ -35,8 +35,8 @@ import { partsOf } from './agent-loop/parts.js';
 interface DeliverMockPiAgent extends PiAgent {
   emitEvent: (event: PiEvent) => void;
   promptCalls: Array<string | AgentMessage[]>;
-  steerCalls: Array<{ role: string; content: string }>;
-  followUpCalls: Array<{ role: string; content: string }>;
+  steerCalls: Array<{ role: string; content: string; timestamp?: number }>;
+  followUpCalls: Array<{ role: string; content: string; timestamp?: number }>;
   clearSteeringQueueCalls: number;
   clearFollowUpQueueCalls: number;
   /** Messages steered but not yet drained by a run (mirrors pi's queue). */
@@ -1362,7 +1362,9 @@ describe('AgentLoop follow-up and queue surfaces', () => {
 
     loop.followUp('after you finish');
 
-    expect(piAgent.followUpCalls).toEqual([{ role: 'user', content: 'after you finish' }]);
+    // pi's UserMessage carries a timestamp; pi pushes the message into the
+    // transcript as given.
+    expect(piAgent.followUpCalls).toEqual([{ role: 'user', content: 'after you finish', timestamp: expect.any(Number) }]);
   });
 
   it('followUp throws a clear error when the underlying agent lacks it', () => {

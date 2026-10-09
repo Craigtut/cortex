@@ -91,7 +91,7 @@ export class DeliveryQueues {
     // prompt() dequeues from the gate a microtask later, so a non-empty gate
     // counts as prompting: a same-frame prompt()+steer() must not drop.
     if (!this.ports.isPrompting() && !this.ports.gate.isActive) return;
-    this.ports.piQueues.steer({ role: 'user', content: message });
+    this.ports.piQueues.steer({ role: 'user', content: message, timestamp: Date.now() });
   }
 
   /** See AgentLoop.deliver: the silent / parked / prompted state machine. */
@@ -207,7 +207,11 @@ export class DeliveryQueues {
     if (count === 0) return;
     const taken = this.wake.splice(0, count);
     this.releaseIfDrained();
-    this.ports.piQueues.steer({ role: 'user', content: taken.map((item) => item.content).join('\n\n') });
+    this.ports.piQueues.steer({
+      role: 'user',
+      content: taken.map((item) => item.content).join('\n\n'),
+      timestamp: Date.now(),
+    });
     // The run now answers this content, so it carries its causation too.
     const tags = taken.map((item) => item.causeTag).filter((tag) => tag !== undefined);
     if (tags.length > 0) this.ports.appendActiveCauseTags(tags);
@@ -403,7 +407,7 @@ export class DeliveryQueues {
     if (!this.ports.piQueues.followUp) {
       throw new Error('The underlying agent does not expose followUp()');
     }
-    this.ports.piQueues.followUp({ role: 'user', content: message });
+    this.ports.piQueues.followUp({ role: 'user', content: message, timestamp: Date.now() });
   }
 
   setSteeringQueueMode(mode: QueueDrainMode): void {

@@ -2027,6 +2027,8 @@ You have 12 emotions.`;
       expect(steerCalls.length).toBe(1);
       expect(steerCalls[0]!.role).toBe('user');
       expect(steerCalls[0]!.content).toBe('New context from user');
+      // pi pushes a steered message into the transcript as given.
+      expect(steerCalls[0]).toMatchObject({ timestamp: expect.any(Number) });
     });
 
     it('is a no-op when not prompting', () => {
