@@ -26,6 +26,8 @@ import type {
   ReflectionEvent,
   ContinuationHint,
   RecallConfig,
+  ObserverOutput,
+  ReflectorOutput,
 } from './types.js';
 import {
   OBSERVATIONAL_MEMORY_DEFAULTS,
@@ -224,87 +226,85 @@ export class ObservationalMemoryEngine {
     const isStale = options?.isStale;
 
     // --- Activation ---
+    // Planned from a snapshot: every await settles before anything changes,
+    // so a failed or abandoned observer call can never leave messages
+    // removed whose observations were not recorded.
     const sourceHistory = getSourceHistory();
-    const watermark = this.buffering.getWatermark();
-    let compactedMessages: AgentMessage[] = [];
-    let newObservationText = '';
-    let activatedSync = false;
+    const { chunks, watermark: chunkWatermark } = this.buffering.getCompletedChunks();
+    const merged = chunks.length > 0 ? this.mergeChunks(chunks) : null;
+    const chunkMessages = merged ? sourceHistory.slice(0, chunkWatermark) : [];
+    const unbufferedMessages = merged ? sourceHistory.slice(chunkWatermark) : sourceHistory;
 
-    // Step 1: Activate completed buffer chunks
-    if (this.buffering.hasCompletedChunks()) {
-      const { chunks, watermark: chunkWatermark } = this.buffering.getCompletedChunks();
-      const merged = this.mergeChunks(chunks);
-      newObservationText = merged.observations;
-
-      if (merged.hint) {
-        this.continuationHint = merged.hint;
-      }
-
-      // Messages covered by completed chunks (from start of source to watermark)
-      compactedMessages = sourceHistory.slice(0, chunkWatermark);
-
-      // Remove observed messages from source, keep unbuffered tail
-      setSourceHistory(sourceHistory.slice(chunkWatermark));
-      this.buffering.commitActivation();
-    }
-
-    // Step 2: Check if still over threshold after chunk activation
-    // Recompute utilization after trimming. Account for the full slot
-    // overhead (preamble, XML wrappers, continuation hints) rather than
-    // just the raw observation text, since the slot is always larger.
-    const postChunkSource = getSourceHistory();
+    // Step 1: Would swapping in the completed chunks alone be enough?
+    // Account for the full slot overhead (preamble, XML wrappers,
+    // continuation hints) rather than just the raw observation text, since
+    // the slot is always larger.
     const trimmedMessageTokens = estimateTokens(
-      compactedMessages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n'),
+      chunkMessages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n'),
     );
-    // Estimate the actual slot size including overhead, not just the raw
-    // observation text. buildSlotContent() wraps observations in the
-    // preamble, <observations> tags, and optional continuation hints.
-    const slotOverheadTokens = newObservationText
-      ? estimateTokens(this.buildSlotContentForEstimate(newObservationText))
+    const slotOverheadTokens = merged
+      ? estimateTokens(this.buildSlotContentForEstimate(merged.observations))
       : 0;
-    // Net change: removed messages, added observation slot content
     const netTokenReduction = trimmedMessageTokens - slotOverheadTokens;
     const postChunkUtilization = utilization - (this.contextWindow > 0 ? netTokenReduction / this.contextWindow : 0);
 
-    if (allowSync && postChunkUtilization >= this.config.activationThreshold && this.completeFn) {
-      // Force sync observer on remaining unbuffered messages
-      const unbufferedMessages = postChunkSource;
-
-      if (unbufferedMessages.length > 0) {
-        activatedSync = true;
-
-        const output = await runObserver(
+    // Step 2: If not, observe the unbuffered remainder in-band.
+    let syncOutput: ObserverOutput | null = null;
+    if (
+      allowSync &&
+      postChunkUtilization >= this.config.activationThreshold &&
+      this.completeFn &&
+      unbufferedMessages.length > 0
+    ) {
+      // These messages are about to be observed here; an in-flight observer
+      // covering them must not land a second chunk for them.
+      this.buffering.advanceEpoch();
+      try {
+        syncOutput = await runObserver(
           this.completeFn,
           unbufferedMessages,
           this.observations || null,
           this.buildObserverConfig(),
         );
-
-        // Append sync observations
-        if (newObservationText) {
-          newObservationText += '\n\n' + output.observations;
-        } else {
-          newObservationText = output.observations;
-        }
-
-        if (output.currentTask || output.suggestedResponse) {
-          this.continuationHint = {
-            currentTask: output.currentTask ?? '',
-            suggestedResponse: output.suggestedResponse ?? '',
-          };
-        }
-
-        // All unbuffered messages are now observed
-        compactedMessages = [...compactedMessages, ...unbufferedMessages];
-        setSourceHistory([]);
-        this.buffering.setWatermark(0);
-        // Invalidate any in-flight observers that were processing messages
-        // we just observed synchronously
-        this.buffering.advanceEpoch();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger?.warn(`In-band observer failed; swapping in buffered chunks only: ${message}`);
       }
     }
 
-    // Step 3: Merge new observations into existing
+    // An abandoned pass applies nothing: its rewrite would be discarded by
+    // the owner, and the chunks it did not consume stay buffered.
+    if (isStale?.()) return context;
+
+    // Step 3: Apply, synchronously.
+    let compactedMessages: AgentMessage[] = [];
+    let newObservationText = '';
+    if (merged) {
+      newObservationText = merged.observations;
+      if (merged.hint) this.continuationHint = merged.hint;
+      compactedMessages = chunkMessages;
+    }
+    if (syncOutput) {
+      newObservationText = newObservationText
+        ? newObservationText + '\n\n' + syncOutput.observations
+        : syncOutput.observations;
+      if (syncOutput.currentTask || syncOutput.suggestedResponse) {
+        this.continuationHint = {
+          currentTask: syncOutput.currentTask ?? '',
+          suggestedResponse: syncOutput.suggestedResponse ?? '',
+        };
+      }
+      compactedMessages = [...compactedMessages, ...unbufferedMessages];
+    }
+    const activatedSync = syncOutput !== null;
+    if (merged || syncOutput) {
+      setSourceHistory(syncOutput ? [] : unbufferedMessages);
+      // Resets chunks and the watermark and advances the epoch: every
+      // message the buffer described has just left the source.
+      this.buffering.commitActivation();
+    }
+
+    // Merge new observations into existing
     if (newObservationText) {
       if (this.observations) {
         this.observations += '\n\n' + newObservationText;
@@ -314,12 +314,8 @@ export class ObservationalMemoryEngine {
       this.observationTokenCount = estimateTokens(this.observations);
     }
 
-    // Step 4: Fire observation event. Checked at dispatch time: an
-    // abandoned digestion pass settling here (the Step 2 observer call can
-    // outlive the digestion timeout by minutes) had its history trim
-    // discarded, so reporting the observation would describe a rewrite
-    // that never landed.
-    if (compactedMessages.length > 0 && !isStale?.()) {
+    // Fire the observation event (the pass is known live: stale returned above).
+    if (compactedMessages.length > 0) {
       this.fireObservationEvent({
         compactedMessages,
         observations: this.observations,
@@ -329,15 +325,15 @@ export class ObservationalMemoryEngine {
       });
     }
 
-    // Step 5: Handle reflection (may replace this.observations with condensed version)
+    // Step 4: Handle reflection (may replace this.observations with condensed version)
     await this.handleReflection(allowSync, isStale);
 
-    // Step 6: Build slot content AFTER reflection so it contains post-reflection
+    // Step 5: Build slot content AFTER reflection so it contains post-reflection
     // observations. Previously this was captured before reflection, requiring
     // an external patch in agent-loop.ts to correct stale content.
     const slotContent = this.buildSlotContent();
 
-    // Step 7: Rebuild context with updated observations and trimmed history
+    // Step 6: Rebuild context with updated observations and trimmed history
     const updatedSourceHistory = getSourceHistory();
 
     // Build new message array: slot region + observation slot + remaining source messages
@@ -848,12 +844,20 @@ export class ObservationalMemoryEngine {
         return;
       }
 
-      // Run synchronously
-      const output = await runReflector(
-        this.completeFn,
-        this.observations,
-        this.buildReflectorConfig(effectiveThreshold),
-      );
+      // Run synchronously. A failed reflection keeps the current log: it is
+      // larger than ideal, which costs tokens, not memory.
+      let output: ReflectorOutput;
+      try {
+        output = await runReflector(
+          this.completeFn,
+          this.observations,
+          this.buildReflectorConfig(effectiveThreshold),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger?.warn(`In-band reflector failed; keeping the current observations: ${message}`);
+        return;
+      }
 
       this.observations = output.observations;
       this.observationTokenCount = estimateTokens(this.observations);

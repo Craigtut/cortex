@@ -189,98 +189,111 @@ export class ContextPipeline {
     const historyStart = this.ports.slots.historyStart;
 
     return async (context: AgentContext): Promise<AgentContext> => {
-      const sourceMessages = context.messages;
-      const passGeneration = this.digestionGeneration;
-      const passIsStale = (): boolean => passGeneration !== this.digestionGeneration;
+      // pi requires transformContext never to throw: a throw fails the run
+      // with a synthetic error. Fall back to the context as it stands.
+      try {
+        return await this.transform(context, historyStart);
+      } catch (err) {
+        this.ports.logger.error('transformContext failed; sending the context unchanged', {
+          error: errorMessageOf(err),
+        });
+        return context;
+      }
+    };
+  }
 
-      // Step 0: Tier 1 insertion cap. pi keeps its own in-loop messages
-      // array and ignores the returned context for it, so source mutations
-      // must hit this array to persist. Staleness is threaded because the
-      // cap awaits a consumer persistResult.
-      await this.ports.compaction().applyInsertionCap(
-        sourceMessages,
-        historyStart,
-        passIsStale,
-      );
-      if (passIsStale()) return context;
-      this.ports.setAgentMessages([...sourceMessages]);
+  private async transform(context: AgentContext, historyStart: number): Promise<AgentContext> {
+    const sourceMessages = context.messages;
+    const passGeneration = this.digestionGeneration;
+    const passIsStale = (): boolean => passGeneration !== this.digestionGeneration;
 
-      // Step 1: Injections go at the boundary, not the end: the tick prompt
-      // stays last, and history before it stays cache-readable (pi-ai puts
-      // BP4 on the last user message).
-      const boundary = this.ports.boundary();
-      let result = this.injectedSnapshot(context, boundary);
+    // Step 0: Tier 1 insertion cap. pi keeps its own in-loop messages
+    // array and ignores the returned context for it, so source mutations
+    // must hit this array to persist. Staleness is threaded because the
+    // cap awaits a consumer persistResult.
+    await this.ports.compaction().applyInsertionCap(
+      sourceMessages,
+      historyStart,
+      passIsStale,
+    );
+    if (passIsStale()) return context;
+    this.ports.setAgentMessages([...sourceMessages]);
 
-      // Step 2: Compaction. Source-history rewrites land in pi's loop
-      // transcript and agent.state; the returned context only affects this
-      // call. Both rewrites fold the system messages they drop into the head
-      // (spliceHistory), so this call and every later one still declare the
-      // tools and prompt those messages carried.
-      result = await this.ports.compaction().applyInTransformContext(
-        result,
-        (ctx) => ctx.messages.slice(historyStart),
-        (ctx, history) => {
-          // The source head is canonical (a source rewrite may have just
-          // folded into it); folding the view's own drops on top is
-          // idempotent, since Cortex and pi write system updates with empty
-          // content.
-          const messages = [...ctx.messages];
-          messages[0] = sourceMessages[0]!;
-          spliceHistory(messages, historyStart, history);
-          return { ...ctx, messages };
-        },
-        () => sourceMessages.slice(historyStart),
-        // setSourceHistory: every compaction rewrite lands here.
-        (history) => {
-          if (passIsStale()) {
-            // A late abandoned pass would destroy messages appended since.
-            this.ports.logger.warn('discarding history rewrite from an abandoned digestion pass');
-            return;
-          }
-          // Exact only while every rewrite keeps the current tick's messages
-          // as a contiguous suffix of `history`; a strategy that breaks that
-          // skews the boundary silently.
-          const currentTickCount = sourceMessages.length - this.ports.boundary();
-          spliceHistory(sourceMessages, historyStart, history);
-          this.ports.setAgentMessages([...sourceMessages]);
-          this.ports.setBoundary(Math.max(
-            historyStart,
-            sourceMessages.length - currentTickCount,
-          ));
-        },
-        // Staleness also suppresses event dispatch: a consumer must never
-        // see a compaction reported for a rewrite that never landed.
-        {
-          ...(this.forceBlockingCompaction ? { allowBlocking: true } : {}),
-          isStale: passIsStale,
-        },
-      );
-      if (passIsStale()) return result;
+    // Step 1: Injections go at the boundary, not the end: the tick prompt
+    // stays last, and history before it stays cache-readable (pi-ai puts
+    // BP4 on the last user message).
+    const boundary = this.ports.boundary();
+    let result = this.injectedSnapshot(context, boundary);
 
-      if (this.ports.compaction().strategy === 'observational') {
-        const slotContent = this.ports.compaction().getObservationSlotContent();
-        if (slotContent) {
-          this.ports.slots.setSlot('_observations', slotContent);
-          if (this.ports.compaction().hasObservations()) {
-            // The observation slot is the last one, right before history.
-            const obsSlotIndex = this.ports.slots.historyStart - 1;
-            if (obsSlotIndex >= 0 && obsSlotIndex < result.messages.length) {
-              result.messages[obsSlotIndex] = { role: 'user', content: slotContent, timestamp: Date.now() };
-            }
+    // Step 2: Compaction. Source-history rewrites land in pi's loop
+    // transcript and agent.state; the returned context only affects this
+    // call. Both rewrites fold the system messages they drop into the head
+    // (spliceHistory), so this call and every later one still declare the
+    // tools and prompt those messages carried.
+    result = await this.ports.compaction().applyInTransformContext(
+      result,
+      (ctx) => ctx.messages.slice(historyStart),
+      (ctx, history) => {
+        // The source head is canonical (a source rewrite may have just
+        // folded into it); folding the view's own drops on top is
+        // idempotent, since Cortex and pi write system updates with empty
+        // content.
+        const messages = [...ctx.messages];
+        messages[0] = sourceMessages[0]!;
+        spliceHistory(messages, historyStart, history);
+        return { ...ctx, messages };
+      },
+      () => sourceMessages.slice(historyStart),
+      // setSourceHistory: every compaction rewrite lands here.
+      (history) => {
+        if (passIsStale()) {
+          // A late abandoned pass would destroy messages appended since.
+          this.ports.logger.warn('discarding history rewrite from an abandoned digestion pass');
+          return;
+        }
+        // Exact only while every rewrite keeps the current tick's messages
+        // as a contiguous suffix of `history`; a strategy that breaks that
+        // skews the boundary silently.
+        const currentTickCount = sourceMessages.length - this.ports.boundary();
+        spliceHistory(sourceMessages, historyStart, history);
+        this.ports.setAgentMessages([...sourceMessages]);
+        this.ports.setBoundary(Math.max(
+          historyStart,
+          sourceMessages.length - currentTickCount,
+        ));
+      },
+      // Staleness also suppresses event dispatch: a consumer must never
+      // see a compaction reported for a rewrite that never landed.
+      {
+        ...(this.forceBlockingCompaction ? { allowBlocking: true } : {}),
+        isStale: passIsStale,
+      },
+    );
+    if (passIsStale()) return result;
+
+    if (this.ports.compaction().strategy === 'observational') {
+      const slotContent = this.ports.compaction().getObservationSlotContent();
+      if (slotContent) {
+        this.ports.slots.setSlot('_observations', slotContent);
+        if (this.ports.compaction().hasObservations()) {
+          // The observation slot is the last one, right before history.
+          const obsSlotIndex = this.ports.slots.historyStart - 1;
+          if (obsSlotIndex >= 0 && obsSlotIndex < result.messages.length) {
+            result.messages[obsSlotIndex] = { role: 'user', content: slotContent, timestamp: Date.now() };
           }
         }
       }
+    }
 
-      // Step 3: BP3 covers old history plus the stable injections; volatile
-      // injections sit after it, outside the cached prefix.
-      const stableInjectionCount = this.ports.injections().stable.length;
-      this.breakpointIndices = computeCacheBreakpointIndices(result.messages, {
-        slotEnd: historyStart,
-        boundary: this.ports.boundary() + stableInjectionCount,
-      });
+    // Step 3: BP3 covers old history plus the stable injections; volatile
+    // injections sit after it, outside the cached prefix.
+    const stableInjectionCount = this.ports.injections().stable.length;
+    this.breakpointIndices = computeCacheBreakpointIndices(result.messages, {
+      slotEnd: historyStart,
+      boundary: this.ports.boundary() + stableInjectionCount,
+    });
 
-      return result;
-    };
+    return result;
   }
 
   /** The loop's live context as pi would hand it to transformContext. */

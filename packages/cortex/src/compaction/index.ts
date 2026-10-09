@@ -861,6 +861,27 @@ export class CompactionManager {
     setSourceHistory?: (history: AgentMessage[]) => void,
     options?: { allowBlocking?: boolean; isStale?: () => boolean },
   ): Promise<AgentContext> {
+    // pi requires transformContext never to throw. Every layer keeps its
+    // state coherent on its own, so a failure here sends the request as it
+    // stands rather than failing the run.
+    try {
+      return await this.applyLayers(context, getHistory, setHistory, getSourceHistory, setSourceHistory, options);
+    } catch (err) {
+      this.logger.error('[Compaction] transformContext pass failed; sending the context unchanged', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return context;
+    }
+  }
+
+  private async applyLayers(
+    context: AgentContext,
+    getHistory: (ctx: AgentContext) => AgentMessage[],
+    setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
+    getSourceHistory?: () => AgentMessage[],
+    setSourceHistory?: (history: AgentMessage[]) => void,
+    options?: { allowBlocking?: boolean; isStale?: () => boolean },
+  ): Promise<AgentContext> {
     if (this._contextWindow <= 0) {
       // contextWindow not set, skip compaction
       return context;
@@ -1068,21 +1089,8 @@ export class CompactionManager {
       const totalNow = slotTokens + postLayerTokens;
 
       if (shouldTruncate(totalNow, failsafeWindow, this.config.failsafe.threshold)) {
-        // Force sync observation before L3 truncation to capture unobserved
-        // content before it is dropped. The source history from getSourceHistory
-        // is already post-slot, so pass 0 as historyStart. Skipped under the
-        // non-blocking posture: truncation must be the ONLY in-band path
-        // there, even at the cost of dropping unobserved content.
-        if (
-          allowBlocking &&
-          this._strategy === 'observational' &&
-          this.observationalEngine &&
-          getSourceHistory
-        ) {
-          const sourceHistory = getSourceHistory();
-          await this.observationalEngine.triggerObservation(sourceHistory, 0);
-        }
-
+        // No catch-up observation first: this truncation changes only the
+        // view, and the source keeps every message for the observer.
         const truncResult = emergencyTruncate(
           history,
           failsafeWindow,
