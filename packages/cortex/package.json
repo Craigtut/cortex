@@ -71,7 +71,7 @@
     "turndown": "^7.2.0",
     "unpdf": "^1.6.0",
     "zod-to-json-schema": "^3.25.1",
-    "@anthropic-ai/sandbox-runtime": "0.0.63",
+    "@anthropic-ai/sandbox-runtime": "0.0.79",
     "zod": "^4.0.0"
   },
   "devDependencies": {

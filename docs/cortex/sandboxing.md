@@ -59,7 +59,7 @@ Policy changes belong to trusted host code. `setSandboxRung()` requires settled 
 
 ## Platform enforcement
 
-On macOS and Linux, Cortex uses pinned `@anthropic-ai/sandbox-runtime` 0.0.63. It generates Seatbelt profiles on macOS and bubblewrap/seccomp wrappers on Linux, with a proxy for domain-controlled network access. Linux requires working `bubblewrap` and `socat`; available binaries alone do not prove that user namespaces are usable.
+On macOS and Linux, Cortex uses pinned `@anthropic-ai/sandbox-runtime` 0.0.79. It generates Seatbelt profiles on macOS and bubblewrap/seccomp wrappers on Linux, with a proxy for domain-controlled network access. Linux requires working `bubblewrap`, `socat`, and `rg` on `PATH` (the runtime's dependency check refuses without ripgrep); available binaries alone do not prove that user namespaces are usable. The runtime also offers proxy-side credential masking (secrets replaced by sentinels in the child and substituted back at the TLS-terminating proxy); Cortex does not use it yet and scrubs credential environment variables instead. Upstream accepts a `:port` suffix on domain entries, but Cortex's in-process matcher (used by WebFetch) does not, so a port-scoped entry allows shell traffic on that port while WebFetch treats it as unmatched (falling through to `resolveNetworkAccess`, else deny).
 
 The upstream runtime owns process-global policy, proxy state, and temporary-directory environment. Each managed root agent therefore gets a private worker process. Two agents can use different roots and policies without overwriting each other's runtime state. Disposing one agent leaves the other agent's backend active. The host environment is not modified.
 
