@@ -157,26 +157,26 @@ const result = await providers.initiateOAuth('github-copilot', {
 await credentialStore.saveEncrypted(result.credentials);
 ```
 
-Store OAuth credentials as opaque encrypted strings. Later, resolve them inside your `getApiKey` callback:
+Store OAuth credentials as opaque encrypted strings. Later, resolve them inside your `getAuth` callback. An OAuth credential can authorize with more than a key (Kimi Coding sends a header, GitHub Copilot a per-account base URL), so return the whole `auth`:
 
 ```typescript
 const agent = await CortexAgent.create({
   model,
   workingDirectory,
   initialBasePrompt,
-  getApiKey: async (provider) => {
+  getAuth: async (provider) => {
     const saved = await credentialStore.load(provider);
     if (saved.type === 'oauth') {
       const refreshed = await providers.resolveOAuthApiKey(provider, saved.credentials);
       if (refreshed.changed) await credentialStore.update(provider, refreshed.credentials);
-      return refreshed.apiKey;
+      return refreshed.auth;
     }
-    return saved.apiKey;
+    return { apiKey: saved.apiKey };
   },
 });
 ```
 
-`getApiKey` is shared: both loops and every sub-agent resolve credentials through it.
+`getAuth` and `getApiKey` are shared: both loops and every sub-agent resolve credentials through them. A callback like this one refreshes once per call, so a duplex talker and reasoner starting together can both refresh a rotating token. To refresh once, give `ProviderManager` a `credentials` store and pass `getAuth: (provider) => providers.getAuth(provider)` (see `provider-manager.md`).
 
 ## Core Configuration
 
