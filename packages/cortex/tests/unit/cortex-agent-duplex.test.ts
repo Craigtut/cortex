@@ -1288,12 +1288,17 @@ describe('duplex terminate guards (D17)', () => {
   it('leaves non-control tools on the normal reminder path', async () => {
     const { talkerLoop } = createDuplexFacade();
     const hook = extractAfterToolCall(talkerLoop);
-    const out = await hook({
+    const call = {
       toolCall: { name: 'Recall' },
       assistantMessage: { role: 'assistant', content: [{ type: 'text', text: '' }] },
       result: { content: [{ type: 'text', text: 'memories' }] },
       isError: false,
-    });
+    };
+    // Working tags are off by default: the normal path leaves the result alone.
+    expect(await hook(call)).toBeUndefined();
+
+    talkerLoop.setWorkingTagsEnabled(true);
+    const out = await hook(call);
     const blocks = out?.content as Array<{ type: string; text: string }>;
     expect(blocks[1]!.text).toContain(TOOL_RESULT_WORKING_TAGS_REMINDER);
   });

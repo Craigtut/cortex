@@ -77,18 +77,24 @@ In this interaction:
 
 ## Configuration
 
-Working tags are enabled by default and can be disabled by the consumer.
+Working tags are off by default. A consumer turns them on per loop.
 
 ```typescript
 interface AgentLoopConfig {
   // ... other config
   workingTags?: {
-    enabled?: boolean;  // default: true
+    enabled?: boolean;  // default: false
   };
 }
 ```
 
-When enabled, Cortex appends working tag guidance to its operational rules section of the system prompt (see System Prompt Guidance below). When disabled, the guidance is omitted and all agent text is treated as user-facing (current behavior).
+### Claude models refuse the working-tags instructions
+
+The Claude 5 family (Opus 5 and 5.5, Sonnet 5.5, Fable 5 and 5.1) runs Anthropic safety classifiers, and one category, `reasoning_extraction`, declines requests that ask the model to write its internal reasoning into the response text. A scratchpad section the model fills in, or its private notes, are Anthropic's own examples, and the wording can sit in the system prompt or a tool description. The working-tags instructions are exactly that, so with them on these models refuse the request, the first one included. The refusal comes back as an error whose message reads "This request was blocked as it seems to violate Anthropic's Terms of Service restrictions on reverse engineering or duplicating model outputs." It is billed even with no output, and retrying it gets the same answer. Anthropic's guidance is to keep reasoning in the model's native thinking blocks.
+
+Turn working tags on only for models without that classifier. See [Refusals and fallback](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#keep-reasoning-in-thinking-blocks).
+
+When enabled, Cortex appends working tag guidance to its operational rules section of the system prompt (see System Prompt Guidance below). When disabled, the guidance is omitted and all agent text is treated as user-facing.
 
 The consumer decides when to enable or disable. A common pattern: enable for text-based channels, disable for voice channels where the interaction is conversational and low-latency streaming matters more than internal/external separation.
 
@@ -185,7 +191,7 @@ The consumer does not need to add their own working tag instructions. Channel-sp
 
 ### When Working Tags Are Disabled
 
-Setting `workingTags.enabled` to false (at construction, or via `setWorkingTagsEnabled(false)` at runtime) removes **all three** layers. The prompt must never ask for a delimiter that nothing parses: with the parser off, `parseWorkingTags` is skipped and `turn_end.textOutput` is not populated at all, so a `<working>` block the model still emits is delivered to the consumer verbatim. For a voice consumer that means TTS speaks the model's internal reasoning out loud.
+With `workingTags.enabled` false (the default, or `setWorkingTagsEnabled(false)` at runtime) **all three** layers are removed. The prompt must never ask for a delimiter that nothing parses: with the parser off, `parseWorkingTags` is skipped and `turn_end.textOutput` carries the whole text as user-facing (`working: null`), so a `<working>` block the model still emits is delivered to the consumer verbatim. For a voice consumer that means TTS speaks it out loud; the duplex `talker_delta` stream still filters the tags.
 
 Concretely:
 

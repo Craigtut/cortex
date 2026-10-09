@@ -11,14 +11,13 @@ import type { AgentMessage } from '../context-manager.js';
 import type { CompactionManager } from '../compaction/index.js';
 import { payloadOf } from '../event-bridge.js';
 import type { EventBridge } from '../event-bridge.js';
-import { turnInputTokens, turnText } from '../pi-message.js';
+import { turnInputTokens } from '../pi-message.js';
 import type { PromptWatchdogDiagnostics } from '../prompt-diagnostics.js';
 import type {
   AgentTextOutput,
   CortexLogger,
   LoopOriginContext,
 } from '../types.js';
-import { parseWorkingTags } from '../working-tags.js';
 import type { HandlerList } from './handler-list.js';
 import type { LoopUsage } from './loop-usage.js';
 
@@ -147,12 +146,9 @@ export function wireLoopEvents(bridge: EventBridge, deps: LoopEventDeps): () => 
       }
 
       // Forwarded child turns never reach onTurnComplete (raw sub-agent
-      // text would leak into the parent's chat). With working tags off the
-      // bridge does not parse, so the raw text is parsed here.
-      if (!isChildEvent) {
-        const text = event.textOutput ? null : turnText(event.data);
-        const output = event.textOutput ?? (text ? parseWorkingTags(text) : null);
-        if (output) deps.turnComplete.emit(output, deps.origin);
+      // text would leak into the parent's chat).
+      if (!isChildEvent && event.textOutput) {
+        deps.turnComplete.emit(event.textOutput, deps.origin);
       }
     }),
   );

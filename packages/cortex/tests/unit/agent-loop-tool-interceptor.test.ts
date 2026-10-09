@@ -60,6 +60,8 @@ function buildLoopWithHook(
     workingDirectory: '/tmp/test-workspace',
     initialBasePrompt: 'Test prompt',
     slots: [],
+    // The reminder path under test exists only with working tags on (off by default).
+    workingTags: { enabled: true },
     ...configOverrides,
   };
   const Ctor = AgentLoop as unknown as TestAgentLoopConstructor;
@@ -123,6 +125,16 @@ describe('afterToolCall without an interceptor (pre-existing behavior)', () => {
 
   it('leaves results untouched when working tags are disabled', async () => {
     const { hook } = buildLoopWithHook({ workingTags: { enabled: false } });
+    const out = await hook({
+      toolCall: { name: 'Bash' },
+      result: textResult('output'),
+      isError: false,
+    });
+    expect(out).toBeUndefined();
+  });
+
+  it('leaves results untouched by default (working tags are off)', async () => {
+    const { hook } = buildLoopWithHook({ workingTags: undefined });
     const out = await hook({
       toolCall: { name: 'Bash' },
       result: textResult('output'),

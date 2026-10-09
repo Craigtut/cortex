@@ -555,8 +555,18 @@ describe('AgentLoop', () => {
       expect(prompt.startsWith('You are a helpful assistant.')).toBe(true);
     });
 
-    it('includes Response Delivery when working tags enabled (default)', () => {
+    it('omits Response Delivery and every working-tags instruction by default', () => {
       const agent = createTestAgentLoop(piAgent, config);
+      const prompt = agent.composeSystemPrompt('Consumer content');
+
+      expect(agent.isWorkingTagsEnabled).toBe(false);
+      expect(prompt).toContain('# Tool Usage');
+      expect(prompt).not.toContain('# Response Delivery');
+      expect(prompt).not.toContain('<working>');
+    });
+
+    it('includes Response Delivery when working tags are enabled', () => {
+      const agent = createTestAgentLoop(piAgent, { ...config, workingTags: { enabled: true } });
       const prompt = agent.composeSystemPrompt('Consumer content');
 
       expect(prompt).toContain('# Response Delivery');
@@ -613,7 +623,7 @@ describe('AgentLoop', () => {
     });
 
     it('swaps the Tool Usage variant when working tags are toggled at runtime', () => {
-      const agent = createTestAgentLoop(piAgent, config);
+      const agent = createTestAgentLoop(piAgent, { ...config, workingTags: { enabled: true } });
       agent.setBasePrompt('Consumer');
       expect(agent.getCurrentSystemPrompt()).toContain('<working>');
 

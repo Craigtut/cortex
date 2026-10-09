@@ -155,6 +155,14 @@ export function parseWorkingTags(text: string): AgentTextOutput {
   };
 }
 
+/**
+ * A turn's text output when working tags are off: nothing was asked to sit
+ * inside tags, so the whole text is user-facing.
+ */
+export function plainTextOutput(text: string): AgentTextOutput {
+  return { userFacing: text.trim(), working: null, raw: text };
+}
+
 // ---------------------------------------------------------------------------
 // Streaming filter (voice-safe deltas)
 // ---------------------------------------------------------------------------

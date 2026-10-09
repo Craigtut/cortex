@@ -166,8 +166,28 @@ describe('EventBridge', () => {
       });
 
       const event: CortexEvent = listener.mock.calls[0][0];
-      // When working tags are disabled, textOutput is not set
-      expect(event.textOutput).toBeUndefined();
+      // With working tags off nothing was asked to sit inside tags, so the
+      // whole text is user-facing. Consumers (duplex headlines,
+      // onTurnComplete) still get the turn's text.
+      expect(event.textOutput).toEqual({
+        userFacing: 'Hello <working>internal</working> world',
+        working: null,
+        raw: 'Hello <working>internal</working> world',
+      });
+    });
+
+    it('treats working tags as off by default', () => {
+      const defaultBridge = new EventBridge();
+      const defaultSource = createMockSource();
+      defaultBridge.wire(defaultSource);
+      const listener = vi.fn();
+      defaultBridge.on('turn_end', listener);
+
+      defaultSource.emit({ type: 'turn_end', text: 'Answer <working>aside</working> here.' });
+
+      const event: CortexEvent = listener.mock.calls[0][0];
+      expect(event.textOutput?.userFacing).toBe('Answer <working>aside</working> here.');
+      expect(event.textOutput?.working).toBeNull();
     });
   });
 

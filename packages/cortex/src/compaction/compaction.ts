@@ -37,16 +37,7 @@ export const COMPACTION_DEFAULTS: CompactionConfig = {
 
 const DEFAULT_SUMMARIZATION_PROMPT = `Your task is to create a detailed summary of the conversation so far. This summary will replace the conversation history, so it must capture everything needed to continue work without losing context. A small tail of the most recent turns is preserved separately and does not need to be repeated.
 
-Before writing your summary, analyze the conversation inside <analysis> tags. Walk through the conversation chronologically and note:
-- Each user request and how it was addressed
-- Key decisions and their rationale
-- Tool calls made, what they returned, and any errors
-- User feedback or corrections (especially when you were told to do something differently)
-- What was being worked on most recently
-
-The <analysis> block is a private scratchpad. Keep it concise (a line or two per point). Save all detail for the <summary> block.
-
-Then write your summary inside <summary> tags with the following sections:
+Write your summary inside <summary> tags with the following sections:
 
 1. Primary Request and Intent
    Capture all user requests and intents in detail. Preserve the user's exact words for directives, preferences, and constraints.
@@ -97,10 +88,12 @@ Be thorough. Err on the side of including information that would prevent duplica
 
 /**
  * Extract the <summary> content from the LLM's compaction output.
- * The prompt asks for <analysis> (scratchpad) then <summary> (the actual summary).
- * We strip the analysis and keep only the summary content.
- * If no <summary> tags are found, return the full output (the model may
- * have skipped the tags but still produced useful content).
+ * The prompt asks for the summary inside <summary> tags, and only for that:
+ * a reasoning section in the output is what Anthropic's
+ * `reasoning_extraction` classifier refuses. A stray <analysis> block a
+ * model writes anyway is still stripped. If no <summary> tags are found,
+ * return the full output (the model may have skipped the tags but still
+ * produced useful content).
  */
 export function extractSummaryContent(raw: string): string {
   const match = raw.match(/<summary>([\s\S]*?)<\/summary>/);

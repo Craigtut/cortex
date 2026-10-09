@@ -43,7 +43,7 @@ await agent.prompt('List the top-level files in this workspace.');
 await agent.destroy();
 ```
 
-`prompt()` sends user input and never throws on a busy agent, but what it resolves with depends on the mode. In passthrough, concurrent calls serialize and each resolves against the turn that carries its input. In duplex there is no such queue, deliberately: a call arriving while the talker is busy parks and rides the talker's next run, resolving `undefined` when the conversation next settles rather than with that turn's result. Barge-in is the conversation's core event, so new input has to interrupt rather than wait its turn. When the return value is not `undefined` it is the underlying pi-agent-core result and should be treated as opaque. Either way, do not render from it: most applications render assistant text from `onTurnComplete()` (using `output.userFacing` when working tags are enabled) or from the session log.
+`prompt()` sends user input and never throws on a busy agent, but what it resolves with depends on the mode. In passthrough, concurrent calls serialize and each resolves against the turn that carries its input. In duplex there is no such queue, deliberately: a call arriving while the talker is busy parks and rides the talker's next run, resolving `undefined` when the conversation next settles rather than with that turn's result. Barge-in is the conversation's core event, so new input has to interrupt rather than wait its turn. When the return value is not `undefined` it is the underlying pi-agent-core result and should be treated as opaque. Either way, do not render from it: most applications render assistant text from `onTurnComplete()` (`output.userFacing`; with working tags off it is the whole text) or from the session log.
 
 If `getApiKey` is omitted, pi-ai falls back to provider environment variables such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
 
@@ -200,7 +200,7 @@ Loop configuration, routed for you:
 | `getApiKey` | Optional async provider credential resolver | shared |
 | `tools` | Consumer tools | reasoner only |
 | `slots` | Optional ordered persistent context slots | both loops, identical content |
-| `workingTags.enabled` | Defaults to `true`; controls `<working>` response parsing guidance | both loops |
+| `workingTags.enabled` | Defaults to `false`; controls `<working>` response parsing guidance. Claude 5 models refuse it (working-tags.md) | both loops |
 | `budgetGuard.maxTurns` / `maxCost` | Per-prompt safety limits. Your values reach the reasoner only; the talker runs a facade-built guard with a hard turn cap and no cost cap of yours | reasoner, plus `duplex.maxTotalCost` as the session aggregate |
 | `contextWindowLimit` | Optional compaction budget below the model's real window | per loop: the same number on both, clamped separately against each loop's own model window |
 | `disableTools` | Built-in tool names to exclude | reasoner and sub-agents |

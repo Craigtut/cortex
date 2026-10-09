@@ -50,7 +50,7 @@ These sections are appended after the consumer's content. They are the operation
 
 ### Section 1: Response Delivery (Conditional)
 
-Present only when `workingTags.enabled` is true (the default). A slim introduction to `<working>` tags. The heavier behavioral guidance lives in Section 4 (Tool Usage) where it has more impact alongside tool instructions.
+Present only when `workingTags.enabled` is true (default false; Claude 5 models refuse these instructions, see working-tags.md). A slim introduction to `<working>` tags. The heavier behavioral guidance lives in Section 4 (Tool Usage) where it has more impact alongside tool instructions.
 
 ```
 # Response Delivery

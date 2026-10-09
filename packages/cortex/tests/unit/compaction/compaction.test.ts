@@ -320,6 +320,15 @@ describe('runCompaction', () => {
     complete = mockComplete('Generated summary of the conversation.');
   });
 
+  it('asks for the summary only, with no reasoning section', async () => {
+    await runCompaction(buildHistory(10), { ...COMPACTION_DEFAULTS, preserveRecentTurns: 4 }, complete);
+
+    const { systemPrompt } = vi.mocked(complete).mock.calls[0]![0] as { systemPrompt: string };
+    expect(systemPrompt).toContain('<summary>');
+    // A scratchpad in the output is what Anthropic's reasoning_extraction classifier refuses.
+    expect(systemPrompt).not.toMatch(/<analysis>|scratchpad/i);
+  });
+
   it('generates a summary and replaces old history', async () => {
     const history = buildHistory(10); // 20 messages
     const config = { ...COMPACTION_DEFAULTS, preserveRecentTurns: 4 };

@@ -35,7 +35,7 @@ import type {
 import { extractPayload } from './event-payloads.js';
 import type { CortexEventPayloads } from './event-payloads.js';
 import { NOOP_LOGGER } from './noop-logger.js';
-import { parseWorkingTags } from './working-tags.js';
+import { parseWorkingTags, plainTextOutput } from './working-tags.js';
 import { assistantUsage, readUsage, turnText } from './pi-message.js';
 
 export { payloadOf } from './event-payloads.js';
@@ -66,7 +66,11 @@ export interface CortexEvent {
   type: CortexEventType;
   /** The original pi-agent-core event data (opaque to the bridge). */
   data?: unknown;
-  /** Parsed text output, present only for turn_end events. */
+  /**
+   * The turn's text output, on turn_end events that carry text. Working tags
+   * are parsed out only when they are enabled; otherwise all of it is
+   * user-facing.
+   */
   textOutput?: AgentTextOutput;
   /**
    * Typed payload for tool events (tool_call_start, tool_call_update,
@@ -195,10 +199,10 @@ export class EventBridge {
   /**
    * Create an EventBridge.
    *
-   * @param workingTagsEnabled - Whether to parse working tags on turn_end
+   * @param workingTagsEnabled - Whether to parse working tags on turn_end (default false, as AgentLoop)
    * @param logger - Optional logger for diagnostics (defaults to silent no-op)
    */
-  constructor(workingTagsEnabled = true, logger?: CortexLogger) {
+  constructor(workingTagsEnabled = false, logger?: CortexLogger) {
     this.workingTagsEnabled = workingTagsEnabled;
     this.logger = logger ?? NOOP_LOGGER;
   }
@@ -382,11 +386,9 @@ export class EventBridge {
         cortexEvent.usage = usage;
       }
 
-      if (this.workingTagsEnabled) {
-        const text = turnText(piEvent);
-        if (text) {
-          cortexEvent.textOutput = parseWorkingTags(text);
-        }
+      const text = turnText(piEvent);
+      if (text) {
+        cortexEvent.textOutput = this.workingTagsEnabled ? parseWorkingTags(text) : plainTextOutput(text);
       }
     }
 

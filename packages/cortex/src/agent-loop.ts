@@ -169,7 +169,7 @@ export class AgentLoop implements
     this.config = config;
     this.loopPath = config.loopPath ?? DEFAULT_LOOP_PATH;
     this.logger = prefixLoggerWithLoopPath(config.logger ?? NOOP_LOGGER, this.loopPath);
-    this.workingTagsEnabled = config.workingTags?.enabled ?? true;
+    this.workingTagsEnabled = config.workingTags?.enabled ?? false;
     this.parts = assembleLoop({
       agent,
       config,

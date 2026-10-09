@@ -267,7 +267,7 @@ interface MicrocompactionConfig {
 </compaction-summary>
 ```
 
-**Summarization prompt**: The default prompt is general-purpose (Cortex is a standalone framework used by any consumer). It follows a proven pattern used by production coding agents: require an `<analysis>` scratchpad first (stripped from the final output), then a structured `<summary>` with explicit sections. Consumers can override via `customPrompt`.
+**Summarization prompt**: The default prompt is general-purpose (Cortex is a standalone framework used by any consumer). It asks for a structured `<summary>` with explicit sections and nothing else: a reasoning scratchpad in the output (an earlier version asked for an `<analysis>` block first) is what Anthropic's `reasoning_extraction` classifier refuses on Claude 5 models, which run summarization as the primary model. Consumers can override via `customPrompt`.
 
 The prompt requires 11 sections:
 1. **Primary Request and Intent** - All user requests, preserved verbatim
@@ -282,7 +282,7 @@ The prompt requires 11 sections:
 10. **Key Decisions (Cumulative)** - Carried forward across compactions to prevent progressive loss
 11. **Optional Next Step** - Only if directly aligned with the user's most recent request
 
-**Output parsing**: The model produces `<analysis>` (private reasoning scratchpad) then `<summary>` (the actual summary). The analysis is stripped; only the summary content is kept and wrapped in the `<compaction-summary>` tag.
+**Output parsing**: The content of the `<summary>` tags is kept and wrapped in the `<compaction-summary>` tag. A stray `<analysis>` block a model writes anyway is stripped.
 
 **Consumer override**: The consumer can provide a `customPrompt` via config that narrows the focus (e.g., skip certain sections if domain-specific compaction already covers them).
 

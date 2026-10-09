@@ -335,7 +335,12 @@ export interface AgentLoopConfig {
 
   /** Working tags configuration. */
   workingTags?: {
-    /** Whether to enable working tags. Default: true. */
+    /**
+     * Whether to enable working tags. Default: false. Claude models with
+     * Anthropic's `reasoning_extraction` classifier (the Claude 5 family)
+     * refuse requests carrying the working-tags instructions, which ask the
+     * model to write its reasoning into the response.
+     */
     enabled?: boolean;
   };
 
