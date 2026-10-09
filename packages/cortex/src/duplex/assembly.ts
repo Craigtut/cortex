@@ -10,7 +10,6 @@ import { McpClientManager } from '../mcp-client.js';
 import type { AgentLoopConfig, CortexCompactionConfig, RetryPolicy } from '../types.js';
 import type { CortexTool } from '../tool-contract.js';
 import type { CortexModel } from '../model-wrapper.js';
-import { COMPACTION_DEFAULTS } from '../compaction/compaction.js';
 import { OBSERVATIONAL_MEMORY_DEFAULTS } from '../compaction/observational/constants.js';
 import { TOOL_NAMES } from '../tools/index.js';
 import type { SandboxSession } from '../sandbox/session.js';
@@ -144,24 +143,17 @@ function stripUndefined<T extends object>(value: T | undefined): Partial<T> {
 function buildTalkerCompactionConfig(
   consumer: Partial<CortexCompactionConfig> | undefined,
 ): Partial<CortexCompactionConfig> {
-  // Stagger relative to the reasoner's EFFECTIVE thresholds: the consumer's
-  // value when set, the strategy default otherwise. Defaults stagger too;
-  // an unset classic threshold still lands 0.70 on the reasoner, and the
-  // talker must sit below whatever the reasoner actually runs.
+  // Stagger relative to the reasoner's EFFECTIVE threshold: the consumer's
+  // value when set, the default otherwise. The talker must sit below
+  // whatever the reasoner actually runs.
   const reasonerActivation = consumer?.observational?.activationThreshold
     ?? OBSERVATIONAL_MEMORY_DEFAULTS.activationThreshold;
-  const reasonerClassic = consumer?.compaction?.threshold ?? COMPACTION_DEFAULTS.threshold;
   return {
     ...stripUndefined(consumer),
     nonBlocking: true,
     observational: {
       ...stripUndefined(consumer?.observational),
       activationThreshold: staggerBelow(reasonerActivation),
-    },
-    compaction: {
-      ...COMPACTION_DEFAULTS,
-      ...stripUndefined(consumer?.compaction),
-      threshold: staggerBelow(reasonerClassic),
     },
   };
 }

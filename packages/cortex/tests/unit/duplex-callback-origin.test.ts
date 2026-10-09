@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { AgentMessage } from '../../src/context-manager.js';
-import type { CompleteFn } from '../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../src/compaction/observational/types.js';
 import {
   createDuplexScenario,
   createRealDuplexScenario,
@@ -130,7 +130,7 @@ describe('fan-out callback origin', () => {
     // threshold below would never be crossed.
     const h = await createRealDuplexScenario({
       contextWindowLimit: 20_000,
-      compaction: { strategy: 'observational', observational: { activationThreshold: 0.35 } },
+      compaction: { observational: { activationThreshold: 0.35 } },
     });
     const observed: string[] = [];
     h.facade.onObservation((_event, origin) => observed.push(origin.loopPath));

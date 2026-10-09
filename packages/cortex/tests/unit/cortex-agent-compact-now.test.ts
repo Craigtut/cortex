@@ -12,7 +12,7 @@ import {
   waitUntil,
 } from './duplex-scenario-harness.js';
 import type { AgentMessage } from '../../src/context-manager.js';
-import type { CompleteFn } from '../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../src/compaction/observational/types.js';
 
 afterEach(async () => {
   vi.restoreAllMocks();

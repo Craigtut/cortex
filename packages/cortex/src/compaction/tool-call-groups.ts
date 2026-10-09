@@ -8,9 +8,8 @@
  * preceding matching call, so the assistant message plus its consecutive
  * toolResult messages form ONE atomic unit for compaction purposes:
  *
- *   - Layer 2 (summarization) must never split the preserved-tail boundary
- *     inside a group.
- *   - Layer 3 (emergency truncation) must drop the whole group or none of it.
+ *   - A swap, a view cut, or an overflow drop must remove the whole group
+ *     or none of it (observational/units.ts).
  *
  * Orphaning either side corrupts the conversation: an orphaned toolResult
  * (result without its call) is a hard provider 400; an orphaned toolCall

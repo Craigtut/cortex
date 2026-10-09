@@ -37,10 +37,10 @@ export interface IdleDigestionOptions {
   /**
    * Wall-clock budget applied to EACH bounded phase of the digestion
    * (default 60s): the observer catch-up wait, then the blocking threshold
-   * pass (activation, reflection, classic summarization). Digestion holds
-   * the loop gate, so a hung utility request times the digestion out
-   * instead of wedging it. If the hung call settles later, its history
-   * mutations are discarded rather than applied over live state.
+   * pass (activation, reflection). Digestion holds the loop gate, so a hung
+   * utility request times the digestion out instead of wedging it. If the
+   * hung call settles later, its history mutations are discarded rather
+   * than applied over live state.
    */
   observerTimeoutMs?: number;
   /**
@@ -61,7 +61,7 @@ export interface IdleDigestionResult {
   observerRan: boolean;
   /**
    * Whether the threshold pass changed the durable history (observation
-   * activation trimmed it, or summarization rewrote it).
+   * activation swapped observations in for older messages).
    */
   historyCompacted: boolean;
   /** Whether the pass was cut short by {@link IdleDigestionOptions.signal}. */
@@ -276,17 +276,15 @@ export class ContextPipeline {
     );
     if (passIsStale()) return result;
 
-    if (this.ports.compaction().strategy === 'observational') {
+    // The slot carries the log once there is one; until then it stays
+    // empty rather than holding a preamble about nothing.
+    if (this.ports.compaction().hasObservations()) {
       const slotContent = this.ports.compaction().getObservationSlotContent();
-      if (slotContent) {
-        this.ports.slots.setSlot('_observations', slotContent);
-        if (this.ports.compaction().hasObservations()) {
-          // The observation slot is the last one, right before history.
-          const obsSlotIndex = this.ports.slots.historyStart - 1;
-          if (obsSlotIndex >= 0 && obsSlotIndex < result.messages.length) {
-            result.messages[obsSlotIndex] = { role: 'user', content: slotContent, timestamp: Date.now() };
-          }
-        }
+      this.ports.slots.setSlot('_observations', slotContent);
+      // The observation slot is the last one, right before history.
+      const obsSlotIndex = this.ports.slots.historyStart - 1;
+      if (obsSlotIndex >= 0 && obsSlotIndex < result.messages.length) {
+        result.messages[obsSlotIndex] = { role: 'user', content: slotContent, timestamp: Date.now() };
       }
     }
 
@@ -429,22 +427,19 @@ export class ContextPipeline {
       // 1. Observer catch-up, so the next activation is a cheap merge.
       // Preempting abandons only the wait; the observer still lands its
       // chunk.
-      let observerRan = false;
-      if (this.ports.compaction().strategy === 'observational') {
-        const outcome = await raceAbort(
-          this.ports.compaction().digestPendingObservationBuffers(
-            this.ports.agentState().messages,
-            this.ports.slots.historyStart,
-            options?.observerTimeoutMs,
-          ),
-          signal,
-        );
-        if (outcome === ABORTED) {
-          this.ports.logger.debug('idle digestion preempted during observer catch-up');
-          return { observerRan: false, historyCompacted: false, preempted: true };
-        }
-        observerRan = outcome;
+      const outcome = await raceAbort(
+        this.ports.compaction().digestPendingObservationBuffers(
+          this.ports.agentState().messages,
+          this.ports.slots.historyStart,
+          options?.observerTimeoutMs,
+        ),
+        signal,
+      );
+      if (outcome === ABORTED) {
+        this.ports.logger.debug('idle digestion preempted during observer catch-up');
+        return { observerRan: false, historyCompacted: false, preempted: true };
       }
+      const observerRan = outcome;
       if (signal?.aborted) {
         return { observerRan, historyCompacted: false, preempted: true };
       }

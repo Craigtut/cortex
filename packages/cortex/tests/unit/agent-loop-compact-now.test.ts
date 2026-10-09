@@ -13,7 +13,7 @@ import type { PiAgent, PiModel } from '../../src/agent-loop.js';
 import type { AgentLoopConfig } from '../../src/types.js';
 import type { AgentMessage } from '../../src/context-manager.js';
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core';
-import type { CompleteFn } from '../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../src/compaction/observational/types.js';
 import type { ObservationEvent } from '../../src/compaction/index.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 

@@ -13,7 +13,7 @@ afterEach(async () => { await Promise.all(loops.splice(0).map(loop => loop.destr
 async function createLoop(server = ollamaServer(), tools: unknown[] = []) {
   const model = await new ProviderManager().createOllamaModel({ modelId: 'test', fetch: server.fetch });
   const loop = await AgentLoop.create({ model, workingDirectory: process.cwd(), initialBasePrompt: 'You are a test agent.',
-    compaction: { strategy: 'classic' }, disableTools: Object.values(TOOL_NAMES), enableSubAgentTool: false, enableLoadSkillTool: false,
+    disableTools: Object.values(TOOL_NAMES), enableSubAgentTool: false, enableLoadSkillTool: false,
     tools: tools as never, thinkingLevel: 'low',
   });
   loops.push(loop);
@@ -68,7 +68,7 @@ describe('Ollama through the installed agent loop', () => {
   it('keeps one shared allocation while loops use independent compaction budgets', async () => {
     const { loop, model, server } = await createLoop();
     const other = await AgentLoop.create({ model, contextWindowLimit: 4096,
-      workingDirectory: process.cwd(), compaction: { strategy: 'classic' },
+      workingDirectory: process.cwd(),
       disableTools: Object.values(TOOL_NAMES), enableSubAgentTool: false, enableLoadSkillTool: false,
     });
     loops.push(other);

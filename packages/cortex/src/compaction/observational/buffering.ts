@@ -478,23 +478,6 @@ export class BufferingCoordinator {
 
   /**
    * Reconcile buffer state after the source conversation history was
-   * truncated from the front (reactive overflow truncation).
-   *
-   * Every index shifts down with the messages it points at. Completed chunks
-   * keep their text, which stays valid. An in-flight observer whose
-   * messages were dropped is invalidated; one entirely past the drop moves
-   * with its messages and still lands.
-   *
-   * @param droppedFrontCount - number of messages removed from the front of
-   *   the source history. No-op when zero or negative.
-   */
-  onSourceTruncated(droppedFrontCount: number): void {
-    this.ledger.onFrontDropped(droppedFrontCount);
-    if (!this.ledger.pendingRange()) this.inFlightObserver = null;
-  }
-
-  /**
-   * Reconcile buffer state after the source conversation history was
    * trimmed from the tail (an aborted or failed run's stub, or a failed
    * background delivery being unwound).
    *

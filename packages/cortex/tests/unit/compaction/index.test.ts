@@ -60,16 +60,20 @@ describe('buildCompactionConfig', () => {
 
     expect(config.microcompaction.maxResultTokens).toBe(25_000);
     expect(config.microcompaction.trimFloorRatio).toBe(0.25); // default
-    expect(config.compaction.threshold).toBe(0.70); // default
   });
 
-  it('applies partial compaction overrides', () => {
-    const config = buildCompactionConfig({
-      compaction: { threshold: 0.80, preserveRecentTurns: 8 },
-    });
-
-    expect(config.compaction.threshold).toBe(0.80);
-    expect(config.compaction.preserveRecentTurns).toBe(8);
+  it('rejects the removed classic strategy and its settings, naming the removal', () => {
+    const removed = [
+      { strategy: 'classic' },
+      { compaction: { threshold: 0.8, preserveRecentTurns: 8 } },
+      { adaptive: { enabled: false } },
+    ];
+    for (const legacy of removed) {
+      expect(() => buildCompactionConfig(legacy as Partial<CortexCompactionConfig>))
+        .toThrow('Classic compaction was removed');
+    }
+    // Precondition: the check rejects the removed settings, not any config.
+    expect(() => buildCompactionConfig({ strategy: 'observational' } as Partial<CortexCompactionConfig>)).not.toThrow();
   });
 
   it('applies failsafe overrides', () => {
@@ -89,7 +93,7 @@ describe('CompactionManager', () => {
   let manager: CompactionManager;
 
   beforeEach(() => {
-    manager = new CompactionManager({ ...DEFAULT_COMPACTION_CONFIG, strategy: 'classic' }, 2);
+    manager = new CompactionManager(buildCompactionConfig(), 2);
   });
 
   // -----------------------------------------------------------------------
@@ -326,18 +330,26 @@ describe('CompactionManager', () => {
   // -----------------------------------------------------------------------
 
   describe('applyInTransformContext', () => {
+    /** Run the pass over `slots` + `history`, with the source accessors. */
+    async function apply(slots: AgentMessage[], history: AgentMessage[]): Promise<{ result: AgentContext; source: AgentMessage[] }> {
+      let source = [...history];
+      const result = await manager.applyInTransformContext(
+        makeContext([...slots, ...history]),
+        (ctx) => ctx.messages.slice(2),
+        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
+        () => source,
+        (h) => { source = h; },
+      );
+      return { result, source };
+    }
+
     it('returns context unchanged when contextWindow is 0', async () => {
       const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
       const history = buildHistory(5);
-      const context = makeContext([...slots, ...history]);
 
-      const result = await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-      );
+      const { result } = await apply(slots, history);
 
-      expect(result.messages).toEqual(context.messages);
+      expect(result.messages).toEqual([...slots, ...history]);
     });
 
     it('applies microcompaction when above soft threshold', async () => {
@@ -359,121 +371,35 @@ describe('CompactionManager', () => {
         makeAssistantMsg('turn 6'),
         makeAssistantMsg('recent'),
       ];
-      const context = makeContext([...slots, ...history]);
 
-      const result = await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-      );
+      const { result } = await apply(slots, history);
 
       // Slots should be untouched
       expect(result.messages[0]).toBe(slots[0]);
       expect(result.messages[1]).toBe(slots[1]);
     });
 
-    it('triggers Layer 3 when tokens exceed 90% threshold', async () => {
+    it('cuts the view, not the source, past the emergency ceiling', async () => {
       manager.setContextWindow(100_000);
-      manager.updateCurrentContextTokenCount(95_000); // 95% > 90% threshold
+      // A warm cache keeps L1 out of the way.
+      manager.setCacheInfo('anthropic', 'short');
+      manager.updateCurrentContextTokenCount(99_000);
 
       const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
-      const history = buildHistory(5);
-      const context = makeContext([...slots, ...history]);
+      const history = Array.from({ length: 10 }, (_, i) =>
+        (i % 2 ? makeAssistantMsg('a'.repeat(40_000)) : makeUserMsg(`question ${i}`)));
 
-      const result = await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-      );
+      const { result, source } = await apply(slots, history);
 
-      // Layer 3 fires unconditionally when above 90% threshold.
-      // Message count may or may not change depending on token estimates,
-      // but the method should complete without error.
-      expect(result.messages.length).toBeLessThanOrEqual(context.messages.length);
+      expect(result.messages.length).toBeLessThan(slots.length + history.length);
+      expect(source).toEqual(history);
     });
 
-    it('runs Layer 2 when completeFn and source accessors are provided and above 70%', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000); // 75% > 70% threshold
-
-      const mockComplete = vi.fn().mockResolvedValue('Summary of conversation');
-      manager.setCompleteFn(mockComplete);
-
-      const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
-      const history = buildHistory(10); // 20 messages
-      const context = makeContext([...slots, ...history]);
-
-      // Simulate source history (the original transcript)
-      let sourceHistory = [...history];
-
-      const result = await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-        () => sourceHistory,
-        (h) => { sourceHistory = h; },
-      );
-
-      // Layer 2 should have fired (completeFn called)
-      expect(mockComplete).toHaveBeenCalled();
-      // Source history should be updated (compacted)
-      expect(sourceHistory.length).toBeLessThan(history.length);
-      // Result should reflect the compacted state
-      expect(result.messages.length).toBeLessThan(context.messages.length);
-    });
-
-    it('does not run Layer 2 when source accessors are not provided', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000); // 75% > 70% threshold
-
-      const mockComplete = vi.fn().mockResolvedValue('Summary');
-      manager.setCompleteFn(mockComplete);
-
-      const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
-      const history = buildHistory(10);
-      const context = makeContext([...slots, ...history]);
-
-      // No source accessors: Layer 2 should not fire
-      await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-      );
-
-      expect(mockComplete).not.toHaveBeenCalled();
-    });
-
-    it('fires onBeforeCompaction handlers during Layer 2 in transformContext', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000);
-      manager.setCompleteFn(vi.fn().mockResolvedValue('Summary'));
-
-      const callOrder: string[] = [];
-      manager.onBeforeCompaction(async () => {
-        callOrder.push('before');
-      });
-
-      const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
-      const history = buildHistory(10);
-      const context = makeContext([...slots, ...history]);
-      let sourceHistory = [...history];
-
-      await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-        () => sourceHistory,
-        (h) => { sourceHistory = h; },
-      );
-
-      expect(callOrder[0]).toBe('before');
-    });
-
-    it('uses the current transformed-context estimate when it exceeds the stale session token count', async () => {
+    it('activates on the current transformed-context estimate when the measured count is stale', async () => {
       manager.setContextWindow(1_000);
       manager.updateCurrentContextTokenCount(100);
-      const mockComplete = vi.fn().mockResolvedValue('Fresh summary');
-      manager.setCompleteFn(mockComplete);
+      const mockComplete = vi.fn().mockResolvedValue('<observations>\n* (10:00) observed\n</observations>');
+      manager.setObservationalCompleteFn(mockComplete);
 
       const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
       const largeTurn = 'x'.repeat(5_000);
@@ -482,123 +408,13 @@ describe('CompactionManager', () => {
         makeAssistantMsg(largeTurn),
         makeUserMsg(largeTurn),
         makeAssistantMsg(largeTurn),
-        makeUserMsg(largeTurn),
-        makeAssistantMsg(largeTurn),
-        makeUserMsg(largeTurn),
-        makeAssistantMsg(largeTurn),
+        makeUserMsg('latest'),
       ];
-      const context = makeContext([...slots, ...history]);
-      let sourceHistory = [...history];
 
-      await manager.applyInTransformContext(
-        context,
-        (ctx) => ctx.messages.slice(2),
-        (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-        () => sourceHistory,
-        (hist) => { sourceHistory = hist; },
-      );
+      const { source } = await apply(slots, history);
 
       expect(mockComplete).toHaveBeenCalled();
-      expect(sourceHistory.length).toBeLessThan(history.length);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Manual compaction (convenience API)
-  // -----------------------------------------------------------------------
-
-  describe('checkAndRunCompaction', () => {
-    it('returns null when below threshold', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(100_000); // 50% < 70%
-
-      const history = buildHistory(5);
-      const result = await manager.checkAndRunCompaction(
-        () => history,
-        () => {},
-      );
-
-      expect(result).toBeNull();
-    });
-
-    it('runs Layer 2 when threshold is exceeded', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000); // 75% > 70%
-
-      const mockComplete = vi.fn().mockResolvedValue('Summary of conversation');
-      manager.setCompleteFn(mockComplete);
-
-      const history = buildHistory(10); // 20 messages
-      let replacedHistory: AgentMessage[] | null = null;
-
-      const result = await manager.checkAndRunCompaction(
-        () => history,
-        (h) => { replacedHistory = h; },
-      );
-
-      expect(result).not.toBeNull();
-      expect(result!.summary).toBe('Summary of conversation');
-      expect(replacedHistory).not.toBeNull();
-      expect(replacedHistory!.length).toBeLessThan(history.length);
-    });
-
-    it('fires onBeforeCompaction handlers before summarization', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000);
-      manager.setCompleteFn(vi.fn().mockResolvedValue('Summary'));
-
-      const callOrder: string[] = [];
-      manager.onBeforeCompaction(async () => {
-        callOrder.push('before');
-      });
-
-      const history = buildHistory(10);
-      await manager.checkAndRunCompaction(
-        () => history,
-        () => { callOrder.push('set'); },
-      );
-
-      expect(callOrder[0]).toBe('before');
-    });
-
-    it('fires onPostCompaction and onCompactionResult handlers', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000);
-      manager.setCompleteFn(vi.fn().mockResolvedValue('Summary'));
-
-      const postHandler = vi.fn();
-      const resultHandler = vi.fn();
-      manager.onPostCompaction(postHandler);
-      manager.onCompactionResult(resultHandler);
-
-      const history = buildHistory(10);
-      await manager.checkAndRunCompaction(
-        () => history,
-        () => {},
-      );
-
-      expect(postHandler).toHaveBeenCalledOnce();
-      expect(resultHandler).toHaveBeenCalledOnce();
-    });
-
-    it('returns null when contextWindow is 0', async () => {
-      manager.updateCurrentContextTokenCount(150_000);
-      const result = await manager.checkAndRunCompaction(
-        () => buildHistory(10),
-        () => {},
-      );
-      expect(result).toBeNull();
-    });
-
-    it('returns null for empty history', async () => {
-      manager.setContextWindow(200_000);
-      manager.updateCurrentContextTokenCount(150_000);
-
-      const result = await manager.checkAndRunCompaction(
-        () => [],
-        () => {},
-      );
-      expect(result).toBeNull();
+      expect(source.length).toBeLessThan(history.length);
     });
   });
 
@@ -607,11 +423,12 @@ describe('CompactionManager', () => {
   // -----------------------------------------------------------------------
 
   describe('handleOverflowError', () => {
-    it('performs emergency truncation on overflow', () => {
+    it('drops what does not fit and records the gap', () => {
       manager.setContextWindow(100_000);
-      manager.updateCurrentContextTokenCount(95_000);
+      manager.updateCurrentContextTokenCount(150_000);
 
-      const history = buildHistory(20);
+      const history = Array.from({ length: 20 }, (_, i) =>
+        (i % 2 ? makeAssistantMsg('a'.repeat(30_000)) : makeUserMsg('u'.repeat(30_000))));
       let replacedHistory: AgentMessage[] | null = null;
 
       manager.handleOverflowError(
@@ -620,7 +437,8 @@ describe('CompactionManager', () => {
       );
 
       expect(replacedHistory).not.toBeNull();
-      expect(replacedHistory!.length).toBeLessThanOrEqual(history.length);
+      expect(replacedHistory!.length).toBeLessThan(history.length);
+      expect(manager.getObservationalMemoryState().observations).toContain('GAP:');
     });
 
     it('is a no-op for empty history', () => {

@@ -8,7 +8,7 @@ import { BufferingCoordinator } from '../../../../src/compaction/observational/b
 import { MemoryHealth } from '../../../../src/compaction/observational/health.js';
 import { InBandObserver } from '../../../../src/compaction/observational/in-band.js';
 import { SINGLE_ATTEMPT } from '../../../../src/compaction/observational/calls.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });

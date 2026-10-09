@@ -180,7 +180,6 @@ function createFacade(overrides?: Partial<CortexAgentConfig>): {
     slots: [],
     // Classic strategy: no observation slot, so post-slot history counts
     // stay simple; observational restore is exercised via the spy test.
-    compaction: { strategy: 'classic' },
     ...(overrides as Partial<AgentLoopConfig>),
   });
   const CortexAgentCtor = CortexAgent as unknown as TestCortexAgentConstructor;

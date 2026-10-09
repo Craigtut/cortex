@@ -51,10 +51,6 @@ import type { DirectCompletionContext } from '../cache-breakpoints.js';
 import type {
   AgentTextOutput,
   ClassifiedError,
-  CompactionDegradedInfo,
-  CompactionExhaustedInfo,
-  CompactionResult,
-  CompactionTarget,
   CortexLifecycleState,
   CortexUsage,
   DeadLetteredBackgroundResult,
@@ -305,15 +301,13 @@ export abstract class LoopSurface {
    * CortexAgent.getState() is the coherent composite and the only
    * supported persistence surface.
    */
-  getObservationalMemoryState(): ObservationalMemoryState | null {
+  getObservationalMemoryState(): ObservationalMemoryState {
     return this.topology.work.getObservationalMemoryState();
   }
 
   async digestIdle(options?: IdleDigestionOptions): Promise<IdleDigestionResult> {
     return this.topology.work.digestIdle(options);
   }
-
-  async checkAndRunCompaction(): Promise<CompactionResult | null> { return this.topology.work.checkAndRunCompaction(); }
 
   /** The work loop's, in both modes (see CortexAgent.compactNow for both loops). */
   async observeNow(options?: { signal?: AbortSignal }): Promise<ObserveNowResult> {
@@ -430,10 +424,6 @@ export abstract class LoopSurface {
     for (const loop of this.topology.resident) loop.setWorkingTagsEnabled(enabled);
   }
 
-  setLastInteractionTime(timestamp: number): void {
-    for (const loop of this.topology.resident) loop.setLastInteractionTime(timestamp);
-  }
-
   get isRunning(): boolean {
     return this.topology.resident.some((loop) => loop.isRunning);
   }
@@ -475,26 +465,6 @@ export abstract class LoopSurface {
 
   onRetryExhausted(handler: (info: RetryExhaustedInfo, origin: LoopOriginContext) => void): void {
     for (const loop of this.topology.resident) loop.onRetryExhausted(handler);
-  }
-
-  onBeforeCompaction(handler: (target: CompactionTarget, origin: LoopOriginContext) => Promise<void>): void {
-    for (const loop of this.topology.resident) loop.onBeforeCompaction(handler);
-  }
-
-  onPostCompaction(handler: (result: CompactionResult, origin: LoopOriginContext) => void): void {
-    for (const loop of this.topology.resident) loop.onPostCompaction(handler);
-  }
-
-  onCompactionError(handler: (error: Error, origin: LoopOriginContext) => void): void {
-    for (const loop of this.topology.resident) loop.onCompactionError(handler);
-  }
-
-  onCompactionDegraded(handler: (info: CompactionDegradedInfo, origin: LoopOriginContext) => void): void {
-    for (const loop of this.topology.resident) loop.onCompactionDegraded(handler);
-  }
-
-  onCompactionExhausted(handler: (info: CompactionExhaustedInfo, origin: LoopOriginContext) => void): void {
-    for (const loop of this.topology.resident) loop.onCompactionExhausted(handler);
   }
 
   onObservation(handler: (event: ObservationEvent, origin: LoopOriginContext) => void): void {

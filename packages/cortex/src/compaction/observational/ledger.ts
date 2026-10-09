@@ -156,22 +156,6 @@ export class ObservationLedger {
   }
 
   /**
-   * Messages were dropped from the front without a swap (reactive overflow
-   * truncation). Observed ones keep their chunk text, which stays buffered;
-   * a pending call whose messages were dropped is invalidated.
-   */
-  onFrontDropped(count: number): void {
-    if (count <= 0) return;
-    this.prefix = Math.max(0, this.prefix - count);
-    this.chunks = this.chunks.map((chunk) => ({ ...chunk, endIndex: Math.max(0, chunk.endIndex - count) }));
-    if (this.pending) {
-      this.pending = this.pending.start >= count
-        ? { ...this.pending, start: this.pending.start - count, end: this.pending.end - count }
-        : null;
-    }
-  }
-
-  /**
    * The source was trimmed from the tail to `length` (a failed run's stub).
    * Every index past it is clamped; chunk text about a trimmed stub is
    * harmless.

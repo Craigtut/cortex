@@ -169,7 +169,7 @@ describe('provider-cache', () => {
     });
 
     it('drive when L1 treats the cache as cold', () => {
-      const manager = new CompactionManager(buildCompactionConfig({ strategy: 'classic' }), 1);
+      const manager = new CompactionManager(buildCompactionConfig(), 1);
       manager.setCacheInfo('anthropic', 'short', undefined, { short: 30 });
       manager.updateCurrentContextTokenCount(1_000);
       const lastCall = manager.lastLlmCallTimestamp!;

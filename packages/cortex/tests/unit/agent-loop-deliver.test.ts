@@ -831,7 +831,7 @@ describe('AgentLoop.deliver consumer-prompt splice failure recovery', () => {
 
   it('does not re-deliver a spliced batch when a mid-run front trim moved the boundary', async () => {
     const piAgent = createMockPiAgent();
-    const loop = createLoop(piAgent, { compaction: { strategy: 'classic' } });
+    const loop = createLoop(piAgent);
     loop.restoreConversationHistory([
       { role: 'user', content: 'old question', timestamp: 1 } as AgentMessage,
       { role: 'assistant', content: 'old answer', timestamp: 2 } as AgentMessage,

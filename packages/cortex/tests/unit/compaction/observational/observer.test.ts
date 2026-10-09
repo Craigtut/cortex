@@ -9,7 +9,7 @@ import {
 } from '../../../../src/compaction/observational/observer.js';
 import { OBSERVER_SYSTEM_PROMPT } from '../../../../src/compaction/observational/constants.js';
 import { MemoryReplyError } from '../../../../src/compaction/observational/reply.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
 
 // ---------------------------------------------------------------------------

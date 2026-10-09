@@ -250,7 +250,7 @@ agent.getEventBridge().on('talker_delta', (event) => {
 
 Callbacks that can fire from more than one loop take an origin context as a second argument carrying the producer's `loopPath`. Handlers written against the old one-argument signature still compile and still run, but arity is not the thing to check: under duplex these now fire **twice per exchange**, once per resident loop, where a single-loop integration saw them once.
 
-Registered on both loops: `onLoopComplete`, `onError`, `onRetryScheduled`, `onRetrySucceeded`, `onRetryExhausted`, `onBeforeCompaction`, `onPostCompaction`, `onCompactionError`, `onCompactionDegraded`, `onCompactionExhausted`, `onObservation`, `onReflection`. That is the right default for diagnostics, where you want to see a reasoner failure, and the origin context tells the loops apart. It is the wrong default for anything that counts, dedupes, or renders once per exchange, so branch on `origin.loopPath`.
+Registered on both loops: `onLoopComplete`, `onError`, `onRetryScheduled`, `onRetrySucceeded`, `onRetryExhausted`, `onObservation`, `onReflection`, `onMemoryError`, `onMemoryRecovered`, `onMemoryGap`. That is the right default for diagnostics, where you want to see a reasoner failure, and the origin context tells the loops apart. It is the wrong default for anything that counts, dedupes, or renders once per exchange, so branch on `origin.loopPath`.
 
 `onTurnComplete` is the exception: it registers on the conversation loop only, because it is the "the assistant finished saying something" signal and the reasoner's assistant text is internal working prose. `persistResult` is shared rather than per-loop, and carries origin in its metadata.
 
@@ -560,7 +560,7 @@ Skill content is cleared automatically when the loop ends. You can also call `cl
 
 ## Compaction
 
-The default compaction strategy is observational memory. It compresses older conversation history into an internal observation slot and keeps emergency truncation as a failsafe.
+Compaction is observational memory. An observer records older conversation as observations in an internal slot, in the background, and once the context fills they replace the messages they cover. The most recent messages always stay verbatim. A reflector condenses the observations when they grow, and emergency truncation remains as a failsafe.
 
 ```typescript
 const agent = await CortexAgent.create({
@@ -568,25 +568,21 @@ const agent = await CortexAgent.create({
   workingDirectory,
   initialBasePrompt,
   compaction: {
-    strategy: 'observational',
+    observational: { activationThreshold: 0.85 },
   },
 });
 ```
 
-Use classic compaction when you want traditional summarization:
+To compact now, whatever the context usage (before switching to a model with a smaller window, for example), call `compactNow()`. A failed observer call changes nothing and says why:
 
 ```typescript
-const agent = await CortexAgent.create({
-  model,
-  workingDirectory,
-  initialBasePrompt,
-  compaction: {
-    strategy: 'classic',
-  },
-});
+const result = await agent.compactNow();
+if (result.reasoner.status === 'failed') {
+  console.warn(`Nothing changed: ${result.reasoner.error.message}`);
+}
 ```
 
-Each loop runs its own compaction manager with the same strategy and staggered thresholds, so both loops never compact at once. The talker is additionally forced into a non-blocking posture, because a talker that stops to compact is a conversation that stops mid-sentence.
+Each loop runs its own compaction manager with staggered thresholds, so both loops never compact at once. The talker is additionally forced into a non-blocking posture, because a talker that stops to compact is a conversation that stops mid-sentence; for the same reason `compactNow()` on the talker swaps in only what it has already observed, and its result is `result.talker`.
 
 For oversized tool results, provide `persistResult` so Cortex can replace context-heavy output with a bookend preview and a file reference:
 

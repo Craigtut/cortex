@@ -19,7 +19,7 @@ import type {
 } from '../../compaction/observational/types.js';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { AgentContext, ContextManager } from '../../context-manager.js';
-import type { CompactionDegradedInfo, CompactionExhaustedInfo, CompactionResult, CompactionTarget, LoopOriginContext } from '../../types.js';
+import type { LoopOriginContext } from '../../types.js';
 
 export interface LoopContextApi {
   /**
@@ -75,50 +75,6 @@ export interface LoopContextApi {
   restoreConversationHistory(messages: AgentMessage[]): void;
 
   /**
-   * Register a handler called before compaction starts.
-   * Handler is awaited. The consumer should flush critical state
-   * (e.g., observational memory) before history is compacted.
-   *
-   * NOT called during mid-loop emergency truncation (Layer 3).
-   */
-  onBeforeCompaction(
-    handler: (target: CompactionTarget, origin: LoopOriginContext) => Promise<void>,
-  ): void;
-
-  /**
-   * Register a handler called after compaction completes, e.g. to re-seed
-   * messages from the consumer's store or update internal state.
-   */
-  onPostCompaction(
-    handler: (result: CompactionResult, origin: LoopOriginContext) => void,
-  ): void;
-
-  /**
-   * Register a handler for compaction errors.
-   */
-  onCompactionError(
-    handler: (error: Error, origin: LoopOriginContext) => void,
-  ): void;
-
-  /**
-   * Register a handler called when Layer 2 compaction failed and Layer 3
-   * (emergency truncation) was used as fallback. The session continues
-   * but context quality is degraded.
-   */
-  onCompactionDegraded(
-    handler: (info: CompactionDegradedInfo, origin: LoopOriginContext) => void,
-  ): void;
-
-  /**
-   * Register a handler called when all compaction layers have failed.
-   * The consumer should take recovery action (e.g., pause heartbeat,
-   * abort the session, or notify the user).
-   */
-  onCompactionExhausted(
-    handler: (info: CompactionExhaustedInfo, origin: LoopOriginContext) => void,
-  ): void;
-
-  /**
    * Update the post-hoc current-context token count from LLM usage data.
    * Called by the consumer after each LLM call with the input_tokens
    * from AssistantMessage.usage.
@@ -147,14 +103,6 @@ export interface LoopContextApi {
   estimateCurrentContextTokens(): number;
 
   /**
-   * Signal how recently the user last interacted. Compaction uses normal
-   * thresholds after recent interaction and compacts more aggressively
-   * after a quiet period. Call it (with Date.now()) on user-triggered
-   * work only, so the timestamp ages naturally otherwise.
-   */
-  setLastInteractionTime(timestamp: number): void;
-
-  /**
    * Cap a tool result at insertion time. If the result exceeds
    * maxResultTokens, truncates to head+tail bookend format.
    * Call this when tool results enter conversation history.
@@ -163,9 +111,8 @@ export interface LoopContextApi {
 
   /**
    * Get the observational memory state for session persistence.
-   * Returns null if not using the observational strategy.
    */
-  getObservationalMemoryState(): ObservationalMemoryState | null;
+  getObservationalMemoryState(): ObservationalMemoryState;
 
   /**
    * Restore observational memory state from a previous session.
@@ -242,12 +189,6 @@ export interface LoopContextApi {
   ): void;
 
   /**
-   * Run the end-of-tick compaction check, between ticks. Returns the
-   * CompactionResult if Layer 2 compaction ran, null otherwise.
-   */
-  checkAndRunCompaction(): Promise<CompactionResult | null>;
-
-  /**
    * Get the CompactionManager for advanced use.
    */
   getCompactionManager(): CompactionManager;
@@ -259,7 +200,7 @@ export interface LoopContextApi {
    * 0. Tier 1 insertion-time cap (mutates source messages)
    * 1. View injections (ephemeral, skills, background tasks, headline) at
    *    the history boundary, then message sanitization
-   * 2. Compaction (microcompaction, summarization or observation, failsafe)
+   * 2. Compaction (observation, microcompaction, failsafe)
    * 3. API message indices for cache breakpoints BP2 and BP3
    *
    * Anthropic allows 4 cache_control breakpoints. pi-ai sets up to 3

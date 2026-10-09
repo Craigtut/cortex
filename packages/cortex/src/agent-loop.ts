@@ -42,10 +42,6 @@ import type {
   AgentLoopConfig,
   AgentTextOutput,
   ClassifiedError,
-  CompactionDegradedInfo,
-  CompactionExhaustedInfo,
-  CompactionResult,
-  CompactionTarget,
   CortexLifecycleState,
   CortexLogger,
   CortexUsage,
@@ -194,7 +190,6 @@ export class AgentLoop implements
         workingTagsEnabled: () => this.workingTagsEnabled,
         prompt: (input, promptOptions) => this.prompt(input, promptOptions),
         refreshTools: () => this.refreshTools(),
-        directComplete: (context, completeOptions) => this.directComplete(context, completeOptions),
         utilityComplete: (context, completeOptions) => this.utilityComplete(context, completeOptions),
         isAborted: () => this.isAborted(),
         emitError: (error, wasAborted) => this.emitError(error, wasAborted),
@@ -423,9 +418,7 @@ export class AgentLoop implements
     // memory follows with restoreObservationalMemoryState().
     compactionManager.resetObservationalMemory();
     compactionManager.invalidateContextTokenCount();
-    if (compactionManager.strategy === 'observational') {
-      contextManager.setSlot('_observations', '');
-    }
+    contextManager.setSlot('_observations', '');
   }
 
   setHeadlineProvider(provider: (() => string | null) | null, options?: { maxTokens?: number }): void {
@@ -437,18 +430,10 @@ export class AgentLoop implements
     this.parts.compactionManager.updateCurrentContextTokenCount(inputTokens);
   }
   get currentContextTokenCount(): number { return this.parts.compactionManager.currentContextTokenCount; }
-  setLastInteractionTime(timestamp: number): void { this.parts.compactionManager.setLastInteractionTime(timestamp); }
   capToolResult(content: string): string { return this.parts.compactionManager.capToolResult(content); }
   getCompactionManager(): CompactionManager { return this.parts.compactionManager; }
 
-  async checkAndRunCompaction(): Promise<CompactionResult | null> {
-    return this.parts.compactionManager.checkAndRunCompaction(
-      () => this.loopHistory(),
-      (history) => this.parts.pipeline.writeSource(history),
-    );
-  }
-
-  getObservationalMemoryState(): ObservationalMemoryState | null {
+  getObservationalMemoryState(): ObservationalMemoryState {
     return this.parts.compactionManager.getObservationalMemoryState();
   }
 
@@ -487,21 +472,6 @@ export class AgentLoop implements
   }
   onMemoryGap(handler: (info: MemoryGapInfo, origin: LoopOriginContext) => void): void {
     this.parts.compactionManager.onMemoryGap((info) => handler(info, this.parts.origin));
-  }
-  onBeforeCompaction(handler: (target: CompactionTarget, origin: LoopOriginContext) => Promise<void>): void {
-    this.parts.compactionManager.onBeforeCompaction((target) => handler(target, this.parts.origin));
-  }
-  onPostCompaction(handler: (result: CompactionResult, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onPostCompaction((result) => handler(result, this.parts.origin));
-  }
-  onCompactionError(handler: (error: Error, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onCompactionError((error) => handler(error, this.parts.origin));
-  }
-  onCompactionDegraded(handler: (info: CompactionDegradedInfo, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onCompactionDegraded((info) => handler(info, this.parts.origin));
-  }
-  onCompactionExhausted(handler: (info: CompactionExhaustedInfo, origin: LoopOriginContext) => void): void {
-    this.parts.compactionManager.onCompactionExhausted((info) => handler(info, this.parts.origin));
   }
 
   // -----------------------------------------------------------------------

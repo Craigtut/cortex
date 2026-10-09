@@ -1033,7 +1033,6 @@ const POST_DESTROY_PROBES: Record<ForwardedLoopMember, PostDestroyProbe> = {
   getConversationHistory: { call: (t) => t.getConversationHistory() },
   getObservationalMemoryState: { call: (t) => t.getObservationalMemoryState() },
   digestIdle: { skip: 'runs the observer/reflector against a real model' },
-  checkAndRunCompaction: { skip: 'can run real summarization completions' },
   compactNow: { call: (t) => t.compactNow() },
   observeNow: { call: (t) => t.observeNow() },
   getCompactionManager: { call: (t) => t.getCompactionManager() },
@@ -1069,7 +1068,6 @@ const POST_DESTROY_PROBES: Record<ForwardedLoopMember, PostDestroyProbe> = {
   state: { call: (t) => t.state },
   isWorkingTagsEnabled: { call: (t) => t.isWorkingTagsEnabled },
   setWorkingTagsEnabled: { call: (t) => t.setWorkingTagsEnabled(true) },
-  setLastInteractionTime: { call: (t) => t.setLastInteractionTime(Date.now()) },
   getEnvOverrides: { call: (t) => t.getEnvOverrides() },
   getEventBridge: { call: (t) => t.getEventBridge() },
   getBudgetGuard: { call: (t) => t.getBudgetGuard() },
@@ -1081,11 +1079,6 @@ const POST_DESTROY_PROBES: Record<ForwardedLoopMember, PostDestroyProbe> = {
   onRetryScheduled: { call: (t) => t.onRetryScheduled(() => {}) },
   onRetrySucceeded: { call: (t) => t.onRetrySucceeded(() => {}) },
   onRetryExhausted: { call: (t) => t.onRetryExhausted(() => {}) },
-  onBeforeCompaction: { call: (t) => t.onBeforeCompaction(async () => {}) },
-  onPostCompaction: { call: (t) => t.onPostCompaction(() => {}) },
-  onCompactionError: { call: (t) => t.onCompactionError(() => {}) },
-  onCompactionDegraded: { call: (t) => t.onCompactionDegraded(() => {}) },
-  onCompactionExhausted: { call: (t) => t.onCompactionExhausted(() => {}) },
   onSubAgentSpawned: { call: (t) => t.onSubAgentSpawned(() => {}) },
   onSubAgentCompleted: { call: (t) => t.onSubAgentCompleted(() => {}) },
   onSubAgentFailed: { call: (t) => t.onSubAgentFailed(() => {}) },
@@ -1162,7 +1155,6 @@ describe('CortexAgent forwarded lifecycle semantics', () => {
       .map(([member]) => member)
       .sort();
     expect(skipped).toEqual([
-      'checkAndRunCompaction',
       'connectMcpServer',
       'digestIdle',
       'directComplete',

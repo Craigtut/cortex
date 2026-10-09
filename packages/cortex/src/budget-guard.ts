@@ -112,8 +112,8 @@ export class BudgetGuard {
       }),
     );
 
-    // Utility spend (observer, reflector, summarization, WebFetch, Bash
-    // utility calls) counts toward maxCost when opted in. Never toward
+    // Utility spend (observer, reflector, WebFetch, Bash utility calls)
+    // counts toward maxCost when opted in. Never toward
     // maxTurns: these are internal completions, not loop turns. The same
     // child gate applies: forwarded child utility events carry childTaskId.
     if (this.includeUtilityUsage) {

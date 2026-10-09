@@ -8,7 +8,7 @@ import { AgentLoop } from '../../../../src/agent-loop.js';
 import type { PiAgent, PiModel } from '../../../../src/agent-loop.js';
 import { wrapModel } from '../../../../src/model-wrapper.js';
 import type { AgentLoopConfig, LoopOriginContext } from '../../../../src/types.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 import type { MemoryErrorInfo, MemoryRecoveredInfo } from '../../../../src/compaction/observational/types.js';
 

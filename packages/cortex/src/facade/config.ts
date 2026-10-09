@@ -54,7 +54,7 @@ export interface DuplexTuningConfig extends Omit<DuplexRouterOptions, 'now'> {
   lookupTimeoutMs?: number;
   /**
    * Aggregate lifetime cost cap in USD across both resident loops, every
-   * sub-agent, and utility spend (observer/reflector/summarization).
+   * sub-agent, and utility spend (observer/reflector, WebFetch, Bash).
    * Deliberately its own key: `budgetGuard.maxCost` keeps its per-prompt
    * meaning on the reasoner, and silently reinterpreting that number as a
    * whole-session cap would make the same config mean two different

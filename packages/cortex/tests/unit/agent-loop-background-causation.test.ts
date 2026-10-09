@@ -56,7 +56,6 @@ function setup(tool: string, params: unknown): Harness {
       workingDirectory: '/tmp',
       initialBasePrompt: 'Test prompt',
       slots: [],
-      compaction: { strategy: 'classic' },
     },
     [],
     { enableSubAgentTool: true, enableLoadSkillTool: false },

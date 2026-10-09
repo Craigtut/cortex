@@ -109,7 +109,7 @@ export interface SessionUsage {
   };
   /**
    * Direct/utility completion spend broken down by category tag (e.g.
-   * 'observer', 'reflector', 'summarization', 'webfetch', 'bash_utility',
+   * 'observer', 'reflector', 'webfetch', 'bash_utility',
    * or a consumer-supplied tag). Absent until the first tagged completion
    * is recorded. Bucket contents are also included in the top-level totals.
    */
@@ -969,8 +969,8 @@ export interface ToolCallEndPayload {
 
 /**
  * Typed payload for utility_usage events, emitted once per direct/utility
- * completion (observer, reflector, summarization, WebFetch summarization,
- * Bash utility calls, consumer-tagged calls). The usage itself rides the
+ * completion (observer, reflector, WebFetch summarization, Bash utility
+ * calls, consumer-tagged calls). The usage itself rides the
  * event's `usage` field.
  */
 export interface UtilityUsagePayload {
@@ -1147,98 +1147,34 @@ export interface MicrocompactionConfig {
 }
 
 /**
- * Conversation summarization (Layer 2) configuration.
- */
-export interface CompactionConfig {
-  /** Context usage ratio that triggers summarization. Default: 0.70. */
-  threshold: number;
-  /** Number of recent turns preserved verbatim. Default: 6. */
-  preserveRecentTurns: number;
-  /** Custom summarization prompt. If provided, replaces the default prompt. */
-  customPrompt?: string;
-  /** Maximum Layer 2 retry attempts before falling through to Layer 3. Default: 3. */
-  maxRetries?: number;
-  /** Delay in ms between Layer 2 retry attempts. Default: 2000. */
-  retryDelayMs?: number;
-}
-
-/**
  * Emergency truncation (Layer 3) configuration.
  */
 export interface FailsafeConfig {
   /**
-   * Context usage ratio that triggers emergency truncation. Default: 0.95.
-   * Under observational memory it is measured against the effective window
-   * and truncates only the request's view (the source keeps every message
-   * for the observer); under the classic strategy, against the model's
-   * window.
+   * Context usage ratio, of the effective window, past which a request's
+   * view is cut. Default: 0.95. Only the view: the source keeps every
+   * message for the observer.
    */
   threshold: number;
-}
-
-/**
- * Adaptive threshold configuration for Layer 2 compaction.
- *
- * Adjusts the compaction trigger point based on how recently the user last
- * interacted. When the user is idle (no messages for a while), the threshold
- * is lowered so compaction fires earlier, reducing token costs during interval
- * ticks where the agent is thinking to itself.
- *
- * Three windows:
- * - Recent (< recentWindowMs): no threshold reduction
- * - Moderate (recentWindowMs .. idleWindowMs): moderateReduction applied
- * - Idle (> idleWindowMs): idleReduction applied
- *
- * The effective threshold is: config.compaction.threshold - reduction
- */
-export interface AdaptiveThresholdConfig {
-  /** Whether adaptive thresholds are enabled. Default: true. */
-  enabled: boolean;
-  /** Milliseconds within which interaction is considered "recent". Default: 300000 (5 min). */
-  recentWindowMs: number;
-  /** Milliseconds beyond which interaction is considered "idle". Default: 1800000 (30 min). */
-  idleWindowMs: number;
-  /** Threshold reduction when interaction is recent. Default: 0.0. */
-  recentReduction: number;
-  /** Threshold reduction when interaction is moderate. Default: 0.10. */
-  moderateReduction: number;
-  /** Threshold reduction when interaction is idle. Default: 0.20. */
-  idleReduction: number;
 }
 
 /**
  * Full compaction configuration for AgentLoop.
  *
- * Supports two strategies:
- * - `'observational'` (default): Observer/Reflector background compression
- *   replaces L1 threshold trimming and L2 summarization. L3 emergency
- *   truncation remains active as a safety valve.
- * - `'classic'`: The existing L1 + L2 + L3 system operates unchanged.
- *
- * The failsafe (L3) is always active regardless of strategy.
+ * Observational memory compresses older history into the `_observations`
+ * slot; Layer 1 trims large tool results, cache-aware; Layer 3 cuts a
+ * request's view when it would still not fit.
  */
 export interface CortexCompactionConfig {
   /**
-   * Compaction strategy selection.
-   * - `'observational'`: Background observer/reflector compression (default).
-   * - `'classic'`: Traditional L1 microcompaction + L2 summarization.
-   * @default 'observational'
-   */
-  strategy?: 'observational' | 'classic';
-
-  /**
    * Non-blocking posture: disable every synchronous LLM call inside
-   * transformContext, leaving emergency truncation as the only in-band
-   * fallback. For a presence loop whose turns must never stall on a
-   * multi-second observer or summarization call.
+   * transformContext. For a presence loop whose turns must never stall on
+   * a multi-second observer or reflector call.
    *
-   * - Observational strategy: activation still consumes already-buffered
-   *   chunks (instant), but the forced synchronous observer on the
-   *   unobserved tail and the pre-truncation catch-up observation are
-   *   skipped, and reflection at threshold swaps in a buffered result or
-   *   launches asynchronously instead of running inline.
-   * - Classic strategy: L2 summarization is skipped in-band (L1 trimming
-   *   and L3 truncation, both mechanical, still run).
+   * Activation still consumes already-buffered chunks (instant), but the
+   * observer never runs while a request waits, and reflection at threshold
+   * swaps in a buffered result or launches in the background instead of
+   * running inline.
    *
    * Explicit digestion entry points run the blocking work regardless, so an
    * owner can schedule it during idle windows.
@@ -1246,81 +1182,13 @@ export interface CortexCompactionConfig {
    */
   nonBlocking?: boolean;
 
-  /** Microcompaction (L1) configuration. Used when strategy is 'classic'. */
+  /** Microcompaction (L1) configuration. */
   microcompaction: MicrocompactionConfig;
-  /** Conversation summarization (L2) configuration. Used when strategy is 'classic'. */
-  compaction: CompactionConfig;
-  /** Emergency truncation (L3) configuration. Always active regardless of strategy. */
+  /** Emergency truncation (L3) configuration. */
   failsafe: FailsafeConfig;
-  /** Adaptive threshold configuration. Adjusts Layer 2 trigger based on interaction recency. Used when strategy is 'classic'. */
-  adaptive: AdaptiveThresholdConfig;
 
-  /**
-   * Observational memory configuration. Used when strategy is 'observational'
-   * (or omitted, since observational is the default).
-   */
+  /** Observational memory configuration. */
   observational?: Partial<ObservationalMemoryConfig>;
-}
-
-/**
- * Information about the compaction target passed to onBeforeCompaction.
- */
-export interface CompactionTarget {
-  /** Number of turns that will be summarized. */
-  turnsToCompact: number;
-  /** Estimated tokens in the compaction target. */
-  estimatedTokens: number;
-}
-
-/**
- * Result of a compaction operation.
- */
-export interface CompactionResult {
-  /** Total tokens before compaction. */
-  tokensBefore: number;
-  /** Total tokens after compaction. */
-  tokensAfter: number;
-  /** Number of conversation turns that were compacted (summarized/removed). */
-  turnsCompacted: number;
-  /** Number of conversation turns preserved after compaction. */
-  turnsPreserved: number;
-  /** Token count of the generated summary. */
-  summaryTokens: number;
-  /**
-   * ISO timestamp of the oldest preserved turn, or null if no timestamp
-   * could be determined. The consumer (backend) should use
-   * `oldestPreservedIndex` to map back to a database timestamp when
-   * this is null.
-   */
-  oldestPreservedTimestamp: string | null;
-  /**
-   * Index of the oldest preserved turn in the original (pre-compaction)
-   * conversation history. The consumer can map this index back to a
-   * database timestamp via messages.db. Always present and accurate.
-   */
-  oldestPreservedIndex: number;
-  /** The generated summary text. */
-  summary: string;
-}
-
-/**
- * Info passed to onCompactionDegraded when Layer 2 failed and Layer 3 was used.
- */
-export interface CompactionDegradedInfo {
-  /** Number of consecutive Layer 2 failures (including this episode). */
-  layer2Failures: number;
-  /** Number of turns dropped by emergency truncation. */
-  turnsDropped: number;
-}
-
-/**
- * Info passed to onCompactionExhausted when all compaction layers have failed.
- */
-export interface CompactionExhaustedInfo {
-  /** The error from the last Layer 2 attempt. */
-  error: Error;
-  /** Number of consecutive Layer 2 failures. */
-  layer2Failures: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,16 +1201,6 @@ export interface CompactionExhaustedInfo {
 export interface CortexEvents {
   /** Fired when the full agentic loop finishes (agent_end, not turn_end). */
   onLoopComplete: () => void;
-  /** Fired before compaction starts. Awaited. Consumer should flush state. */
-  onBeforeCompaction: (target: CompactionTarget) => Promise<void>;
-  /** Fired after compaction completes. Consumer can re-seed messages, update state. */
-  onPostCompaction: (result: CompactionResult) => void;
-  /** Fired when context compaction fails. */
-  onCompactionError: (error: Error) => void;
-  /** Fired when Layer 2 compaction failed and Layer 3 (emergency truncation) was used as fallback. */
-  onCompactionDegraded: (info: CompactionDegradedInfo) => void;
-  /** Fired when all compaction layers have failed. Consumer should take recovery action. */
-  onCompactionExhausted: (info: CompactionExhaustedInfo) => void;
   /** Fired when an error is classified during the agentic loop. */
   onError: (error: ClassifiedError, origin: LoopOriginContext) => void;
   /** Fired at the end of each turn with parsed working tag output. */
@@ -1353,9 +1211,9 @@ export interface CortexEvents {
   onSubAgentCompleted: (taskId: string, result: string, status: string, usage: unknown) => void;
   /** Fired when a sub-agent fails. */
   onSubAgentFailed: (taskId: string, error: string) => void;
-  /** Fired when observational memory activates (messages compressed and removed). Only fires when strategy is 'observational'. */
+  /** Fired when observations are recorded into the log, and when a swap removes observed messages. */
   onObservation: (event: ObservationEvent) => void;
-  /** Fired when the reflector condenses observations. Only fires when strategy is 'observational'. */
+  /** Fired when the reflector condenses observations. */
   onReflection: (event: ReflectionEvent) => void;
 }
 

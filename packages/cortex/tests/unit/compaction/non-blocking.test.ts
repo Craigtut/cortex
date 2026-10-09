@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { CompactionManager, buildCompactionConfig } from '../../../src/compaction/index.js';
 import { ObservationalMemoryEngine } from '../../../src/compaction/observational/index.js';
-import type { CompleteFn } from '../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../src/context-manager.js';
 
 function makeUserMsg(content: string): AgentMessage {
@@ -43,92 +43,10 @@ const OBSERVER_OUTPUT =
   '<observations>\n* observed\n</observations>\n\n' +
   '<current-task>\ntask\n</current-task>\n\n<suggested-response>\nnext\n</suggested-response>';
 
-describe('classic strategy under nonBlocking', () => {
-  function buildManager(nonBlocking: boolean): {
-    manager: CompactionManager;
-    complete: ReturnType<typeof vi.fn>;
-  } {
-    const manager = new CompactionManager(
-      buildCompactionConfig({ strategy: 'classic', nonBlocking }),
-      2,
-    );
-    manager.setContextWindow(200_000);
-    manager.setModelContextWindow(200_000);
-    const complete = vi.fn().mockResolvedValue('Summary of conversation');
-    manager.setCompleteFn(complete as unknown as CompleteFn);
-    return { manager, complete };
-  }
-
-  async function runOverL2Threshold(
-    manager: CompactionManager,
-    options?: { allowBlocking?: boolean },
-  ): Promise<AgentMessage[]> {
-    manager.updateCurrentContextTokenCount(150_000); // 75% > 70% L2 threshold
-    const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
-    const history = buildHistory(10);
-    const context = makeContext([...slots, ...history]);
-    let sourceHistory = [...history];
-
-    await manager.applyInTransformContext(
-      context,
-      (ctx) => ctx.messages.slice(2),
-      (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-      () => sourceHistory,
-      (h) => { sourceHistory = h; },
-      options,
-    );
-    return sourceHistory;
-  }
-
-  it('skips in-band L2 summarization entirely', async () => {
-    const { manager, complete } = buildManager(true);
-    const source = await runOverL2Threshold(manager);
-
-    expect(complete).not.toHaveBeenCalled();
-    expect(source).toHaveLength(20); // untouched
-  });
-
-  it('control: the same call without nonBlocking summarizes', async () => {
-    const { manager, complete } = buildManager(false);
-    const source = await runOverL2Threshold(manager);
-
-    expect(complete).toHaveBeenCalled();
-    expect(source.length).toBeLessThan(20);
-  });
-
-  it('allowBlocking override re-enables the blocking work for one call', async () => {
-    const { manager, complete } = buildManager(true);
-    const source = await runOverL2Threshold(manager, { allowBlocking: true });
-
-    expect(complete).toHaveBeenCalled();
-    expect(source.length).toBeLessThan(20);
-  });
-
-  it('leaves L3 emergency truncation active as the only in-band path', async () => {
-    const { manager, complete } = buildManager(true);
-    manager.updateCurrentContextTokenCount(195_000); // 97.5% > 90% failsafe
-    const slots = [makeUserMsg('slot1'), makeUserMsg('slot2')];
-    const history = buildHistory(20);
-    const context = makeContext([...slots, ...history]);
-    let sourceHistory = [...history];
-
-    const result = await manager.applyInTransformContext(
-      context,
-      (ctx) => ctx.messages.slice(2),
-      (ctx, hist) => ({ ...ctx, messages: [...ctx.messages.slice(0, 2), ...hist] }),
-      () => sourceHistory,
-      (h) => { sourceHistory = h; },
-    );
-
-    expect(complete).not.toHaveBeenCalled();
-    expect(result.messages.length).toBeLessThan(context.messages.length);
-  });
-});
-
 describe('observational strategy under nonBlocking', () => {
   it('skips the forced pre-truncation observation when over the failsafe threshold', async () => {
     const manager = new CompactionManager(
-      buildCompactionConfig({ strategy: 'observational', nonBlocking: true }),
+      buildCompactionConfig({ nonBlocking: true }),
       1,
     );
     manager.setContextWindow(100_000);

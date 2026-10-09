@@ -128,7 +128,6 @@ export const AGENT_LOOP_DELEGATION = {
   getConversationHistory: 'forwarded',
   getObservationalMemoryState: 'forwarded',
   digestIdle: 'forwarded',
-  checkAndRunCompaction: 'forwarded',
   // Composite: every resident loop compacts, so the facade's result is
   // per loop (CortexAgent.compactNow).
   compactNow: 'forwarded',
@@ -167,7 +166,6 @@ export const AGENT_LOOP_DELEGATION = {
   state: 'forwarded',
   isWorkingTagsEnabled: 'forwarded',
   setWorkingTagsEnabled: 'forwarded',
-  setLastInteractionTime: 'forwarded',
   getEnvOverrides: 'forwarded',
   getEventBridge: 'forwarded',
   getBudgetGuard: 'forwarded',
@@ -194,11 +192,6 @@ export const AGENT_LOOP_DELEGATION = {
   onRetryScheduled: 'forwarded',
   onRetrySucceeded: 'forwarded',
   onRetryExhausted: 'forwarded',
-  onBeforeCompaction: 'forwarded',
-  onPostCompaction: 'forwarded',
-  onCompactionError: 'forwarded',
-  onCompactionDegraded: 'forwarded',
-  onCompactionExhausted: 'forwarded',
   onSubAgentSpawned: 'forwarded',
   onSubAgentCompleted: 'forwarded',
   onSubAgentFailed: 'forwarded',

@@ -50,7 +50,6 @@ async function loopAt(baseUrl: string, ambientCredentials?: boolean): Promise<Ag
     workingDirectory: process.cwd(),
     initialBasePrompt: 'Test credential resolution.',
     ...(ambientCredentials !== undefined ? { ambientCredentials } : {}),
-    compaction: { strategy: 'classic' },
     disableTools: Object.values(TOOL_NAMES),
     enableSubAgentTool: false,
     enableLoadSkillTool: false,

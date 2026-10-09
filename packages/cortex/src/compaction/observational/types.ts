@@ -1,10 +1,9 @@
 /**
  * Type definitions for the observational memory system.
  *
- * Observational memory is an alternative compaction strategy that replaces
- * Layers 1 and 2 (microcompaction + conversation summarization) with a
- * continuous, background-driven compression system. Two background LLM agents
- * (Observer and Reflector) maintain a compressed event log of the conversation.
+ * Observational memory is Cortex's compaction: a continuous,
+ * background-driven compression system. Two background LLM agents (Observer
+ * and Reflector) maintain a compressed event log of the conversation.
  *
  * References:
  *   - observational-memory-architecture.md

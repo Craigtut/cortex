@@ -275,7 +275,7 @@ describe('per-spawn child config overrides', () => {
         instructions: 'quick lookup',
         model: override,
         thinkingLevel: 'off',
-        compaction: { strategy: 'classic' },
+        compaction: { nonBlocking: true },
       });
 
       const createParams = managedSpy.mock.calls[0]![0] as {
@@ -283,7 +283,7 @@ describe('per-spawn child config overrides', () => {
       };
       expect(createParams.cortexConfig.model).toBe(override);
       expect(createParams.cortexConfig.thinkingLevel).toBe('off');
-      expect(createParams.cortexConfig.compaction).toEqual({ strategy: 'classic' });
+      expect(createParams.cortexConfig.compaction).toEqual({ nonBlocking: true });
     } finally {
       managedSpy.mockRestore();
     }

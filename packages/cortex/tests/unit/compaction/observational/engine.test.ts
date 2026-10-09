@@ -4,7 +4,7 @@ import {
   OBSERVATION_CONTEXT_PREAMBLE,
   OBSERVATION_RECALL_INSTRUCTIONS,
 } from '../../../../src/compaction/observational/constants.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
 import type {
   ObservationalMemoryState,
@@ -532,112 +532,6 @@ describe('ObservationalMemoryEngine', () => {
       const secondInput = JSON.stringify(mockComplete.mock.calls[1]![0].messages);
       expect(secondInput).toContain('Second');
       expect(secondInput).not.toContain('First');
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Tests: onSourceHistoryTruncated (H-4, emergency-truncation reconciliation)
-  // -------------------------------------------------------------------------
-
-  describe('onSourceHistoryTruncated', () => {
-    // Two plain user messages, then a Read group, then an unobserved Bash group.
-    // The observer runs over the first 4 messages (watermark = 4), which is a
-    // clean group boundary. Emergency truncation then drops the two leading
-    // user messages (group-clean: both are plain user turns).
-    const U0 = makeUserMsg('x'.repeat(50_000)); // large: exceeds buffer interval
-    const U1 = makeUserMsg('second setup message');
-    const callA = makeToolCallMsg([{ id: 'call_A', name: 'Read', arguments: { path: '/a' } }]);
-    // Large result so activation's post-chunk utilization drops below the
-    // activation threshold, keeping the Step 2 sync observer from firing and
-    // letting us inspect the surviving unobserved source directly.
-    const resultA = makeToolResultMsg('call_A', 'Read', 'y'.repeat(80_000));
-    const U2 = makeUserMsg('unobserved follow-up request');
-    const callB = makeToolCallMsg([{ id: 'call_B', name: 'Bash', arguments: { command: 'ls' } }]);
-    const resultB = makeToolResultMsg('call_B', 'Bash', 'dir listing');
-
-    // Source AFTER emergency truncation dropped the two leading user messages.
-    const truncatedSource = [callA, resultA, U2, callB, resultB];
-
-    async function buildEngineWatermark4(): Promise<ObservationalMemoryEngine> {
-      const engine = new ObservationalMemoryEngine({
-        activationThreshold: 0.9,
-        bufferMinTokens: 1_000,
-        bufferTargetCycles: 4,
-        // One observer call takes all four messages.
-        bufferTokenCap: 100_000,
-      }, 0);
-      engine.setCompleteFn(vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT));
-      engine.setContextWindow(100_000);
-      engine.setUtilityModelContextWindow(200_000);
-
-      // Observe the first 4 messages; the async observer sets watermark = 4.
-      engine.onTurnEnd(50_000, 100_000, [U0, U1, callA, resultA], 0);
-      await flushPromises();
-      expect(engine.getState().bufferWatermark).toBe(4);
-      return engine;
-    }
-
-    async function activate(
-      engine: ObservationalMemoryEngine,
-    ): Promise<AgentMessage[]> {
-      const slotCount = 1;
-      let source: AgentMessage[] = [...truncatedSource];
-      const context: AgentContext = {
-        systemPrompt: '',
-        model: {},
-        messages: [makeUserMsg('<observation-slot>')],
-        tools: [],
-        thinkingLevel: 'none',
-      };
-      const getHistory = (ctx: AgentContext) => ctx.messages.slice(slotCount);
-      const setHistory = (ctx: AgentContext, hist: AgentMessage[]): AgentContext => ({
-        ...ctx,
-        messages: [...ctx.messages.slice(0, slotCount), ...hist],
-      });
-      const getSourceHistory = () => source;
-      const setSourceHistory = (h: AgentMessage[]) => { source = h; };
-
-      await engine.applyInTransformContext(
-        context, 0.95, slotCount, getHistory, setHistory, getSourceHistory, setSourceHistory,
-      );
-      return source;
-    }
-
-    it('shifts the buffer watermark down by the dropped-front count', async () => {
-      const engine = await buildEngineWatermark4();
-      engine.onSourceHistoryTruncated(2);
-      expect(engine.getState().bufferWatermark).toBe(2);
-    });
-
-    it('next activation neither destroys unobserved messages nor orphans a tool result', async () => {
-      const engine = await buildEngineWatermark4();
-
-      // Reconcile the buffer with the front-truncated source (the fix).
-      engine.onSourceHistoryTruncated(2);
-
-      const survivingSource = await activate(engine);
-
-      // No orphaned tool call or tool result at the head (would be a hard 400).
-      assertNoOrphans(survivingSource);
-      expect(survivingSource[0]!.role).not.toBe('toolResult');
-
-      // The genuinely unobserved tail is preserved intact, not silently trimmed.
-      expect(survivingSource).toContain(U2);
-      expect(survivingSource).toContain(callB);
-      expect(survivingSource).toContain(resultB);
-    });
-
-    it('even without reconciliation, a stale watermark cannot orphan a tool result', async () => {
-      const engine = await buildEngineWatermark4();
-
-      // Skip the reconciliation: the watermark stays at the pre-truncation 4,
-      // inside the [callB, resultB] group. Swaps cut on unit boundaries, so
-      // the group stays whole.
-      const survivingSource = await activate(engine);
-
-      assertNoOrphans(survivingSource);
-      expect(survivingSource).toContain(callB);
-      expect(survivingSource).toContain(resultB);
     });
   });
 

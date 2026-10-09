@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { ObservationalMemoryEngine } from '../../../../src/compaction/observational/index.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 import { makeToolCallMsg, makeToolResultMsg, assertNoOrphans } from '../helpers.js';
 

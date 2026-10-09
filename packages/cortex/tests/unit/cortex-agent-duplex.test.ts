@@ -398,29 +398,21 @@ describe('duplex config builders', () => {
     const talker = buildTalkerConfig(
       {
         ...baseConfig,
-        compaction: { compaction: { threshold: 0.8, preserveRecentTurns: undefined } },
+        compaction: { observational: { activationThreshold: 0.8, bufferTokenCap: undefined } },
       },
       testModel(),
     );
-    // The explicit undefined is stripped before the merge, so the default
-    // survives instead of being spread over.
-    expect(talker.compaction?.compaction?.preserveRecentTurns).toBe(6);
-    expect(talker.compaction?.compaction?.threshold).toBeCloseTo(0.75);
+    // The explicit undefined is stripped before the merge, so the engine's
+    // default applies instead of an undefined spread over it.
+    expect(talker.compaction?.observational).not.toHaveProperty('bufferTokenCap');
+    expect(talker.compaction?.observational?.activationThreshold).toBeCloseTo(0.75);
   });
 
-  it('staggers the classic threshold on defaults, not only when the consumer set it', () => {
+  it('staggers the activation threshold on defaults, not only when the consumer set it', () => {
     const talker = buildTalkerConfig(baseConfig, testModel());
-    // Reasoner default is COMPACTION_DEFAULTS.threshold (0.70); the talker
-    // sits the full stagger below it without the consumer configuring
-    // anything.
-    expect(talker.compaction?.compaction?.threshold).toBeCloseTo(0.65);
-    // A consumer-set classic threshold staggers relative to that value.
-    const configured = buildTalkerConfig(
-      { ...baseConfig, compaction: { compaction: { threshold: 0.8, preserveRecentTurns: 6 } } },
-      testModel(),
-    );
-    expect(configured.compaction?.compaction?.threshold).toBeCloseTo(0.75);
-    expect(configured.compaction?.compaction?.preserveRecentTurns).toBe(6);
+    // The reasoner's default is 0.90; the talker sits the stagger below it
+    // without the consumer configuring anything.
+    expect(talker.compaction?.observational?.activationThreshold).toBeCloseTo(0.85);
   });
 
   it('derives distinct stable per-loop identity: loopPath and session id', () => {

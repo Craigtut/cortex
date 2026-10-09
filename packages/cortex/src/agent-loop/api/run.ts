@@ -148,11 +148,10 @@ export interface LoopRunApi {
 
   /**
    * Run deferred digestion OUTSIDE a prompt: pending observation buffering
-   * plus the threshold pass (observation activation, reflection, and, for
-   * the classic strategy, summarization), with blocking work allowed even
-   * under the non-blocking posture. The primitive behind digesting in idle
-   * windows; otherwise observation only triggers on turn_end and compaction
-   * only runs inside transformContext.
+   * plus the threshold pass (observation activation and reflection), with
+   * blocking work allowed even under the non-blocking posture. The
+   * primitive behind digesting in idle windows; otherwise observation only
+   * triggers on turn_end and compaction only runs inside transformContext.
    *
    * Serialized through the loop gate: called during a turn, it runs after
    * that turn. prompt() fails fast while digestion holds the gate (deliver()

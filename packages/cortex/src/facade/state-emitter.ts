@@ -57,15 +57,14 @@ export class StateEmitter {
   }
 
   /**
-   * History can change without a log entry (compaction rewrites,
-   * observation activation trims, a run completing); these mark the
-   * composite state dirty so onStateChanged fires for them too. Log appends
-   * mark it through the recorder's append listener.
+   * History can change without a log entry (a swap of observations for
+   * older messages, a reflection, an overflow drop, a run completing);
+   * these mark the composite state dirty so onStateChanged fires for them
+   * too. Log appends mark it through the recorder's append listener.
    */
   watch(loops: ReadonlyArray<LoopEventApi & LoopContextApi>): void {
     for (const loop of loops) {
       loop.onLoopComplete(() => this.markDirty());
-      loop.onPostCompaction(() => this.markDirty());
       loop.onObservation(() => this.markDirty());
       loop.onReflection(() => this.markDirty());
       loop.onMemoryGap(() => this.markDirty());

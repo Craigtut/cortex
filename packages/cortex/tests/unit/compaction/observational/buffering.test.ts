@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BufferingCoordinator } from '../../../../src/compaction/observational/buffering.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
 
 // ---------------------------------------------------------------------------
@@ -578,102 +578,6 @@ describe('BufferingCoordinator', () => {
       coordinator.restoreState({ chunks: [], watermark: 42 });
       expect(coordinator.getWatermark()).toBe(42);
       expect(coordinator.getState().observedPrefix).toBe(42);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Tests: onSourceTruncated (front-truncation reconciliation, H-4)
-  // -------------------------------------------------------------------------
-
-  describe('onSourceTruncated', () => {
-    it('shifts the watermark down by the dropped-front count', () => {
-      coordinator.restoreState({ chunks: [], watermark: 4 });
-      coordinator.onSourceTruncated(2);
-      expect(coordinator.getWatermark()).toBe(2);
-    });
-
-    it('clamps to 0 when more front messages are dropped than observed', () => {
-      coordinator.restoreState({ chunks: [], watermark: 3 });
-      coordinator.onSourceTruncated(10);
-      expect(coordinator.getWatermark()).toBe(0);
-    });
-
-    it('is a no-op for zero or negative counts', () => {
-      coordinator.restoreState({ chunks: [], watermark: 5 });
-      coordinator.onSourceTruncated(0);
-      expect(coordinator.getWatermark()).toBe(5);
-      coordinator.onSourceTruncated(-3);
-      expect(coordinator.getWatermark()).toBe(5);
-    });
-
-    it('moves an in-flight observer past the dropped messages with its range', async () => {
-      let resolvePromise: ((value: string) => void) | undefined;
-      const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
-        new Promise<string>((resolve) => { resolvePromise = resolve; }),
-      );
-
-      coordinator.restoreState({ chunks: [], watermark: 4 });
-      coordinator.launchObserver(
-        mockComplete,
-        [userMsg('test')],
-        10,
-        null,
-        { previousObserverTokens: 2000 },
-      );
-
-      // Front truncation of observed messages while the observer is in flight.
-      coordinator.onSourceTruncated(2);
-
-      resolvePromise!(VALID_OBSERVER_OUTPUT);
-      await flushPromises();
-
-      // Its messages moved down by 2 and so did its range: it lands aligned.
-      expect(coordinator.hasCompletedChunks()).toBe(true);
-      expect(coordinator.getWatermark()).toBe(8);
-    });
-
-    it('invalidates an in-flight observer whose messages were dropped', async () => {
-      let resolvePromise: ((value: string) => void) | undefined;
-      const mockComplete = vi.fn<CompleteFn>().mockReturnValue(
-        new Promise<string>((resolve) => { resolvePromise = resolve; }),
-      );
-
-      coordinator.restoreState({ chunks: [], watermark: 4 });
-      coordinator.launchObserver(
-        mockComplete,
-        [userMsg('test')],
-        10,
-        null,
-        { previousObserverTokens: 2000 },
-      );
-
-      coordinator.onSourceTruncated(6);
-
-      resolvePromise!(VALID_OBSERVER_OUTPUT);
-      await flushPromises();
-
-      expect(coordinator.hasCompletedChunks()).toBe(false);
-      expect(coordinator.getWatermark()).toBe(0);
-      expect(coordinator.isObserverInFlight()).toBe(false);
-    });
-
-    it('keeps the in-flight observer on a no-op count', async () => {
-      const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(VALID_OBSERVER_OUTPUT);
-
-      coordinator.launchObserver(
-        mockComplete,
-        [userMsg('test')],
-        10,
-        null,
-        { previousObserverTokens: 2000 },
-      );
-
-      coordinator.onSourceTruncated(0);
-      await flushPromises();
-
-      // Nothing was dropped, so the in-flight observer must still land.
-      expect(coordinator.hasCompletedChunks()).toBe(true);
-      expect(coordinator.getWatermark()).toBe(10);
     });
   });
 

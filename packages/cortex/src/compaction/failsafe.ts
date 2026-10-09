@@ -1,30 +1,16 @@
 /**
- * Layer 3: Emergency Truncation (Failsafe).
+ * Layer 3 (failsafe) settings and context-overflow detection.
  *
- * Last-resort truncation when Layer 2 fails or context is still too large.
- * Drops the oldest conversation turns purely mechanically (no LLM call).
- * Preserves structural integrity: an assistant tool call message and its
- * consecutive toolResult messages form an atomic group that is dropped
- * together or not at all.
- *
- * Triggers at 90% of context window (configurable), or reactively when
- * the API returns a context overflow error.
- *
- * This layer also serves as a mid-loop safety valve: it fires inside
- * transformContext during the agentic loop when estimated token count
- * exceeds 90%. Mid-loop truncation does NOT emit onBeforeCompaction
- * (no observational memory processing mid-loop).
+ * Under observational memory, Layer 3 cuts a request's view when it would
+ * still not fit after a swap (observational/emergency.ts truncateView);
+ * after the provider rejects a request as too long, isContextOverflow
+ * recognizes it and the source shrinks (CompactionManager.handleOverflowError).
  *
  * References:
- *   - compaction-strategy.md (Layer 3: Emergency Truncation)
- *   - phase-5-compaction.md (5.4)
+ *   - compaction-strategy.md (Layer 3)
  */
 
-import type { AgentMessage } from '../context-manager.js';
 import type { FailsafeConfig } from '../types.js';
-import { estimateTokens } from '../token-estimator.js';
-import { extractTextContent } from './microcompaction.js';
-import { findToolCallGroups } from './tool-call-groups.js';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -33,116 +19,6 @@ import { findToolCallGroups } from './tool-call-groups.js';
 export const FAILSAFE_DEFAULTS: FailsafeConfig = {
   threshold: 0.95,
 };
-
-/**
- * Minimum number of recent turns to preserve during emergency truncation.
- * Fewer turns preserved than Layer 2 since this is a last resort.
- */
-const FAILSAFE_PRESERVE_TURNS = 3;
-
-// ---------------------------------------------------------------------------
-// Truncation
-// ---------------------------------------------------------------------------
-
-/**
- * Result of an emergency truncation operation.
- */
-export interface FailsafeTruncationResult {
-  /** The truncated conversation history. */
-  newHistory: AgentMessage[];
-  /** Number of turns removed. */
-  turnsRemoved: number;
-  /** Estimated tokens after truncation. */
-  tokensAfter: number;
-}
-
-/**
- * Perform emergency truncation on conversation history.
- *
- * Drops the oldest turns until the estimated token count drops below the
- * threshold, or until only the preserved tail remains. Tool call groups
- * (an assistant message with 'toolCall' blocks plus its consecutive
- * toolResult messages) are dropped atomically: either the whole group is
- * removed or the whole group is kept, so truncation can never orphan a
- * tool call or a tool result.
- *
- * @param history - Conversation history (post-slot region)
- * @param contextWindow - Total context window size in tokens
- * @param slotTokens - Estimated tokens used by slots
- * @param threshold - Usage ratio threshold (default 0.90)
- * @returns Truncation result with new history and metrics
- */
-export function emergencyTruncate(
-  history: AgentMessage[],
-  contextWindow: number,
-  slotTokens: number,
-  threshold: number = FAILSAFE_DEFAULTS.threshold,
-): FailsafeTruncationResult {
-  if (history.length === 0) {
-    return { newHistory: [], turnsRemoved: 0, tokensAfter: slotTokens };
-  }
-
-  const targetTokens = contextWindow * threshold;
-  const groups = findToolCallGroups(history);
-  const dropped = new Set<number>();
-
-  // Calculate initial token estimate
-  let currentTokens = slotTokens + estimateTokens(
-    history.map(m => extractTextContent(m)).join('\n'),
-  );
-
-  // Drop from the front, but respect the preserved tail
-  const preserveFrom = Math.max(0, history.length - FAILSAFE_PRESERVE_TURNS);
-  let i = 0;
-
-  while (currentTokens > targetTokens && i < preserveFrom) {
-    if (dropped.has(i)) {
-      i++;
-      continue;
-    }
-
-    // Get all indices that must be dropped together
-    const group = groups.get(i);
-    const indicesToDrop = group ?? [i];
-
-    // A group that reaches into the preserved tail is kept intact
-    const canDrop = indicesToDrop.every(idx => idx < preserveFrom);
-    if (!canDrop) {
-      i++;
-      continue;
-    }
-
-    // Drop the turn(s)
-    for (const idx of indicesToDrop) {
-      const msgTokens = estimateTokens(extractTextContent(history[idx]!));
-      currentTokens -= msgTokens;
-      dropped.add(idx);
-    }
-
-    i++;
-  }
-
-  // Build new history excluding dropped messages
-  const newHistory = history.filter((_, idx) => !dropped.has(idx));
-
-  return {
-    newHistory,
-    turnsRemoved: dropped.size,
-    tokensAfter: currentTokens,
-  };
-}
-
-/**
- * Check if emergency truncation should fire based on token count.
- */
-export function shouldTruncate(
-  currentTokens: number,
-  contextWindow: number,
-  threshold: number = FAILSAFE_DEFAULTS.threshold,
-): boolean {
-  if (contextWindow <= 0) return false;
-  return (currentTokens / contextWindow) >= threshold;
-}
 
 /**
  * Throttling and rate-limit errors that can share wording with an overflow.

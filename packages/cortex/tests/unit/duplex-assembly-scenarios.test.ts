@@ -275,12 +275,11 @@ describe('assembled duplex: the talker\'s posture differs from the reasoner\'s',
   /**
    * Pins: the compaction stagger reaching the engine each loop actually
    * compacts by, so a blocking activation on one loop never coincides with
-   * one on the other. Read off the live managers rather than the config, and
-   * for both strategies, since staggerBelow is applied to each separately.
+   * one on the other. Read off the live managers rather than the config.
    */
   it('the talker compacts strictly before the reasoner under observational memory', async () => {
     const h = await createRealDuplexScenario({
-      compaction: { strategy: 'observational', observational: { activationThreshold: 0.8 } },
+      compaction: { observational: { activationThreshold: 0.8 } },
     });
 
     const reasonerThreshold = observationalActivationThreshold(h.reasonerLoop);
@@ -291,19 +290,6 @@ describe('assembled duplex: the talker\'s posture differs from the reasoner\'s',
     // And the presence loop never blocks a turn to compact (F7).
     const talkerConfig = h.loopConfigs.find((config) => config.loopPath === 'talker')!;
     expect(talkerConfig.compaction?.nonBlocking).toBe(true);
-  });
-
-  it('the talker compacts strictly before the reasoner under the classic strategy', async () => {
-    const h = await createRealDuplexScenario({
-      compaction: { strategy: 'classic', compaction: { threshold: 0.7 } },
-    });
-
-    // Effective, not configured: both managers apply the same adaptive
-    // recency reduction, so the gap that survives it is the stagger itself.
-    const reasonerThreshold = h.reasonerLoop.getCompactionManager().getEffectiveThreshold();
-    const talkerThreshold = h.talkerLoop.getCompactionManager().getEffectiveThreshold();
-    expect(talkerThreshold).toBeLessThan(reasonerThreshold);
-    expect(reasonerThreshold - talkerThreshold).toBeCloseTo(0.05, 6);
   });
 });
 

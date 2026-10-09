@@ -326,7 +326,6 @@ function buildConfig(overrides: Partial<AgentLoopConfig> = {}): AgentLoopConfig 
     slots: [],
     // Use classic compaction strategy to avoid the `_observations` slot
     // distracting from deferred tool slot placement assertions.
-    compaction: { strategy: 'classic' },
     ...overrides,
   };
 }
@@ -378,7 +377,7 @@ describe('AgentLoop integration with deferred tools', () => {
       slots: ['consumer_a', 'consumer_b'],
     }));
     const cm = agent.getContextManager();
-    expect(cm.slots).toEqual(['_available_tools', 'consumer_a', 'consumer_b']);
+    expect(cm.slots).toEqual(['_available_tools', 'consumer_a', 'consumer_b', '_observations']);
   });
 
   it('defers tools with shouldDefer: true when enabled', () => {

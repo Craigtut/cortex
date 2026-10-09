@@ -12,7 +12,7 @@ import {
   REFLECTOR_SYSTEM_PROMPT,
   COMPRESSION_LEVEL_GUIDANCE,
 } from '../../../../src/compaction/observational/constants.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import { MemoryReplyError } from '../../../../src/compaction/observational/reply.js';
 
 // ---------------------------------------------------------------------------

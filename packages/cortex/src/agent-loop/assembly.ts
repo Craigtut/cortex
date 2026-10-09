@@ -76,7 +76,6 @@ export interface LoopHost {
   workingTagsEnabled(): boolean;
   prompt(input: string, options?: PromptOptions): Promise<unknown>;
   refreshTools(): void;
-  directComplete(context: DirectCompletionContext, options?: DirectCompletionOptions): Promise<string>;
   utilityComplete(context: DirectCompletionContext, options?: DirectCompletionOptions): Promise<string>;
   isAborted(): boolean;
   emitError(error: Error, wasAborted?: boolean): ClassifiedError;
@@ -300,7 +299,7 @@ export function assembleLoop(params: {
   const slots: string[] = [];
   if (tools.deferredEnabled) slots.push('_available_tools');
   slots.push(...(config.slots ?? []));
-  if ((compactionConfig.strategy ?? 'observational') === 'observational') slots.push('_observations');
+  slots.push('_observations');
   const contextManager = new ContextManager(agent, { slots });
 
   const eventBridge = new EventBridge(host.workingTagsEnabled(), logger);
@@ -451,11 +450,9 @@ export function assembleLoop(params: {
 
   const compactionManager = new CompactionManager(compactionConfig, contextManager.historyStart);
   compactionManager.setLogger(logger);
-  // Summarization runs on the primary model, observation and reflection on
-  // the utility model; each is tagged so its spend lands in its own
-  // session-usage bucket (the engine's purpose is the category).
-  compactionManager.setCompleteFn(async (context) =>
-    host.directComplete(context, { usageCategory: 'summarization' }));
+  // Observation and reflection run on the utility model, each tagged so its
+  // spend lands in its own session-usage bucket (the engine's purpose is the
+  // category).
   compactionManager.setObservationalCompleteFn(async (context, completeOptions) =>
     memoryCompletions.utility(
       {

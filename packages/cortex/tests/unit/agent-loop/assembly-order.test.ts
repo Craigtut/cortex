@@ -38,7 +38,6 @@ function setup(maxTurns: number) {
     model: wrapModel(raw, raw.provider, raw.name, raw.contextWindow),
     workingDirectory: '/tmp/test-workspace',
     initialBasePrompt: 'Test prompt',
-    compaction: { strategy: 'classic' },
     budgetGuard: { maxTurns },
   });
   const endTurn = (): void => emit({

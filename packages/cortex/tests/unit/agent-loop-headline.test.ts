@@ -51,7 +51,6 @@ function createLoop(config?: Partial<AgentLoopConfig>): AgentLoop {
       workingDirectory: '/tmp/test-workspace',
       initialBasePrompt: 'Test prompt',
       slots: [],
-      compaction: { strategy: 'classic' },
       ...config,
     },
     [],

@@ -3,6 +3,7 @@ import { AgentLoop } from '../../src/agent-loop.js';
 import type { PiAgent, PiModel } from '../../src/agent-loop.js';
 import type { PiEvent } from '../../src/event-bridge.js';
 import type { AgentLoopConfig } from '../../src/types.js';
+import type { AgentMessage } from '../../src/context-manager.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
 import { DEFAULT_TOOL_THRESHOLDS, MAX_RESULT_TOKENS } from '../../src/tool-result-persistence.js';
@@ -229,11 +230,12 @@ describe('AgentLoop', () => {
       const agent = createTestAgentLoop(piAgent, {
         ...config,
         slots: ['a', 'b'],
-        compaction: { strategy: 'classic' },
       });
 
       const cm = agent.getContextManager();
-      expect(cm.slotCount).toBe(2);
+      // The consumer's slots, then the observation slot.
+      expect(cm.slotCount).toBe(3);
+      expect(cm.slots).toEqual(['a', 'b', '_observations']);
     });
 
     it('infers utility model dynamically for anthropic', () => {
@@ -872,7 +874,6 @@ You have 12 emotions.`;
       const agent = createTestAgentLoop(piAgent, {
         ...config,
         slots: ['slot1', 'slot2'],
-        compaction: { strategy: 'classic' },
       });
 
       const cm = agent.getContextManager();
@@ -886,15 +887,16 @@ You have 12 emotions.`;
         { role: 'user', content: 'Restored message 2' },
       ]);
 
-      // The head and slots should be intact
+      // The head and slots should be intact (the observation slot last)
       expect(piAgent.state.messages[0]!.role).toBe('system');
       expect(piAgent.state.messages[1]!.content).toBe('Slot 1');
       expect(piAgent.state.messages[2]!.content).toBe('Slot 2');
+      expect(piAgent.state.messages[3]!.content).toBe('');
 
       // Conversation should be after slots
-      expect(piAgent.state.messages[3]!.content).toBe('Restored message 1');
-      expect(piAgent.state.messages[4]!.content).toBe('Restored response 1');
-      expect(piAgent.state.messages[5]!.content).toBe('Restored message 2');
+      expect(piAgent.state.messages[4]!.content).toBe('Restored message 1');
+      expect(piAgent.state.messages[5]!.content).toBe('Restored response 1');
+      expect(piAgent.state.messages[6]!.content).toBe('Restored message 2');
     });
 
     it('restoreConversationHistory replaces existing conversation', () => {
@@ -926,12 +928,36 @@ You have 12 emotions.`;
   // Observational memory restore
   // -----------------------------------------------------------------------
 
+  describe('the observation slot', () => {
+    it('is always there: the classic strategy is rejected at construction', () => {
+      expect(() => createTestAgentLoop(piAgent, {
+        ...config,
+        // Not in the type any more; a JavaScript consumer can still pass it.
+        compaction: { strategy: 'classic' } as never,
+      })).toThrow('Classic compaction was removed');
+      expect(createTestAgentLoop(piAgent, config).getContextManager().slots).toContain('_observations');
+    });
+
+    it('stays empty through a transform pass until there are observations', async () => {
+      const agent = createTestAgentLoop(piAgent, config);
+      piAgent.state.messages.push({ role: 'user', content: 'hello', timestamp: 1 } as never);
+
+      await agent.getTransformContextHook()({
+        systemPrompt: 'test',
+        model: {},
+        messages: piAgent.state.messages,
+        tools: [],
+        thinkingLevel: 'medium',
+      });
+
+      // A preamble about an empty log is tokens and a cache shift for nothing.
+      expect(agent.getContextManager().getSlot('_observations')).toBe('');
+    });
+  });
+
   describe('restoreObservationalMemoryState slot population', () => {
     it('leaves the observation slot empty when restored observations are empty', () => {
-      const agent = createTestAgentLoop(piAgent, {
-        ...config,
-        compaction: { strategy: 'observational' },
-      });
+      const agent = createTestAgentLoop(piAgent, config);
       const cm = agent.getContextManager();
 
       agent.restoreObservationalMemoryState({
@@ -949,10 +975,7 @@ You have 12 emotions.`;
     });
 
     it('populates the observation slot when restored observations are present', () => {
-      const agent = createTestAgentLoop(piAgent, {
-        ...config,
-        compaction: { strategy: 'observational' },
-      });
+      const agent = createTestAgentLoop(piAgent, config);
       const cm = agent.getContextManager();
 
       agent.restoreObservationalMemoryState({
@@ -1549,19 +1572,19 @@ You have 12 emotions.`;
       const agent = createTestAgentLoop(piAgent, {
         ...config,
         slots: [],
-        compaction: { strategy: 'classic' },
       });
 
-      const head = piAgent.state.messages[0]!;
+      // The system head, then the observation slot.
+      const [head, observationSlot] = piAgent.state.messages as [AgentMessage, AgentMessage];
       const history = [
         { role: 'user' as const, content: 'old message' },
         { role: 'assistant' as const, content: 'old response' },
       ];
-      const sourceMessages = [head, ...history];
+      const sourceMessages = [head, observationSlot, ...history];
       piAgent.state.messages = [...sourceMessages];
 
       const summary = { role: 'assistant' as const, content: 'summary' };
-      const compacted = [head, summary];
+      const compacted = [head, observationSlot, summary];
       const manager = agent.getCompactionManager();
       vi.spyOn(manager, 'applyInsertionCap').mockResolvedValue();
       vi.spyOn(manager, 'applyInTransformContext').mockImplementation(async (

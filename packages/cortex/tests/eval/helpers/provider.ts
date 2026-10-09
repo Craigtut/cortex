@@ -14,7 +14,7 @@ import type { CortexUsage } from '../../../src/types.js';
 import { streamModel } from '../../../src/model-runtime.js';
 import type { ModelRequestOptions } from '../../../src/model-runtime.js';
 import { assistantText, assistantUsage } from '../../../src/pi-message.js';
-import type { CompleteFn } from '../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../src/compaction/observational/types.js';
 import { costTracker } from './cost-tracker.js';
 import {
   resolveEvalApiKey,

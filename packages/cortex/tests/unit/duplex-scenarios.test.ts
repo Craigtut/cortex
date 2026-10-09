@@ -15,7 +15,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Type } from 'typebox';
 import type { AgentMessage } from '../../src/context-manager.js';
-import type { CompleteFn } from '../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../src/compaction/observational/types.js';
 import type { CortexTool } from '../../src/tool-contract.js';
 import type { ToolPermissionRequestContext } from '../../src/types.js';
 import { buildBrokeredPermissionResolver } from '../../src/duplex/brokered-resolvers.js';
@@ -457,7 +457,6 @@ describe('scenario: the persistent reasoner across a compaction', () => {
       // real threshold instead of being handed a pre-compacted history.
       contextWindowLimit: 12_000,
       compaction: {
-        strategy: 'observational',
         observational: { activationThreshold: 0.35 },
       },
       duplex: { idleDigestionDelayMs: 5 },

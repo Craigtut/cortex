@@ -44,7 +44,7 @@ export interface DirectCompletionOptions {
    * Category tag this completion's spend is recorded under in the loop's
    * session usage (see SessionUsage.utility) and on the emitted
    * utility_usage event. Cortex tags its internal calls ('observer',
-   * 'reflector', 'summarization', 'webfetch', 'bash_utility'); consumer
+   * 'reflector', 'webfetch', 'bash_utility'); consumer
    * calls default to 'direct', 'structured', or 'utility' by entry point.
    */
   usageCategory?: string;

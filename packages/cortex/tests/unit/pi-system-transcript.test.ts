@@ -77,7 +77,6 @@ async function buildLoop(tools: string[] = ['first_probe']) {
     workingDirectory: process.cwd(),
     initialBasePrompt: 'You are the probe host.',
     getApiKey: async () => 'unused-test-key',
-    compaction: { strategy: 'classic' },
     disableTools: Object.values(TOOL_NAMES),
     enableSubAgentTool: false,
     enableLoadSkillTool: false,

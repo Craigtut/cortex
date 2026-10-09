@@ -9,7 +9,7 @@ import { ObservationalMemoryEngine } from '../../../../src/compaction/observatio
 import { BufferingCoordinator } from '../../../../src/compaction/observational/buffering.js';
 import { parseObserverOutput } from '../../../../src/compaction/observational/observer.js';
 import { parseReflectorOutput } from '../../../../src/compaction/observational/reflector.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });

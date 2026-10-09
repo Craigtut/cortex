@@ -10,7 +10,7 @@ import { AgentLoop } from '../../../../src/agent-loop.js';
 import type { PiAgent, PiModel } from '../../../../src/agent-loop.js';
 import { wrapModel } from '../../../../src/model-wrapper.js';
 import type { AgentLoopConfig } from '../../../../src/types.js';
-import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });

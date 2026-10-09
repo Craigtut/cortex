@@ -120,7 +120,7 @@ export function wireLoopEvents(bridge: EventBridge, deps: LoopEventDeps): () => 
         if (inputTokens > 0) {
           compaction.updateCurrentContextTokenCount(inputTokens);
         }
-        if ((usage || inputTokens > 0) && compaction.strategy === 'observational') {
+        if (usage || inputTokens > 0) {
           compaction.onTurnEnd(
             inputTokens,
             deps.effectiveContextWindow(),

@@ -72,15 +72,7 @@ describe('ObservationLedger', () => {
     });
   });
 
-  describe('front drops and tail trims', () => {
-    it('invalidates a pending call whose messages were dropped', () => {
-      const ledger = ledgerWithChunks(4);
-      ledger.begin(9);
-      ledger.onFrontDropped(5);
-      expect(ledger.pendingRange()).toBeNull();
-      expect(ledger.watermark).toBe(0);
-    });
-
+  describe('tail trims', () => {
     it('clamps every index to the surviving length', () => {
       const ledger = ledgerWithChunks(4);
       ledger.begin(9);

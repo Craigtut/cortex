@@ -140,8 +140,8 @@ export function capToolResult(
 /**
  * Render tool call arguments as a compact JSON string.
  * Returns '' for empty/missing arguments. Full fidelity (no truncation):
- * the output feeds token estimation and Layer 2 summarization, both of
- * which need the real size and content of the arguments.
+ * the output feeds token estimation and the observer, both of which need
+ * the real size and content of the arguments.
  */
 function formatToolCallArgs(args: unknown): string {
   if (args === null || args === undefined) return '';
@@ -163,7 +163,7 @@ function formatToolCallArgs(args: unknown): string {
  *     contribute their text verbatim.
  *   - 'toolCall' parts (pi-ai assistant tool call blocks) render as
  *     "[Tool call: <name> <args JSON>]" so tool activity is visible to
- *     the Layer 2 summarizer and counted by token estimation. A turn
+ *     the observer and counted by token estimation. A turn
  *     that is purely tool calls no longer renders empty.
  */
 export function extractTextContent(message: AgentMessage): string {
@@ -700,8 +700,8 @@ export class MicrocompactionEngine {
   }
 
   /**
-   * Reset the cached trim state. Called after Layer 2 compaction
-   * replaces conversation history.
+   * Reset the cached trim state. Called after the source history is
+   * rewritten (an overflow drop).
    */
   resetCache(): void {
     this.cachedState = null;
