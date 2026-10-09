@@ -2,19 +2,17 @@
  * Which stored credential answers a getAuth(provider) call.
  *
  * pi-agent-core asks for the *model's* provider field, which is the synthetic
- * id "custom" for anything built by createCustomModel (Ollama, a local
- * OpenAI-compatible endpoint). The session answers those from the store, with
- * a fallback to the session's own provider name because a custom endpoint's
- * credential is filed under the connection name rather than "custom".
+ * id "custom" for anything built by createCustomModel (a local
+ * OpenAI-compatible endpoint), whatever the connection is called. The
+ * session answers nothing for it: the model carries its connection's key
+ * (or Cortex's placeholder for a keyless endpoint), which Cortex sends when
+ * the callback supplies none.
  *
- * That fallback is only safe while the two names describe the same endpoint.
- * A duplex talker outlives a /model provider switch still pointed at the
- * startup provider's model, so it keeps asking for "custom" long after the
- * session moved to a cloud provider, and the fallback then offers it that
- * provider's OAuth credential. Sending a cloud token to localhost is the real
- * hazard; the visible symptom was narrower, because an OAuth credential can
- * only be resolved under its own provider id and no OAuth provider is
- * registered as "custom".
+ * The session used to borrow a key for "custom" from its own provider's
+ * entry, which was only right while the two named the same endpoint. A
+ * duplex talker outlives a /model provider switch still pointed at the
+ * startup provider's model, so it kept asking for "custom" long after the
+ * session moved elsewhere. Sending a cloud token to localhost was the hazard.
  *
  * The callback under test is the one the facade is actually handed
  * (buildAgentConfig().getAuth), not a private method reached directly, so
@@ -22,11 +20,15 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { completeModel, ProviderManager } from '@animus-labs/cortex';
 import { makeSession } from './helpers/duplex-harness.js';
 import type { CredentialEntry } from '../src/config/credentials.js';
+import { resolveConfiguredModel } from '../src/providers/model-resolution.js';
 
 const OAUTH_ENTRY: CredentialEntry = {
   provider: 'anthropic',
@@ -94,16 +96,14 @@ describe('getAuth credential attribution', () => {
     // "custom" is a decision about that id and not an empty store.
     await expect(call('anthropic')).resolves.toBe('sk-oauth-live');
 
-    await expect(call('custom')).resolves.toBe('sk-no-key-required');
+    await expect(call('custom')).resolves.toBeUndefined();
     expect(providerManager.getAuth).not.toHaveBeenCalledWith('custom');
   });
 
-  it('still lends a local endpoint credential filed under the connection name', async () => {
-    // Regression guard, not a new behaviour: this is the case the fallback was
-    // written for, and the guard above must not close it.
-    const { call } = getAuthFor('ollama', { ollama: LOCAL_ENTRY });
+  it('answers nothing for a local endpoint, whose model carries its key', async () => {
+    const { call } = getAuthFor('local', { local: LOCAL_ENTRY });
 
-    await expect(call('custom')).resolves.toBe('sk-local');
+    await expect(call('custom')).resolves.toBeUndefined();
   });
 
   it('reports a missing credential for a real provider rather than borrowing one', async () => {
@@ -115,5 +115,66 @@ describe('getAuth credential attribution', () => {
 
     await expect(call('openai')).rejects.toThrow(/No credentials for provider "openai"/);
     expect(providerManager.getAuth).not.toHaveBeenCalled();
+  });
+});
+
+/** An OpenAI-compatible endpoint that records each request's bearer token and refuses it. */
+async function localEndpoint(): Promise<{ baseUrl: string; tokens: string[]; close: () => Promise<void> }> {
+  const tokens: string[] = [];
+  const server = createServer((request, response) => {
+    tokens.push(String(request.headers['authorization'] ?? ''));
+    request.resume();
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'stand-in' } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    tokens,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+describe('a custom endpoint request', () => {
+  /**
+   * What the session's getAuth and a model resolved from the stored entry
+   * send to the endpoint, with the session on `sessionProvider`.
+   */
+  async function tokenSent(entry: Omit<CredentialEntry, 'baseUrl'>, sessionProvider: string): Promise<string[]> {
+    const endpoint = await localEndpoint();
+    try {
+      const stored = { ...entry, baseUrl: endpoint.baseUrl };
+      const model = await resolveConfiguredModel(new ProviderManager(), 'local', 'local-model', stored);
+      const { internals } = makeSession(cwd, {
+        provider: sessionProvider,
+        credentialStore: fakeCredentialStore({ local: stored, anthropic: OAUTH_ENTRY }),
+        providerManager: fakeProviderManager(),
+      });
+      const auth = await internals.buildAgentConfig().getAuth!(model.provider);
+      const answer = await completeModel(
+        model,
+        { messages: [{ role: 'user', content: 'Hi', timestamp: 0 }] },
+        auth ? { auth } : {},
+      );
+      // Precondition: the request reached the endpoint and was refused there.
+      expect(answer.stopReason).toBe('error');
+      return endpoint.tokens;
+    } finally {
+      await endpoint.close();
+    }
+  }
+
+  it("carries the connection's own key", async () => {
+    expect(await tokenSent(LOCAL_ENTRY, 'local')).toEqual(['Bearer sk-local']);
+  });
+
+  it('still reaches a keyless endpoint', async () => {
+    const { apiKey: _none, ...keyless } = LOCAL_ENTRY;
+    expect(await tokenSent(keyless, 'local')).toEqual(['Bearer sk-no-key-required']);
+  });
+
+  it("keeps its own key after the session moved to a cloud provider", async () => {
+    expect(await tokenSent(LOCAL_ENTRY, 'anthropic')).toEqual(['Bearer sk-local']);
   });
 });

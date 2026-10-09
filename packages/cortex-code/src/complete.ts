@@ -63,8 +63,7 @@ export async function runComplete(argv: string[], options: { version: string }):
   // The interactive session's resolver: the same credential attribution, and
   // OAuth refreshed under the store's lock (another `cortex -p` run or an
   // interactive session may be refreshing the same token).
-  const auth = await new AuthResolver(credentialStore, providerManager, () => resolved.provider)
-    .getAuth(resolved.model.provider);
+  const auth = await new AuthResolver(credentialStore, providerManager).getAuth(resolved.model.provider);
 
   const result = await completeWithModel({
     model: resolved.model,
@@ -212,7 +211,8 @@ async function resolveCompletionModel(input: {
 
 async function completeWithModel(input: {
   model: CortexModel;
-  auth: ModelAuth;
+  /** Nothing for a local endpoint, whose model carries its own key. */
+  auth: ModelAuth | undefined;
   systemPrompt: string;
   prompt: string;
   schema: unknown | null;
@@ -222,7 +222,7 @@ async function completeWithModel(input: {
     systemPrompt: input.systemPrompt,
     messages: [{ role: 'user', content: input.prompt, timestamp: Date.now() }],
   };
-  const completeOptions: Record<string, unknown> = { auth: input.auth };
+  const completeOptions: Record<string, unknown> = input.auth ? { auth: input.auth } : {};
   if (input.schema) {
     const request = structuredCompletionRequest(input.model, input.schema, {
       name: toolName, description: 'Produce structured output', parameters: input.schema,

@@ -191,7 +191,7 @@ export class Session {
       getAgent,
       getApp,
     });
-    this.auth = new AuthResolver(options.credentialStore, options.providerManager, () => this.models.provider);
+    this.auth = new AuthResolver(options.credentialStore, options.providerManager);
     this.sandbox = new SessionSandbox({
       config: options.config,
       cwd: options.cwd,

@@ -377,7 +377,7 @@ interface CredentialStore {
 
 The credential store is also pi-ai's `CredentialStore` (`read`, `list`, `modify`, `delete`), and Cortex's `ProviderManager` is built over it (`new ProviderManager({ credentials: credentialStore })`). The session hands the agent a `getAuth` callback (`providers/api-key-resolver.ts`):
 
-- A custom endpoint (provider id `custom`, or an entry with `method: 'custom'`) answers with its stored key, or a placeholder for keyless servers such as Ollama. A `custom` request falls back to the session's provider entry, but never borrows an OAuth credential.
+- A local endpoint (provider id `custom` from `createCustomModel()`, or `ollama`) gets no answer: its model carries its connection's key, set from the stored entry when the model is resolved, and Cortex sends that key (or a placeholder for a keyless server) when the callback supplies none. Nothing is borrowed from the session's provider entry, so a model that outlives a provider switch keeps its own key.
 - Every other provider resolves through `providerManager.getAuth(provider)`: an API key straight from the file or the Keychain, or an OAuth token pi refreshes inside the store's `modify`. `modify` holds the credentials file's lock (stale after 30 seconds, waited for up to 30 seconds), and pi checks again under it whether the token still needs refreshing, so concurrent requests in one session and other `cortex` processes refresh a rotating token once. This replaced an in-process single-flight and a re-read-and-retry loop for refresh races between processes.
 - No stored credential is an error ("Run /login to connect"). Provider environment variables are never read: Cortex ignores them unless a consumer opts in.
 
