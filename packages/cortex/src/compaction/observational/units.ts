@@ -6,8 +6,7 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
-import { estimateTokens } from '../../token-estimator.js';
-import { extractTextContent } from '../tool-messages.js';
+import { messageTokens } from '../message-tokens.js';
 import { findToolCallGroups } from '../tool-call-groups.js';
 
 /** A unit's range in history, [start, end). */
@@ -28,16 +27,6 @@ export function unitsOf(history: AgentMessage[]): Unit[] {
     i = end;
   }
   return units;
-}
-
-/** Estimated tokens of one message, on the same basis as emergency truncation. */
-export function messageTokens(message: AgentMessage): number {
-  return estimateTokens(extractTextContent(message));
-}
-
-/** Estimated tokens of `messages`, on the same basis. */
-export function historyTokens(messages: AgentMessage[]): number {
-  return messages.reduce((sum, message) => sum + messageTokens(message), 0);
 }
 
 /** The largest unit boundary at or below `index`. */

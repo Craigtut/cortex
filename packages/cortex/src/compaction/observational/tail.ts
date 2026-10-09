@@ -10,7 +10,8 @@
 
 import type { AgentMessage } from '../../context-manager.js';
 import { isToolResultMessage } from '../tool-messages.js';
-import { messageTokens, unitsOf } from './units.js';
+import { messageTokens } from '../message-tokens.js';
+import { unitsOf } from './units.js';
 
 export interface TailSelection {
   /** Start of the verbatim tail: a unit boundary. */

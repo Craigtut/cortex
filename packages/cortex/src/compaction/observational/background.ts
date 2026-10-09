@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
-import { estimateTokens } from '../../token-estimator.js';
+import { historyTokens } from '../message-tokens.js';
 import type { BufferingCoordinator } from './buffering.js';
 import { deadlineSignal } from './calls.js';
 import type { MemoryCallTrigger } from './health.js';
@@ -68,17 +68,8 @@ export class BackgroundObservation {
         utilityModelContextWindow: this.ports.utilityModelContextWindow(),
       });
 
-    // Compute unobserved tokens (messages after buffer watermark)
     const watermark = buffering.getWatermark();
-    const unobservedMessages = history.slice(watermark);
-    const unobservedTokens = unobservedMessages.reduce((sum, msg) => {
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : JSON.stringify(msg.content);
-      return sum + estimateTokens(content);
-    }, 0);
-
-    if (buffering.shouldBuffer(unobservedTokens, bufferInterval)) {
+    if (buffering.shouldBuffer(historyTokens(history.slice(watermark)), bufferInterval)) {
       this.launchPiece(history, watermark, 'buffer');
     }
   }
@@ -149,12 +140,7 @@ export class BackgroundObservation {
       // given up, launch nothing behind a hung observer.
       if (!(await buffering.observerSettledUnless(stop))) return timedOut('the in-flight observer');
 
-      const unobservedTokens = getHistory().slice(buffering.getWatermark()).reduce((sum, msg) => {
-        const content = typeof msg.content === 'string'
-          ? msg.content
-          : JSON.stringify(msg.content);
-        return sum + estimateTokens(content);
-      }, 0);
+      const unobservedTokens = historyTokens(getHistory().slice(buffering.getWatermark()));
       // Same floor onTurnEnd's buffering uses: observing a trivial tail
       // thrashes the utility model for nothing.
       if (unobservedTokens === 0 || unobservedTokens < this.ports.config().bufferMinTokens) return false;

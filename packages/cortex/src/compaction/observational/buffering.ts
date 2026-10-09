@@ -24,7 +24,7 @@ import { ObservationLedger } from './ledger.js';
 import type { LedgerState, RangedChunk } from './ledger.js';
 import { runObserver } from './observer.js';
 import { runReflector } from './reflector.js';
-import { estimateTokens } from '../../token-estimator.js';
+import { historyTokens } from '../message-tokens.js';
 import { MemoryCallError, SINGLE_ATTEMPT } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import type { MemoryCallOutcomes, MemoryCallTrigger } from './health.js';
@@ -503,24 +503,9 @@ export class BufferingCoordinator {
 
 /** The chunk an observer output records for the messages it observed. */
 export function chunkFromOutput(output: ObserverOutput, messages: AgentMessage[]): ObservationChunk {
-  const messageTokensObserved = messages.reduce((sum, msg) => {
-    if (typeof msg.content === 'string') {
-      return sum + estimateTokens(msg.content);
-    }
-    if (Array.isArray(msg.content)) {
-      const text = msg.content
-        .map((part) => {
-          if (typeof part.text === 'string') return part.text;
-          return JSON.stringify(part);
-        })
-        .join(' ');
-      return sum + estimateTokens(text);
-    }
-    return sum;
-  }, 0);
   const chunk: ObservationChunk = {
     observations: output.observations,
-    messageTokensObserved,
+    messageTokensObserved: historyTokens(messages),
     createdAt: new Date(),
   };
   if (output.currentTask) chunk.currentTask = output.currentTask;

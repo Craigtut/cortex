@@ -29,6 +29,7 @@ import type { AgentMessage } from '../context-manager.js';
 import type { MicrocompactionConfig, ToolCategory } from '../types.js';
 import { estimateTokens } from '../token-estimator.js';
 import { extractTextContent, extractToolName, isToolResultMessage } from './tool-messages.js';
+import { messageTokens } from './message-tokens.js';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -289,7 +290,7 @@ export function computeTrimState(
     // Accumulate tokens regardless of message type so non-tool-result
     // messages (assistant text, user messages) push older results further
     // down the timeline correctly.
-    tokenOffset += estimateTokens(extractTextContent(message));
+    tokenOffset += messageTokens(message);
   }
 
   return {

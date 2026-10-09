@@ -23,7 +23,7 @@ import type { CortexLogger, CortexCompactionConfig } from '../types.js';
 import { NOOP_LOGGER } from '../noop-logger.js';
 import { estimateTokens } from '../token-estimator.js';
 import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS } from './microcompaction.js';
-import { extractTextContent } from './tool-messages.js';
+import { historyTokens } from './message-tokens.js';
 import { FAILSAFE_DEFAULTS } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
 import type { CompactNowOptions, CompactNowResult, ObservationalMemory, ObserveNowResult } from './observational/types.js';
@@ -662,19 +662,13 @@ export class CompactionManager {
    * Estimate tokens for a set of history messages.
    */
   private estimateHistoryTokens(history: AgentMessage[]): number {
-    return estimateTokens(
-      history.map(m => extractTextContent(m)).join('\n'),
-    );
+    return historyTokens(history);
   }
 
   /**
    * Estimate total context tokens from an AgentContext object.
    */
   private estimateContextTokens(context: AgentContext): number {
-    let total = estimateTokens(context.systemPrompt);
-    for (const msg of context.messages) {
-      total += estimateTokens(extractTextContent(msg));
-    }
-    return total;
+    return estimateTokens(context.systemPrompt) + historyTokens(context.messages);
   }
 }

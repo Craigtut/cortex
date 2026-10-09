@@ -41,7 +41,7 @@ import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
 import { InBandObserver } from './in-band.js';
 import { BackgroundObservation } from './background.js';
-import { historyTokens } from './units.js';
+import { historyTokens } from '../message-tokens.js';
 import { selectTail } from './tail.js';
 import { applySwap, removedBy, removesAny, swapCut } from './swap.js';
 import { OverflowDrop, truncateView } from './emergency.js';
