@@ -57,12 +57,12 @@ jobs:
             exit 1
           fi
 
-          for published in "${version}" "${version}-win32"; do
-            if npm view "${PACKAGE_NAME}@${published}" version >/dev/null 2>&1; then
-              echo "${PACKAGE_NAME}@${published} is already published."
-              exit 1
-            fi
-          done
+          # The Windows variant may already be live from an earlier run that
+          # failed before the main package; the publish job skips it then.
+          if npm view "${PACKAGE_NAME}@${version}" version >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${version} is already published."
+            exit 1
+          fi
 
       - name: Typecheck
         run: npm run typecheck -w packages/cortex
@@ -80,7 +80,7 @@ jobs:
       - name: Stage packages
         run: node tools/release/stage-cortex.mjs --out release-artifacts
 
-      # Publish both to a throwaway local registry the way the stage job does,
+      # Publish both to a throwaway local registry the way the publish job does,
       # install, and check that Linux gets neither the variant nor the SDK.
       - name: Verify the staged install on Linux
         run: node tools/release/verify-cortex-install.mjs --tarballs release-artifacts
@@ -94,7 +94,7 @@ jobs:
           retention-days: 7
 
   # The same check on a real Windows install, against the exact tarballs the
-  # stage job publishes: npm installs the variant and the SDK, and the
+  # publish job publishes: npm installs the variant and the SDK, and the
   # installed Cortex resolves it, hoisted and in npm's nested layout. Needs only
   # the release tools from the checkout, not the project's dependencies.
   verify-windows:
@@ -126,8 +126,8 @@ jobs:
       - name: Verify the staged install on Windows
         run: node tools/release/verify-cortex-install.mjs --tarballs release-artifacts
 
-  stage:
-    name: Stage packages on npm
+  publish:
+    name: Publish packages to npm
     runs-on: ubuntu-latest
     needs: [verify, verify-windows]
     environment: npm-publish
@@ -156,8 +156,10 @@ jobs:
       # without an optional dependency it cannot resolve, so a main package
       # live before its variant leaves Windows installs without the SDK. npm
       # refuses a prerelease without --tag, and the tag keeps `latest` on the
-      # main package. Staging records the tag; approval publishes with it.
-      - name: Stage packages
+      # main package. Trusted publishing (OIDC) authenticates both publishes
+      # and attaches provenance; the npm-publish environment's approval is the
+      # one human gate.
+      - name: Publish packages
         run: |
           set -o pipefail
           version="${GITHUB_REF_NAME#"${TAG_PREFIX}"}"
@@ -170,14 +172,29 @@ jobs:
             exit 1
           fi
 
-          npm stage publish "${variant}" --access public --tag win32 | tee variant-stage.txt
-          npm stage publish "${main}" --access public | tee main-stage.txt
+          if npm view "${PACKAGE_NAME}@${version}-win32" version >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${version}-win32 is already live; publishing the main package only."
+          else
+            npm publish "${variant}" --access public --tag win32 --provenance
+          fi
+
+          # Publish the main package only once the registry serves the variant.
+          for attempt in $(seq 1 30); do
+            if npm view "${PACKAGE_NAME}@${version}-win32" version >/dev/null 2>&1; then
+              break
+            fi
+            if [ "${attempt}" = "30" ]; then
+              echo "${PACKAGE_NAME}@${version}-win32 is not visible on the registry; not publishing ${version}."
+              exit 1
+            fi
+            sleep 10
+          done
+
+          npm publish "${main}" --access public --provenance
 
           {
-            echo "## Staged ${PACKAGE_NAME} ${version}"
+            echo "## Published ${PACKAGE_NAME} ${version}"
             echo
-            echo "Approve in this order. Approving the main package first leaves Windows installs without the MXC SDK until the variant is live."
-            echo
-            echo "1. \`${version}-win32\` (dist-tag \`win32\`): $(grep -o 'staged with id [0-9a-f-]*' variant-stage.txt || echo 'stage id in the log')"
-            echo "2. \`${version}\` (dist-tag \`latest\`): $(grep -o 'staged with id [0-9a-f-]*' main-stage.txt || echo 'stage id in the log')"
+            echo "- \`${version}-win32\` (dist-tag \`win32\`)"
+            echo "- \`${version}\` (dist-tag \`latest\`)"
           } >> "${GITHUB_STEP_SUMMARY}"

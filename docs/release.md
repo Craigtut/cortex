@@ -1,6 +1,6 @@
 # Release process
 
-Cortex uses separate tag-triggered release workflows for the framework and CLI packages. The workflows stage packages on npm with trusted publishing. A maintainer still approves the staged package with 2FA before it goes live. A package's first publication must be done manually because npm cannot stage a brand-new package.
+Cortex uses separate tag-triggered release workflows for the framework and CLI packages. Pushing a release tag runs the workflow; a maintainer approves its publish job once in GitHub (the `npm-publish` environment), and the job publishes to npm with trusted publishing (OIDC), which also attaches provenance. A package's first publication must be done manually, since trusted publishing can only be configured for a package that exists.
 
 No npm publish token should be stored in GitHub.
 
@@ -13,7 +13,7 @@ No npm publish token should be stored in GitHub.
 
 Each workflow rejects the release if the tag does not match the package version, if the changelog is missing that version, or if the package version is already published on npm.
 
-The verify job builds and packs the tarball without OIDC publish permissions. The stage job has OIDC permission, but it does not check out repository code or install project dependencies. It only downloads the verified tarball artifact (two tarballs for Cortex, below) and stages it on npm.
+The verify job builds and packs the tarball without OIDC publish permissions. The publish job has OIDC permission, but it does not check out repository code or install project dependencies. It only downloads the verified tarball artifact (two tarballs for Cortex, below) and publishes it.
 
 ### Cortex's Windows variant
 
@@ -26,9 +26,7 @@ Every Cortex release publishes two versions of `@animus-labs/cortex`:
 
 npm installs the variant, and through it Microsoft's MXC sandbox SDK, only on Windows. The alias is not in `packages/cortex/package.json`; `tools/release/stage-cortex.mjs` adds it when it stages both tarballs, and the main tarball otherwise holds exactly what `npm pack` selects. The architecture is in [`cortex/sandboxing.md`](./cortex/sandboxing.md) ("Dependency strategy").
 
-The Cortex workflow's verify job stages both tarballs and runs `tools/release/verify-cortex-install.mjs` against them: it publishes them to a throwaway local registry (verdaccio) the way the stage job does, checks the dist-tags, and installs the main package into fresh projects. A second job repeats the install on Windows, where the variant and the SDK must be installed and the installed Cortex must find the SDK, hoisted and in npm's nested layout; on Linux neither may be installed. The stage job then stages the variant first, with `--tag win32` (npm refuses a prerelease without a tag, and the tag keeps `latest` on the main package), and the main package second, and lists both stage ids in its summary.
-
-**Approve the `-win32` stage first.** npm installs a package without an optional dependency it cannot resolve and records nothing for it, so while the main package is live and the variant is not, Windows installs get no SDK, and their lockfiles then fail `npm ci` once the variant appears (`npm install` repairs them). If the stage job fails between the two, reject the staged variant (`npm stage reject <stage-id>`) before rerunning, because a staged version cannot be staged again.
+The Cortex workflow's verify job stages both tarballs and runs `tools/release/verify-cortex-install.mjs` against them: it publishes them to a throwaway local registry (verdaccio) the way the publish job does, checks the dist-tags, and installs the main package into fresh projects. A second job repeats the install on Windows, where the variant and the SDK must be installed and the installed Cortex must find the SDK, hoisted and in npm's nested layout; on Linux neither may be installed. The publish job then publishes the variant first, with `--tag win32` (npm refuses a prerelease without a tag, and the tag keeps `latest` on the main package), waits until the registry serves it, and only then publishes the main package. The order matters: npm installs a package without an optional dependency it cannot resolve and records nothing for it, so a main package live before its variant would leave Windows installs without the SDK, and their lockfiles would then fail `npm ci` once the variant appeared (`npm install` repairs them). If the job fails after the variant is live, rerun it: the verify job allows an already-published variant and the publish job skips it.
 
 There is no `publish:cortex` script: a plain `npm publish` of the package would ship it without the variant.
 
@@ -54,7 +52,7 @@ For `@animus-labs/cortex`:
 - Repository: this repository
 - Workflow filename: `release-cortex.yml`
 - Environment: `npm-publish`
-- Allowed action: `npm stage publish`
+- Allowed action: `npm publish`
 
 For `@animus-labs/cortex-code`:
 
@@ -62,7 +60,15 @@ For `@animus-labs/cortex-code`:
 - Repository: this repository
 - Workflow filename: `release-cortex-code.yml`
 - Environment: `npm-publish`
-- Allowed action: `npm stage publish`
+- Allowed action: `npm publish`
+
+With npm 11.15 or newer, the CLI does the same:
+
+```bash
+npm trust github @animus-labs/cortex --file release-cortex.yml --repo Craigtut/cortex --env npm-publish --allow-publish
+npm trust github @animus-labs/cortex-code --file release-cortex-code.yml --repo Craigtut/cortex --env npm-publish --allow-publish
+npm trust list @animus-labs/cortex
+```
 
 Then set each package's publishing access to require 2FA and disallow tokens.
 
@@ -125,15 +131,9 @@ git push origin main
 git push origin cortex-vX.Y.Z
 ```
 
-After the workflow stages the two packages, review and approve them on npmjs.com or with the npm CLI, the `X.Y.Z-win32` variant first:
+When the verify jobs pass, the run waits on the `npm-publish` environment. Approve it on the run page in GitHub ("Review deployments"); the publish job then publishes both versions in order. Afterwards:
 
 ```bash
-npm stage list @animus-labs/cortex
-npm stage view <stage-id>
-npm stage download <stage-id>
-npm stage approve <variant-stage-id>
-npm view @animus-labs/cortex@X.Y.Z-win32 version   # live before the main package
-npm stage approve <main-stage-id>
 npm view @animus-labs/cortex dist-tags             # latest: X.Y.Z, win32: X.Y.Z-win32
 ```
 
@@ -162,11 +162,4 @@ git push origin main
 git push origin cortex-code-vX.Y.Z
 ```
 
-After the workflow stages the package, review and approve the staged release on npmjs.com or with the npm CLI:
-
-```bash
-npm stage list @animus-labs/cortex-code
-npm stage view <stage-id>
-npm stage download <stage-id>
-npm stage approve <stage-id>
-```
+When the verify job passes, approve the `npm-publish` environment on the run page in GitHub; the publish job publishes the package.
