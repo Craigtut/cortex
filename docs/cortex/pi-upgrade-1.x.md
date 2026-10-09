@@ -596,6 +596,20 @@ against the pre-change source: revert only the source with
   - A waiter survives a 15-second refresh.
   - Existing `credentials.json` fixtures read back unchanged.
   - Keychain-held keys resolve.
+- As built:
+  - No env-blind `AuthContext` was needed in Cortex Code: Cortex is env-blind
+    by default (decision 3).
+  - Cortex Code's `CredentialStore` class itself implements pi's interface;
+    there is one owner of `credentials.json`. `ApiKeyResolver` became
+    `AuthResolver` with `getAuth`, and `cortex -p` uses it too (it had its
+    own copy of the resolution logic).
+  - Cortex re-exports pi's credential types, since Cortex Code no longer
+    depends on pi-ai.
+  - The "waiter survives a 15-second refresh" test holds the lock for 1.5
+    seconds rather than 15, to keep the suite fast; the lock waits up to 30.
+    The single-refresh test drives `modify` the way pi's locked refresh does
+    (check again under the lock), because a real provider refresh needs the
+    network. Removing the lock from `modify` fails both tests.
 
 ### Phase 6: errors onto pi-ai (Cortex, then Cortex Code UI)
 
