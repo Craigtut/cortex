@@ -146,5 +146,5 @@ jobs:
             exit 1
           fi
 
-          tarball="$(find release-artifacts -name '*.tgz' -print -quit)"
+          tarball="$(find ./release-artifacts -name '*.tgz' -print -quit)"
           npm publish "${tarball}" --access public --provenance

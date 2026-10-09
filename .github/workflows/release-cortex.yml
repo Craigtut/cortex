@@ -163,8 +163,8 @@ jobs:
         run: |
           set -o pipefail
           version="${GITHUB_REF_NAME#"${TAG_PREFIX}"}"
-          variant="release-artifacts/animus-labs-cortex-${version}-win32.tgz"
-          main="release-artifacts/animus-labs-cortex-${version}.tgz"
+          variant="./release-artifacts/animus-labs-cortex-${version}-win32.tgz"
+          main="./release-artifacts/animus-labs-cortex-${version}.tgz"
           tarball_count="$(find release-artifacts -name '*.tgz' | wc -l | tr -d ' ')"
           if [ "${tarball_count}" != "2" ] || [ ! -f "${variant}" ] || [ ! -f "${main}" ]; then
             echo "Expected exactly ${variant} and ${main}, found:"
