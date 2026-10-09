@@ -3202,7 +3202,9 @@ You have 12 emotions.`;
         stopReason: 'toolUse',
       } as never);
 
-      const requeue = internal.queues.unwindFailedDelivery(preDeliveryCount);
+      // The run started where the delivery message landed.
+      internal.runner.boundary = preDeliveryCount;
+      const requeue = internal.queues.unwindFailedDelivery('delivery body', 0);
 
       expect(requeue).toBe(true);
       expect(piAgent.state.messages).toHaveLength(preDeliveryCount);

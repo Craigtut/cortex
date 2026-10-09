@@ -194,9 +194,8 @@ export function assembleLoop(params: {
     isShuttingDown: () => lifecycle.isShuttingDown,
     isCancelled: (taskId) => subAgentManager.isCancelled(taskId),
     runDeliveryTurn: (message, policy, causeTags) => runner.run(message, undefined, true, policy, causeTags),
-    unwindFailedDelivery: (preDeliveryCount, runAbortEpoch) =>
-      queues.unwindFailedDelivery(preDeliveryCount, runAbortEpoch),
-    messages: transcript,
+    unwindFailedDelivery: (deliveryContent, runAbortEpoch) =>
+      queues.unwindFailedDelivery(deliveryContent, runAbortEpoch),
     backgroundTasks: { get: (taskId) => tools.runtime.backgroundTasks.get(taskId) },
     deadLetters,
     retryPolicy,

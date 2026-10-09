@@ -27,7 +27,6 @@ function setup(overrides?: { run?: () => Promise<unknown>; unwind?: boolean; can
     isCancelled: (taskId) => overrides?.cancelled?.includes(taskId) ?? false,
     runDeliveryTurn,
     unwindFailedDelivery: () => overrides?.unwind ?? true,
-    messages: () => [],
     backgroundTasks: { get: () => undefined },
     deadLetters,
     retryPolicy: DEFAULT_RETRY_POLICY,

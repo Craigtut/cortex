@@ -250,8 +250,6 @@ export class DeliveryQueues {
     const now = Date.now();
     for (const item of pending) item.firstDeliveryAttemptAt ??= now;
     const boundedRetryPolicy = boundedPolicyFor(this.ports.retryPolicy, pending, WAKE_DELIVERY_LIMITS, now);
-    // pi pushes the delivery message at run start, before any model call.
-    const preDeliveryCount = this.ports.transcript.messages().length;
     const runAbortEpoch = this.ports.abort.epoch;
     try {
       // Drain semantics: never flush the silent queue, whose extras would
@@ -263,7 +261,7 @@ export class DeliveryQueues {
       );
     } catch (err) {
       const error = toError(err);
-      if (!this.unwindFailedDelivery(preDeliveryCount, runAbortEpoch)) {
+      if (!this.unwindFailedDelivery(message, runAbortEpoch)) {
         // Delivered: the run progressed past it. Only the failure surfaces.
         throw error;
       }
@@ -368,9 +366,17 @@ export class DeliveryQueues {
    * stub when the run never progressed past them. Returns true when the
    * message is no longer in the transcript (re-queue the batch), false when
    * the run progressed past it (it counts as delivered).
+   *
+   * The run pushed `deliveryContent` at its start, which the live history
+   * boundary tracks (compaction moves it when it removes older history
+   * mid-run); a length captured before the run would point past it.
    */
-  unwindFailedDelivery(preDeliveryCount: number, runAbortEpoch: number): boolean {
-    const unwind = unwindFailedDelivery(this.ports.transcript.messages(), preDeliveryCount);
+  unwindFailedDelivery(deliveryContent: string, runAbortEpoch: number): boolean {
+    const unwind = unwindFailedDelivery(
+      this.ports.transcript.messages(),
+      this.ports.transcript.boundary(),
+      deliveryContent,
+    );
     if (unwind.trimmed) this.ports.transcript.notifyTailTrimmed();
     if (unwind.injectedUserTexts.length > 0) {
       // Content pi injected inside the failed run opens the next run.

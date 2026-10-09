@@ -7,7 +7,6 @@
  * delivery budgets and dead letters" in docs/cortex/cortex-architecture.md.
  */
 
-import type { AgentMessage } from '../context-manager.js';
 import { classifyError, toError } from '../error-classifier.js';
 import type { BackgroundTaskStore } from '../tools/runtime.js';
 import type { CortexLogger, RetryPolicy, SubAgentResult } from '../types.js';
@@ -58,8 +57,7 @@ export interface BackgroundDeliveryPorts {
    */
   runDeliveryTurn(message: string, retryPolicy: RetryPolicy, causeTags: unknown[]): Promise<unknown>;
   /** Unwind a failed delivery run (true: the content must be re-queued). */
-  unwindFailedDelivery(preDeliveryCount: number, runAbortEpoch: number): boolean;
-  messages(): AgentMessage[];
+  unwindFailedDelivery(deliveryContent: string, runAbortEpoch: number): boolean;
   backgroundTasks: Pick<BackgroundTaskStore, 'get'>;
   deadLetters: DeadLetterStore;
   retryPolicy: RetryPolicy;
@@ -167,8 +165,6 @@ export class BackgroundDelivery {
     if (firstAttemptTaskIds.length > 0) {
       this.deliveryHandlers.emit(firstAttemptTaskIds);
     }
-    // pi pushes the delivery message at run start, before any model call.
-    const preDeliveryCount = this.ports.messages().length;
     const runAbortEpoch = this.ports.abort.epoch;
     let attemptError: Error | null = null;
     let requeuedForRetry = false;
@@ -178,7 +174,7 @@ export class BackgroundDelivery {
       // Re-queue only content the unwind removed; content the run
       // progressed past is already history.
       attemptError = toError(err);
-      if (this.ports.unwindFailedDelivery(preDeliveryCount, runAbortEpoch)) {
+      if (this.ports.unwindFailedDelivery(message, runAbortEpoch)) {
         this.requeueOrDeadLetter(batch, err);
         requeuedForRetry = true;
       }

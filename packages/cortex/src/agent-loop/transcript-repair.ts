@@ -84,24 +84,36 @@ export function trimTrailingFailures(messages: AgentMessage[]): boolean {
  * inside that run come back as `injectedUserTexts` for exactly-once
  * re-delivery. The transcript cannot tell a drained steer from a drained
  * follow-up, so the caller parks them rather than guess a pi queue.
+ *
+ * @param runStart - Where the run pushed the delivery message: the live
+ *   history boundary, which compaction moves when it removes older history
+ *   mid-run, never a length captured before the run.
+ * @param deliveryContent - The delivery message's text. When the first turn
+ *   at `runStart` is not it, compaction removed or moved it mid-run: the run
+ *   progressed, so the delivery is durable, and nothing after `runStart` may
+ *   be mistaken for it.
  */
 export function unwindFailedDelivery(
   messages: AgentMessage[],
-  preDeliveryCount: number,
+  runStart: number,
+  deliveryContent?: string,
 ): { outcome: 'requeue' | 'durable'; injectedUserTexts: string[]; trimmed: boolean } {
   const injectedUserTexts: string[] = [];
   // Only this run's stubs; an earlier turn's stub stays.
-  const stubs = trailingFailureCount(messages, preDeliveryCount);
+  const stubs = trailingFailureCount(messages, runStart);
   let trimmed = stubs > 0;
   if (trimmed) messages.splice(messages.length - stubs, stubs);
 
   // A mid-run compaction keeps the recent tail, so the delivery is durable.
-  if (messages.length < preDeliveryCount) return { outcome: 'durable', injectedUserTexts, trimmed };
+  if (messages.length < runStart) return { outcome: 'durable', injectedUserTexts, trimmed };
   // Turns only: pi declares tool changes ahead of the delivery and Cortex
   // patches the prompt mid-run. Those system messages stay where they are
   // (they declare what is still true); only turns are unwound.
-  const turns = turnIndicesFrom(messages, preDeliveryCount);
+  const turns = turnIndicesFrom(messages, runStart);
   if (turns.length === 0) return { outcome: 'requeue', injectedUserTexts, trimmed };
+  if (deliveryContent !== undefined && !isDeliveryMessage(messages[turns[0]!], deliveryContent)) {
+    return { outcome: 'durable', injectedUserTexts, trimmed };
+  }
   if (turns.length === 1 && raw(messages[turns[0]!])['role'] === 'user') {
     messages.splice(turns[0]!, 1);
     return { outcome: 'requeue', injectedUserTexts, trimmed: true };
@@ -118,6 +130,11 @@ export function unwindFailedDelivery(
     return { outcome: 'requeue', injectedUserTexts, trimmed };
   }
   return { outcome: 'durable', injectedUserTexts, trimmed };
+}
+
+/** Whether `message` is the user turn carrying `content`. */
+function isDeliveryMessage(message: AgentMessage | undefined, content: string): boolean {
+  return raw(message)['role'] === 'user' && userMessageText(message) === content;
 }
 
 /** Indices of the non-system messages at or after `from`. */

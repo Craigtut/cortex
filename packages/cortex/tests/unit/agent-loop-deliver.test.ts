@@ -909,7 +909,7 @@ describe('AgentLoop.deliver consumer-prompt splice failure recovery', () => {
     const runStartEpoch = 3;
     internals.abortState.epoch = 4;
 
-    expect(internals.queues.unwindFailedDelivery(0, runStartEpoch)).toBe(true);
+    expect(internals.queues.unwindFailedDelivery('delivery body', runStartEpoch)).toBe(true);
     expect(internals.queues.wake.map((d) => d.content)).toEqual(['injected steer']);
     // Stamped with the epoch the run started under, so the abort's epoch
     // gate cancels the recovered content with the run it rode in, instead
