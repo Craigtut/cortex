@@ -633,7 +633,8 @@ describe('AgentLoop billing and stated resets', () => {
     const queue = [...failures];
     const attempt = (): void => {
       const message = queue.shift();
-      mock.state.errorMessage = message;
+      if (message === undefined) delete mock.state.errorMessage;
+      else mock.state.errorMessage = message;
       mock.state.messages.push(
         message === undefined
           ? { role: 'assistant', content: 'done', stopReason: 'stop' } as never
