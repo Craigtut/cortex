@@ -411,6 +411,8 @@ export function applyTrimAction(message: AgentMessage, action: TrimAction): Agen
 export class MicrocompactionEngine {
   private readonly config: MicrocompactionConfig;
   private cachedState: TrimState | null = null;
+  /** The history the cached state was computed for, message by message. */
+  private cachedFor: readonly AgentMessage[] = [];
 
   constructor(config: Partial<MicrocompactionConfig> = {}) {
     this.config = { ...MICROCOMPACTION_DEFAULTS, ...config };
@@ -621,13 +623,18 @@ export class MicrocompactionEngine {
 
     const utilizationBand = Math.floor(usageRatio * 10);
 
-    // Replay cached state when nothing meaningful has changed.
-    const canReplay = this.cachedState
-      && this.cachedState.historyLength === history.length
-      && this.cachedState.utilizationBand === utilizationBand;
+    // Replay cached state when nothing meaningful has changed, and only onto
+    // the messages it was computed for: a swap or an unwound delivery can
+    // leave the length as it was with other messages at those indices.
+    const cached = this.cachedState;
+    const canReplay = cached
+      && cached.historyLength === history.length
+      && cached.utilizationBand === utilizationBand
+      && [...cached.actions.keys()].every((i) => history[i] === this.cachedFor[i]);
 
     if (!canReplay) {
       this.cachedState = computeTrimState(history, contextWindow, usageRatio, this.config);
+      this.cachedFor = [...history];
     }
 
     if (!this.cachedState || this.cachedState.actions.size === 0) {
@@ -731,6 +738,7 @@ export class MicrocompactionEngine {
    */
   resetCache(): void {
     this.cachedState = null;
+    this.cachedFor = [];
   }
 
   /**

@@ -785,6 +785,32 @@ describe('MicrocompactionEngine', () => {
       expect(secondState).toBe(firstState);
     });
 
+    it('never replays a trim onto another message at the same index', async () => {
+      const result = makeToolResult(makeContentOfTokens(20_000), 'Read');
+      const history: AgentMessage[] = [
+        makeToolCall('Read'),
+        result,
+        makeAssistantMsg(makeContentOfTokens(30_000)),
+        makeAssistantMsg('recent'),
+      ];
+      const first = await engine.apply(history, 200_000, 100_000, { cacheCold: true });
+      // Precondition: the result at index 1 was trimmed.
+      expect(first[1]).not.toBe(result);
+
+      // A rewrite of the same length (a swap removed as many messages as
+      // had arrived) puts the user's latest question at index 1.
+      const ask = makeUserMsg('the latest question');
+      const rewritten: AgentMessage[] = [
+        makeAssistantMsg('kept'),
+        ask,
+        makeAssistantMsg(makeContentOfTokens(30_000)),
+        makeAssistantMsg('recent'),
+      ];
+      const second = await engine.apply(rewritten, 200_000, 100_000, { cacheCold: true });
+
+      expect(second[1]).toBe(ask);
+    });
+
     it('recomputes when history length changes', async () => {
       const longContent = makeContentOfTokens(20_000);
       const history: AgentMessage[] = [
