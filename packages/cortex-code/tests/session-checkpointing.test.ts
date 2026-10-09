@@ -29,7 +29,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, homedir: () => currentHome() };
 });
 
-import type { CortexAgentStateV2 } from '@animus-labs/cortex';
+import type { CompleteFn, CortexAgentStateV2 } from '@animus-labs/cortex';
 import {
   createDuplexSession,
   createPassthroughSession,
@@ -110,21 +110,42 @@ describe('checkpointing during a long task', () => {
     const { internals, agent, reasonerPi } = await createPassthroughSession(cwd);
     const sessionId = internals.sessionId;
     const cm = agent.getCompactionManager();
-    // History and memory are read in one synchronous frame, so a generation
-    // in flight cannot land between them: dropping memory bought nothing
-    // and lost every observation on crash recovery.
-    vi.spyOn(cm, 'isObserverInFlight').mockReturnValue(true);
+    // An exchange memory already observed, so there is memory to lose.
+    reasonerPi.state.messages.push(
+      { role: 'user', content: 'where is the payments module?', timestamp: 1 },
+      { role: 'assistant', content: [{ type: 'text', text: 'In src/payments.' }], timestamp: 2 },
+    );
+    cm.restoreObservationalMemoryState({
+      observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
+      bufferedChunks: [{ observations: '* (10:00) payments lives in src/payments', messageTokensObserved: 20, createdAt: new Date(), endIndex: 2 }],
+      bufferWatermark: 2,
+    });
+    // The generation the task's first turn starts hangs until released.
+    let release = (): void => {};
+    const complete = vi.fn<CompleteFn>(() => new Promise<string>((resolve) => {
+      release = () => resolve('<observations>\n* (10:01) renaming payments\n</observations>');
+    }));
+    cm.setObservationalCompleteFn(complete);
 
     const save = vi.spyOn(internals.checkpoints.saver, 'save');
     reasonerPi.holdAfterTurn = true;
-    const turn = internals.handleInput('rename the payments module');
+    const turn = internals.handleInput('rename the payments module. ' + 'Context: '.repeat(15_000));
     await waitUntil(() => save.mock.calls.length > 0, 3000, 'a checkpoint was taken mid-run');
     await internals.checkpoints.saver.flush();
 
+    // Precondition: the checkpoint was taken with a real generation in flight.
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(cm.isObserverInFlight()).toBe(true);
+    // History and memory are read in one synchronous frame, so a generation
+    // in flight cannot land between them: memory is saved as it stands,
+    // and the in-flight messages are observed again after a crash.
     const state = readState(sessionId);
-    expect(state.reasonerMemory).not.toBeNull();
-    expect(state.reasonerMemory!.bufferWatermark).toBeLessThanOrEqual(state.reasonerHistory.length);
+    expect(state.reasonerMemory!.bufferedChunks!.map((c) => c.observations))
+      .toEqual(['* (10:00) payments lives in src/payments']);
+    expect(state.reasonerMemory!.bufferWatermark).toBe(2);
+    expect(JSON.stringify(state.reasonerHistory.slice(0, 2))).toContain('In src/payments.');
 
+    release();
     reasonerPi.holdAfterTurn = false;
     reasonerPi.releaseRun();
     await turn;
