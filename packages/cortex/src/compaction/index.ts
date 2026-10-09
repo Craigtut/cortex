@@ -35,7 +35,8 @@ import {
   shouldCompact,
   COMPACTION_DEFAULTS,
 } from './compaction.js';
-import type { CompleteFn, BeforeCompactionHandler, PostCompactionHandler, CompactionErrorHandler } from './compaction.js';
+import type { BeforeCompactionHandler, PostCompactionHandler, CompactionErrorHandler } from './compaction.js';
+import type { CompleteFn } from './observational/types.js';
 import {
   emergencyTruncate,
   shouldTruncate,
@@ -65,7 +66,7 @@ import type { ModelPromptCacheLifetimes } from '../model-wrapper.js';
 export { MicrocompactionEngine, capToolResult } from './microcompaction.js';
 export type { TrimAction, TrimState } from './microcompaction.js';
 export { runCompaction, shouldCompact, partitionHistory, buildSummaryMessage } from './compaction.js';
-export type { CompleteFn } from './compaction.js';
+export type { CompleteFn } from './observational/types.js';
 export { emergencyTruncate, shouldTruncate, isContextOverflow } from './failsafe.js';
 export type { FailsafeTruncationResult } from './failsafe.js';
 export { ObservationalMemoryEngine } from './observational/index.js';
@@ -430,7 +431,7 @@ export class CompactionManager {
   /** Prefix preservation is a trimming policy, not a claim that the server cache is warm. */
   shouldTrimHistory(tokens: number): boolean {
     if (!this._automaticPrefixCache) return this.isCacheCold();
-    return this._contextWindow > 0 && tokens >= this._contextWindow * COMPACTION_DEFAULTS.threshold;
+    return this._contextWindow > 0 && tokens >= this._contextWindow * this.config.microcompaction.prefixTrimRatio;
   }
 
   /** Effective explicit cache TTL. Zero also covers automatic caches with unknown lifetime. */

@@ -14,6 +14,23 @@
 
 import type { AgentMessage } from '../../context-manager.js';
 
+/**
+ * The completion the observer and reflector call: the loop's utility model.
+ *
+ * The optional second argument names the purpose of the call ('observer',
+ * 'reflector'), which the wiring in AgentLoop maps to a usage-accounting
+ * category, and carries the signal that cancels it (the call's timeout or
+ * the run's abort). An implementation that ignores the signal is abandoned
+ * when it fires rather than awaited.
+ */
+export type CompleteFn = (
+  context: {
+    systemPrompt: string;
+    messages: unknown[];
+  },
+  options?: { purpose?: string; signal?: AbortSignal },
+) => Promise<string>;
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
  * background. A failed or stale reflection keeps the current log.
  */
 
-import type { CompleteFn } from '../compaction.js';
+import type { CompleteFn } from './types.js';
 import type { BufferingCoordinator } from './buffering.js';
 import { MemoryCallError } from './calls.js';
 import type { CallPolicy } from './calls.js';

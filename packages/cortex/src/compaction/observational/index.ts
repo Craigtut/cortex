@@ -16,7 +16,7 @@
  *   - context-manager.md
  */
 
-import type { CompleteFn } from '../compaction.js';
+import type { CompleteFn } from './types.js';
 import type { AgentMessage, AgentContext } from '../../context-manager.js';
 import type {
   ObservationalMemoryConfig,

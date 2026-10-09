@@ -5,6 +5,7 @@ import { ProviderManager } from '../../src/provider-manager.js';
 import { TOOL_NAMES } from '../../src/tools/index.js';
 import { ollamaServer } from '../helpers/ollama.js';
 import { CompactionManager, buildCompactionConfig } from '../../src/compaction/index.js';
+import { MICROCOMPACTION_DEFAULTS } from '../../src/compaction/microcompaction.js';
 
 const loops: AgentLoop[] = [];
 afterEach(async () => { await Promise.all(loops.splice(0).map(loop => loop.destroy())); });
@@ -84,18 +85,27 @@ describe('Ollama through the installed agent loop', () => {
 
 describe('automatic prefix preservation', () => {
   it('preserves actual long tool history under headroom and trims it under pressure', async () => {
-    const manager = new CompactionManager(buildCompactionConfig({ strategy: 'classic',
-    }), 0);
+    const manager = new CompactionManager(buildCompactionConfig(), 0);
     manager.setContextWindow(100000);
     manager.setCacheInfo('ollama', 'none', 'automatic-prefix');
     const history = Array.from({ length: 12 }, (_, i) => ({ role: 'toolResult' as const, toolCallId: `call${i}`, toolName: 'Bash',
       content: [{ type: 'text' as const, text: 'abc '.repeat(10000) }], isError: false, timestamp: i }));
     // Check the production gate and real trimming engine, with context totals supplied as the loop would.
-    const { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS } = await import('../../src/compaction/microcompaction.js');
+    const { MicrocompactionEngine } = await import('../../src/compaction/microcompaction.js');
     const engine = new MicrocompactionEngine(MICROCOMPACTION_DEFAULTS);
     expect(await engine.apply(history, 100000, 50000, { cacheCold: manager.shouldTrimHistory(50000) })).toBe(history);
     expect(await engine.apply(history, 100000, 80000, { cacheCold: manager.shouldTrimHistory(80000) })).not.toEqual(history);
     expect(manager.providerCacheTtlMs).toBe(0);
     expect(manager.isCacheCold()).toBe(true); // Unknown server state is not reported as a guaranteed warm cache.
+  });
+
+  it('trims from its own prefix ratio', () => {
+    const manager = new CompactionManager(buildCompactionConfig({
+      microcompaction: { ...MICROCOMPACTION_DEFAULTS, prefixTrimRatio: 0.9 },
+    }), 0);
+    manager.setContextWindow(100000);
+    manager.setCacheInfo('ollama', 'none', 'automatic-prefix');
+    expect(manager.shouldTrimHistory(80000)).toBe(false);
+    expect(manager.shouldTrimHistory(90000)).toBe(true);
   });
 });

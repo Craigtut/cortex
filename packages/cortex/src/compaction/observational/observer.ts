@@ -11,7 +11,7 @@
  *   - compaction-strategy.md
  */
 
-import type { CompleteFn } from '../compaction.js';
+import type { CompleteFn } from './types.js';
 import type { AgentMessage } from '../../context-manager.js';
 import type { ObserverOutput } from './types.js';
 import { OBSERVER_SYSTEM_PROMPT } from './constants.js';

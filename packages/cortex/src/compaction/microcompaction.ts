@@ -36,6 +36,7 @@ import { estimateTokens } from '../token-estimator.js';
 export const MICROCOMPACTION_DEFAULTS: MicrocompactionConfig = {
   maxResultTokens: 50_000,
   trimFloorRatio: 0.25,
+  prefixTrimRatio: 0.70,
   hotZoneMinTokens: 16_000,
   hotZoneRatio: 0.05,
   bookendMaxChars: 2_000,

@@ -11,7 +11,7 @@
  * health, except an abort, which is the caller's choice.
  */
 
-import type { CompleteFn } from '../compaction.js';
+import type { CompleteFn } from './types.js';
 import type { AgentMessage } from '../../context-manager.js';
 import { chunkFromOutput } from './buffering.js';
 import type { BufferingCoordinator } from './buffering.js';

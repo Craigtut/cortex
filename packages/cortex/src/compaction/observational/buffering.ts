@@ -17,7 +17,7 @@
  *   - reflector.ts (runReflector)
  */
 
-import type { CompleteFn } from '../compaction.js';
+import type { CompleteFn } from './types.js';
 import type { AgentMessage } from '../../context-manager.js';
 import type { ObservationChunk, ObserverOutput, ReflectorOutput } from './types.js';
 import { ObservationLedger } from './ledger.js';

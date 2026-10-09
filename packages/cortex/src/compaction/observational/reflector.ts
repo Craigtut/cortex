@@ -11,7 +11,7 @@
  *   - compaction-strategy.md
  */
 
-import type { CompleteFn } from '../compaction.js';
+import type { CompleteFn } from './types.js';
 import type { ReflectorOutput } from './types.js';
 import {
   REFLECTOR_SYSTEM_PROMPT,

@@ -21,6 +21,7 @@ import { estimateTokens } from '../token-estimator.js';
 import { extractTextContent } from './microcompaction.js';
 import { withoutSystemMessages } from '../system-transcript.js';
 import { findToolCallGroups } from './tool-call-groups.js';
+import type { CompleteFn } from './observational/types.js';
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -185,23 +186,8 @@ export function formatTurnsForSummarization(turns: AgentMessage[]): string {
     .join('\n\n---\n\n');
 }
 
-/**
- * Type for the LLM completion function.
- * Matches the signature of AgentLoop.directComplete().
- *
- * The optional second argument names the purpose of the call ('observer',
- * 'reflector'), which the wiring in AgentLoop maps to a usage-accounting
- * category, and carries the signal that cancels it (the call's timeout or
- * the run's abort). An implementation that ignores the signal is abandoned
- * when it fires rather than awaited.
- */
-export type CompleteFn = (
-  context: {
-    systemPrompt: string;
-    messages: unknown[];
-  },
-  options?: { purpose?: string; signal?: AbortSignal },
-) => Promise<string>;
+// Owned by observational memory, its only remaining caller after this file.
+export type { CompleteFn };
 
 /**
  * Type for the consumer's onBeforeCompaction handler.

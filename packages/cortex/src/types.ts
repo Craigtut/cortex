@@ -1084,6 +1084,14 @@ export interface MicrocompactionConfig {
    */
   trimFloorRatio: number;
 
+  /**
+   * Under a provider that caches the prompt prefix automatically (no
+   * explicit breakpoints, unknown lifetime), the context utilization ratio
+   * from which L1 trims anyway: below it the prefix is worth more than the
+   * tokens trimming would free. Default: 0.70 (70%).
+   */
+  prefixTrimRatio: number;
+
   // --- Hot zone (token-offset recency window) ---
   /**
    * Absolute floor for the hot zone size (in tokens). Tool results within the
