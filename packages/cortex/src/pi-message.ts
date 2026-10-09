@@ -212,6 +212,20 @@ export function totalInputTokens(usage: RawRecord): number {
 // ---------------------------------------------------------------------------
 
 /**
+ * Usage of a turn_end event: the assistant message's, else a usage the
+ * event or its result carries directly.
+ */
+export function turnUsage(event: unknown, options?: { requireNonZero?: boolean }): CortexUsage | null {
+  const e = asRecord(event);
+  if (!e) return null;
+  return (
+    assistantUsage(e['message'], options) ??
+    readUsage(e['usage'], options) ??
+    readUsage(asRecord(e['result'])?.['usage'], options)
+  );
+}
+
+/**
  * Text of a pi turn_end event. pi emits `{ message, toolResults }` with the
  * AssistantMessage's content as typed parts; a top-level `text`, string
  * content, and a `result` carrying the content are accepted as well.

@@ -22,6 +22,7 @@ import {
 } from '../../src/cortex-agent.js';
 import type { CortexAgentConfig, ForwardedLoopMember } from '../../src/cortex-agent.js';
 import { partsOf } from './agent-loop/parts.js';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 // These harnesses bypass create() and inject already-resolved loop configuration.
 type ResolvedFacadeConfig = Omit<CortexAgentConfig, 'sandbox'> & Pick<AgentLoopConfig, 'sandbox'>;
@@ -32,7 +33,7 @@ type ResolvedFacadeConfig = Omit<CortexAgentConfig, 'sandbox'> & Pick<AgentLoopC
 // ---------------------------------------------------------------------------
 
 interface FacadeMockPiAgent extends PiAgent {
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
   promptCalls: Array<string | AgentMessage[]>;
   steeringQueue: Array<{ role: string; content: string }>;
   followUpQueue: Array<{ role: string; content: string }>;
@@ -73,8 +74,8 @@ function createMockPiAgent(): FacadeMockPiAgent {
       };
     },
 
-    emitEvent(event: PiEvent): void {
-      eventHandler?.(event);
+    emitEvent(event: LoosePiEvent): void {
+      eventHandler?.(event as unknown as PiEvent);
     },
 
     async prompt(input: string | AgentMessage[]): Promise<unknown> {
@@ -123,7 +124,7 @@ function createMockPiAgent(): FacadeMockPiAgent {
           content: 'ok',
           timestamp: Date.now(),
         });
-        agent.emitEvent({ type: 'agent_end' });
+        agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {
         running = false;
@@ -557,7 +558,7 @@ describe('CortexAgent session log', () => {
     piAgent.continue = async () => {
       delete (piAgent.state as Record<string, unknown>)['errorMessage'];
       piAgent.emitEvent({ type: 'turn_end', text: 'recovered' });
-      piAgent.emitEvent({ type: 'agent_end' });
+      piAgent.emitEvent({ type: 'agent_end', messages: [] });
       return { content: 'recovered' };
     };
 

@@ -25,6 +25,7 @@
  * Reference: cortex-architecture.md (Event Bridge section)
  */
 
+import type { AgentEvent } from '@earendil-works/pi-agent-core';
 import type {
   AgentTextOutput,
   CortexLogger,
@@ -36,7 +37,7 @@ import { extractPayload } from './event-payloads.js';
 import type { CortexEventPayloads } from './event-payloads.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { parseWorkingTags, plainTextOutput } from './working-tags.js';
-import { assistantUsage, readUsage, turnText } from './pi-message.js';
+import { turnText, turnUsage } from './pi-message.js';
 
 export { payloadOf } from './event-payloads.js';
 export type { CortexEventPayloads } from './event-payloads.js';
@@ -115,29 +116,18 @@ export interface CortexEvent {
 export type CortexEventListener = (event: CortexEvent) => void;
 
 // ---------------------------------------------------------------------------
-// Pi-agent-core event types (minimal contract, no runtime dependency)
+// Pi-agent-core events
 // ---------------------------------------------------------------------------
 
-export type PiEventType =
-  | 'agent_start'
-  | 'agent_end'
-  | 'turn_start'
-  | 'turn_end'
-  | 'message_start'
-  | 'message_update'
-  | 'message_end'
-  | 'tool_execution_start'
-  | 'tool_execution_update'
-  | 'tool_execution_end';
+/** pi-agent-core's agent event, as the bridge receives it. */
+export type PiEvent = AgentEvent;
 
-export interface PiEvent {
-  type: PiEventType;
-  [key: string]: unknown;
-}
+/** A pi-agent-core event type. */
+export type PiEventType = AgentEvent['type'];
 
 /**
- * Minimal interface for pi-agent-core's Agent.subscribe().
- * Returns an unsubscribe function.
+ * The event side of pi-agent-core's Agent: subscribe, and get back an
+ * unsubscribe function.
  */
 export interface PiEventSource {
   subscribe(handler: (event: PiEvent) => void): () => void;
@@ -374,7 +364,7 @@ export class EventBridge {
       data: piEvent,
     };
 
-    const payload = extractPayload(cortexType, piEvent);
+    const payload = extractPayload(piEvent);
     if (payload) {
       cortexEvent.payload = payload;
     }
@@ -400,13 +390,9 @@ export class EventBridge {
    * receive clean usage without navigating the opaque event data.
    */
   private extractUsage(piEvent: PiEvent): CortexUsage | null {
-    const nonZero = { requireNonZero: true };
-    return (
-      assistantUsage(piEvent['message'], nonZero) ??
-      readUsage(piEvent['usage'], nonZero) ??
-      readUsage((piEvent['result'] as Record<string, unknown> | undefined)?.['usage'], nonZero)
-    );
+    return turnUsage(piEvent, { requireNonZero: true });
   }
+
 
   /**
    * Emit a normalized event to all matching listeners.

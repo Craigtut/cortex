@@ -52,6 +52,7 @@ import {
 import { TOOL_NAMES } from '../../src/tools/index.js';
 import { McpClientManager } from '../../src/mcp-client.js';
 import { partsOf } from './agent-loop/parts.js';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 // ---------------------------------------------------------------------------
 // Mock pi agent: holdable runs, pi-shaped turn_end/agent_end payloads
@@ -61,7 +62,7 @@ import { partsOf } from './agent-loop/parts.js';
 // ---------------------------------------------------------------------------
 
 interface DuplexMockPiAgent extends PiAgent {
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
   promptCalls: Array<string | AgentMessage[]>;
   steeringQueue: Array<{ role: string; content: string }>;
   followUpQueue: Array<{ role: string; content: string }>;
@@ -99,8 +100,8 @@ function createMockPiAgent(): DuplexMockPiAgent {
       return () => { eventHandler = null; };
     },
 
-    emitEvent(event: PiEvent): void {
-      eventHandler?.(event);
+    emitEvent(event: LoosePiEvent): void {
+      eventHandler?.(event as unknown as PiEvent);
     },
 
     async prompt(input: string | AgentMessage[]): Promise<unknown> {

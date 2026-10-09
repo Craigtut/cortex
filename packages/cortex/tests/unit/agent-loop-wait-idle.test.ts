@@ -72,7 +72,7 @@ function createMockPiAgent(): HoldableMockPiAgent {
           content: 'ok',
           timestamp: Date.now(),
         });
-        agent.emitEvent({ type: 'agent_end' });
+        agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {
         running = false;

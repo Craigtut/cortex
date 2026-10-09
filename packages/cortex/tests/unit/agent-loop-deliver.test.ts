@@ -20,6 +20,7 @@ import type { AgentMessage } from '../../src/context-manager.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
 import { partsOf } from './agent-loop/parts.js';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 // ---------------------------------------------------------------------------
 // Mock PiAgent with steering/follow-up queues and a run that can hold at
@@ -33,7 +34,7 @@ import { partsOf } from './agent-loop/parts.js';
 // ---------------------------------------------------------------------------
 
 interface DeliverMockPiAgent extends PiAgent {
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
   promptCalls: Array<string | AgentMessage[]>;
   steerCalls: Array<{ role: string; content: string; timestamp?: number }>;
   followUpCalls: Array<{ role: string; content: string; timestamp?: number }>;
@@ -82,8 +83,8 @@ function createMockPiAgent(): DeliverMockPiAgent {
       };
     },
 
-    emitEvent(event: PiEvent): void {
-      eventHandler?.(event);
+    emitEvent(event: LoosePiEvent): void {
+      eventHandler?.(event as unknown as PiEvent);
     },
 
     async prompt(input: string | AgentMessage[]): Promise<unknown> {
@@ -139,7 +140,7 @@ function createMockPiAgent(): DeliverMockPiAgent {
           content: 'ok',
           timestamp: Date.now(),
         });
-        agent.emitEvent({ type: 'agent_end' });
+        agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {
         running = false;

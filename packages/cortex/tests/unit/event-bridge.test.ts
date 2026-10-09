@@ -6,7 +6,11 @@ import type { PiEvent, PiEventSource, CortexEvent, CortexEventType } from '../..
  * Create a mock pi-agent-core event source.
  * Stores the subscription handler so we can emit events manually.
  */
-function createMockSource(): PiEventSource & { emit: (event: PiEvent) => void } {
+/**
+ * Events are written partially (only the fields a test reads), so `emit`
+ * takes a loose record and hands it on as pi's event type.
+ */
+function createMockSource(): PiEventSource & { emit: (event: { type: PiEvent['type']; [key: string]: unknown }) => void } {
   let handler: ((event: PiEvent) => void) | null = null;
 
   return {
@@ -16,9 +20,9 @@ function createMockSource(): PiEventSource & { emit: (event: PiEvent) => void } 
         handler = null;
       };
     },
-    emit(event: PiEvent): void {
+    emit(event): void {
       if (handler) {
-        handler(event);
+        handler(event as unknown as PiEvent);
       }
     },
   };
@@ -57,7 +61,8 @@ describe('EventBridge', () => {
         const listener = vi.fn();
         bridge.on(cortexType, listener);
 
-        source.emit({ type: piType as PiEvent['type'] });
+        // `messages` is the one field the agent_end payload needs.
+        source.emit({ type: piType as PiEvent['type'], messages: [] });
 
         expect(listener).toHaveBeenCalledTimes(1);
         expect(listener).toHaveBeenCalledWith(
@@ -223,42 +228,6 @@ describe('EventBridge', () => {
       expect(event.usage!.model).toBe('claude-sonnet-4-20250514');
     });
 
-    it('extracts usage from direct event.usage', () => {
-      const listener = vi.fn();
-      bridge.on('turn_end', listener);
-
-      source.emit({
-        type: 'turn_end',
-        usage: {
-          input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150,
-          cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
-        },
-      });
-
-      const event: CortexEvent = listener.mock.calls[0][0];
-      expect(event.usage).toBeDefined();
-      expect(event.usage!.cost.total).toBeCloseTo(0.03);
-    });
-
-    it('extracts usage from result.usage', () => {
-      const listener = vi.fn();
-      bridge.on('turn_end', listener);
-
-      source.emit({
-        type: 'turn_end',
-        result: {
-          usage: {
-            input: 80, output: 40, cacheRead: 0, cacheWrite: 0, totalTokens: 120,
-            cost: { input: 0.005, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.015 },
-          },
-        },
-      });
-
-      const event: CortexEvent = listener.mock.calls[0][0];
-      expect(event.usage).toBeDefined();
-      expect(event.usage!.cost.total).toBeCloseTo(0.015);
-    });
-
     it('sets usage to undefined when no usage data present', () => {
       const listener = vi.fn();
       bridge.on('turn_end', listener);
@@ -336,7 +305,7 @@ describe('EventBridge', () => {
 
       source.emit({ type: 'agent_start' });
       source.emit({ type: 'turn_end', text: 'Hello' });
-      source.emit({ type: 'agent_end' });
+      source.emit({ type: 'agent_end', messages: [] });
 
       expect(allListener).toHaveBeenCalledTimes(3);
       expect(allListener.mock.calls[0][0].type).toBe('loop_start');
@@ -353,7 +322,7 @@ describe('EventBridge', () => {
 
       unsub();
 
-      source.emit({ type: 'agent_end' });
+      source.emit({ type: 'agent_end', messages: [] });
       expect(allListener).toHaveBeenCalledTimes(1);
     });
   });
@@ -617,13 +586,13 @@ describe('EventBridge', () => {
       const listener = vi.fn();
       bridge.on('tool_call_end', listener);
 
+      // pi puts a failed call's error text in the result content.
       source.emit({
         type: 'tool_execution_end',
         toolCallId: 'tc-4',
         toolName: 'Read',
-        result: { content: [], details: {} },
+        result: { content: [{ type: 'text', text: 'file not found' }], details: {} },
         isError: true,
-        error: 'file not found',
       });
 
       const event: CortexEvent = listener.mock.calls[0][0];

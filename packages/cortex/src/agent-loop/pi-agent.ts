@@ -1,9 +1,12 @@
 /**
  * The pi-agent-core / pi-ai boundary AgentLoop is written against: the
- * minimal Agent and Model contracts (structural, so the real classes load
- * lazily), plus the one crossing point for thinking levels.
+ * part of pi's Agent the loop drives, pi's Model, and the one crossing
+ * point for thinking levels. Types come from pi itself, so a pi release
+ * that changes them fails the build here; the classes still load lazily.
  */
 
+import type { Agent } from '@earendil-works/pi-agent-core';
+import type { Api, Model } from '@earendil-works/pi-ai';
 import type { AgentMessage, AgentStateAccessor } from '../context-manager.js';
 import type { PiEventSource } from '../event-bridge.js';
 import type { CortexTool } from '../tool-contract.js';
@@ -11,66 +14,8 @@ import type { AgentLoopConfig, ModelThinkingCapabilities, ThinkingLevel } from '
 import { THINKING_LEVEL_ORDER } from '../types.js';
 
 // ---------------------------------------------------------------------------
-// Minimal pi-agent-core/pi-ai type contracts
+// The pi-agent-core/pi-ai contracts
 // ---------------------------------------------------------------------------
-
-/**
- * Minimal Agent interface matching pi-agent-core's Agent class.
- * Defined here to avoid a hard runtime dependency; the real Agent is
- * passed at construction time.
- */
-export interface PiAgent extends AgentStateAccessor, PiEventSource {
-  /**
-   * Start a new run. Accepts either a plain prompt string or a prepared batch
-   * of messages (pi pushes every batch message into the transcript at run
-   * start); Cortex uses the batch form to flush queued silent deliveries
-   * ahead of the real prompt.
-   */
-  prompt(input: string | AgentMessage[], options?: {
-    update?: (event: unknown) => void;
-    signal?: AbortSignal;
-  }): Promise<unknown>;
-  /**
-   * Resume the agentic loop from the current transcript without adding a new
-   * message. Used for background retries; the last message must be a user or
-   * tool-result (Cortex trims pi-agent-core's synthetic failure message first).
-   */
-  continue(): Promise<unknown>;
-  abort(): void;
-  waitForIdle(): Promise<void>;
-  reset(): void;
-
-  /**
-   * Inject a steering message into the running agentic loop.
-   * Pi applies steering after the current assistant turn and tool batch finish.
-   * Only effective while a prompt() call is in progress.
-   */
-  steer(message: QueuedUserMessage): void;
-
-  /**
-   * Queue a message that pi injects only at a would-stop point: after the
-   * model has produced what would otherwise be the run's final answer.
-   */
-  followUp?(message: QueuedUserMessage): void;
-
-  /** Drain mode of pi's steering queue ('all' | 'one-at-a-time'). */
-  steeringMode?: string;
-  /** Drain mode of pi's follow-up queue ('all' | 'one-at-a-time'). */
-  followUpMode?: string;
-  /** Remove all queued steering messages. */
-  clearSteeringQueue?(): void;
-  /** Remove all queued follow-up messages. */
-  clearFollowUpQueue?(): void;
-  /**
-   * True when pi's steering or follow-up queue still holds messages. Wake
-   * parking cannot use it: it answers "is anything queued", not "is this
-   * content still queued".
-   */
-  hasQueuedMessages?(): boolean;
-
-  /** Context transformation hook installed by Cortex. */
-  transformContext?: (messages: unknown[]) => Promise<unknown[]>;
-}
 
 /**
  * A user message the loop queues on pi's steering or follow-up queue. pi
@@ -82,16 +27,67 @@ export interface QueuedUserMessage {
   timestamp: number;
 }
 
+/**
+ * The part of pi-agent-core's Agent that AgentLoop drives. Signatures are
+ * written so pi's Agent satisfies them (checked below, so a pi release that
+ * changes one fails the build here) and a scripted test agent can too:
+ * results are `unknown` because the loop never reads them. Messages are the
+ * loop's view of pi's transcript ({@link AgentMessage}), read through
+ * {@link AgentStateAccessor}.
+ */
+export interface PiAgent extends AgentStateAccessor, PiEventSource {
+  /**
+   * Start a run from a prompt, or from a prepared batch of messages that pi
+   * pushes into the transcript at run start (Cortex flushes queued silent
+   * deliveries this way, ahead of the real prompt).
+   */
+  prompt(input: string | AgentMessage[]): Promise<unknown>;
+  /**
+   * Resume the agentic loop from the current transcript without adding a
+   * message. Used for background retries; the last message must be a user
+   * or tool-result (Cortex trims pi's synthetic failure message first).
+   */
+  continue(): Promise<unknown>;
+  abort(): void;
+  waitForIdle(): Promise<void>;
+  reset(): void;
+  /**
+   * Queue a message pi applies after the current assistant turn and tool
+   * batch finish. Only effective while a run is in progress.
+   */
+  steer(message: QueuedUserMessage): void;
+  /** Queue a message pi injects only where the run would otherwise stop. */
+  followUp?(message: QueuedUserMessage): void;
+  /** Drain mode of pi's steering queue. */
+  steeringMode?: QueueDrainMode;
+  /** Drain mode of pi's follow-up queue. */
+  followUpMode?: QueueDrainMode;
+  /** Remove all queued steering messages. */
+  clearSteeringQueue?(): void;
+  /** Remove all queued follow-up messages. */
+  clearFollowUpQueue?(): void;
+  /**
+   * True when pi's steering or follow-up queue still holds messages. Wake
+   * parking cannot use it: it answers "is anything queued", not "is this
+   * content still queued".
+   */
+  hasQueuedMessages?(): boolean;
+  /** Context transformation hook installed by Cortex. */
+  transformContext?: (messages: unknown[]) => Promise<unknown[]>;
+}
+
+/** The methods of {@link PiAgent} that pi's Agent provides. */
+type PiAgentMethods = Exclude<keyof PiAgent, keyof AgentStateAccessor | 'transformContext' | 'subscribe'>;
+
+/** Compile-time check: pi's Agent satisfies every method the loop drives. */
+type AgentSatisfies<T extends Pick<PiAgent, PiAgentMethods>> = T;
+export type PiAgentContractCheck = AgentSatisfies<Pick<Agent, PiAgentMethods>>;
+
 /** Drain mode for pi's steering and follow-up queues. */
 export type QueueDrainMode = 'all' | 'one-at-a-time';
 
-/** The fields of pi-ai's Model that provider validation and utility model resolution need. */
-export interface PiModel {
-  provider: string;
-  name: string;
-  contextWindow?: number;
-  [key: string]: unknown;
-}
+/** pi-ai's chat model, as the loop and provider validation hold it. */
+export type PiModel = Model<Api>;
 
 export type RegisteredTool = CortexTool;
 
@@ -178,7 +174,7 @@ export async function modelThinkingCapabilities(piModel: PiModel): Promise<Model
   try {
     const { getSupportedThinkingLevels } = await import('@earendil-works/pi-ai');
     const supportedLevels = fromPiThinkingLevels(
-      getSupportedThinkingLevels(piModel as any),
+      getSupportedThinkingLevels(piModel),
     );
     return {
       supportsThinking: supportedLevels.some(level => level !== 'off'),
@@ -186,7 +182,7 @@ export async function modelThinkingCapabilities(piModel: PiModel): Promise<Model
       supportedLevels,
     };
   } catch {
-    const supportsThinking = (piModel as Record<string, unknown>)['reasoning'] === true;
+    const supportsThinking = piModel.reasoning === true;
     const supportedLevels: ThinkingLevel[] = supportsThinking
       ? ['minimal', 'low', 'medium', 'high']
       : ['off'];

@@ -5,7 +5,7 @@
  * one place a raw pi event is cast, so no subscriber casts `event.data`.
  */
 
-import type { CortexEvent, CortexEventType, PiEvent } from './event-bridge.js';
+import type { CortexEvent, PiEvent } from './event-bridge.js';
 import type {
   LoopEndPayload,
   TalkerDeltaPayload,
@@ -41,23 +41,37 @@ export function payloadOf<T extends keyof CortexEventPayloads>(
   return event.payload as CortexEventPayloads[T] | undefined;
 }
 
-/** The typed payload for a pi event mapped to `cortexType`, if it has one. */
-export function extractPayload(
-  cortexType: CortexEventType,
-  piEvent: PiEvent,
-): CortexEvent['payload'] {
-  if (cortexType === 'turn_end') {
-    const message = messageView(piEvent['message']);
-    return (message ? { message } : {}) satisfies TurnEndPayload;
+/** The typed payload a pi event carries, if its type has one. */
+export function extractPayload(piEvent: PiEvent): CortexEvent['payload'] {
+  switch (piEvent.type) {
+    case 'turn_end': {
+      const message = messageView(piEvent.message);
+      return (message ? { message } : {}) satisfies TurnEndPayload;
+    }
+    case 'agent_end': {
+      const messages = piEvent.messages
+        .map(messageView)
+        .filter((message): message is LoopMessageView => message !== undefined);
+      return { messages } satisfies LoopEndPayload;
+    }
+    case 'tool_execution_start':
+      return {
+        toolCallId: piEvent.toolCallId,
+        toolName: piEvent.toolName,
+        args: toolArgs(piEvent.args),
+      } satisfies ToolCallStartPayload;
+    case 'tool_execution_update':
+      return {
+        toolCallId: piEvent.toolCallId,
+        toolName: piEvent.toolName,
+        args: toolArgs(piEvent.args),
+        partialResult: toolContent(piEvent.partialResult),
+      } satisfies ToolCallUpdatePayload;
+    case 'tool_execution_end':
+      return toolEndPayload(piEvent);
+    default:
+      return undefined;
   }
-  if (cortexType === 'loop_end') {
-    const raw = piEvent['messages'];
-    const messages = (Array.isArray(raw) ? raw : [])
-      .map(messageView)
-      .filter((message): message is LoopMessageView => message !== undefined);
-    return { messages } satisfies LoopEndPayload;
-  }
-  return extractToolPayload(cortexType, piEvent);
 }
 
 function messageView(raw: unknown): LoopMessageView | undefined {
@@ -72,69 +86,34 @@ function messageView(raw: unknown): LoopMessageView | undefined {
   return message;
 }
 
-/** Typed payload for a pi tool event; undefined for any other event. */
-function extractToolPayload(
-  cortexType: CortexEventType,
-  piEvent: PiEvent,
-): ToolCallStartPayload | ToolCallUpdatePayload | ToolCallEndPayload | undefined {
-  if (cortexType === 'tool_call_start') {
-    return {
-      toolCallId: String(piEvent['toolCallId'] ?? piEvent['id'] ?? ''),
-      toolName: String(piEvent['toolName'] ?? piEvent['name'] ?? 'unknown'),
-      args: (piEvent['args'] ?? piEvent['input'] ?? {}) as Record<string, unknown>,
-    } satisfies ToolCallStartPayload;
+/** pi types tool arguments and results as `any`: whatever the tool produced. */
+function toolArgs(args: unknown): Record<string, unknown> {
+  return (args ?? {}) as Record<string, unknown>;
+}
+
+function toolContent(result: unknown): ToolContentDetails<unknown> {
+  return (result as ToolContentDetails<unknown> | undefined) ?? { content: [], details: {} };
+}
+
+function toolEndPayload(piEvent: Extract<PiEvent, { type: 'tool_execution_end' }>): ToolCallEndPayload {
+  const result = toolContent(piEvent.result);
+  const payload: ToolCallEndPayload = {
+    toolCallId: piEvent.toolCallId,
+    toolName: piEvent.toolName,
+    result,
+    // What execute() took; absent when the tool never ran (unknown tool,
+    // invalid arguments, a blocked call).
+    durationMs: piEvent.durationMs ?? 0,
+    isError: piEvent.isError,
+  };
+  if (piEvent.isError) {
+    // pi puts the failure text in the result content, for thrown errors and
+    // for results the tool flagged `isError` alike.
+    const text = result.content
+      .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+      .map((c) => c.text)
+      .join('\n');
+    payload.error = text.length > 0 ? text : 'unknown error';
   }
-
-  if (cortexType === 'tool_call_update') {
-    const partialResult = piEvent['partialResult'] as ToolContentDetails<unknown> | undefined;
-    return {
-      toolCallId: String(piEvent['toolCallId'] ?? piEvent['id'] ?? ''),
-      toolName: String(piEvent['toolName'] ?? piEvent['name'] ?? 'unknown'),
-      args: (piEvent['args'] ?? piEvent['input'] ?? {}) as Record<string, unknown>,
-      partialResult: partialResult ?? { content: [], details: {} },
-    } satisfies ToolCallUpdatePayload;
-  }
-
-  if (cortexType === 'tool_call_end') {
-    const result = piEvent['result'] as ToolContentDetails<unknown> | undefined;
-    const isError = Boolean(piEvent['isError']);
-    const explicitError = piEvent['error'];
-    const payload: ToolCallEndPayload = {
-      toolCallId: String(piEvent['toolCallId'] ?? piEvent['id'] ?? ''),
-      toolName: String(piEvent['toolName'] ?? piEvent['name'] ?? 'unknown'),
-      result: result ?? { content: [], details: {} },
-      durationMs: Number(piEvent['durationMs'] ?? piEvent['duration'] ?? 0),
-      isError,
-    };
-    if (isError) {
-      // Extract error text from multiple possible sources:
-      // 1. Explicit error string field
-      // 2. Error object with message
-      // 3. Result content text (pi-agent-core puts error details here)
-      // 4. Fallback
-      let errorText: string | undefined;
-      if (typeof explicitError === 'string') {
-        errorText = explicitError;
-      } else if (explicitError instanceof Error) {
-        errorText = explicitError.message;
-      } else if (typeof explicitError === 'object' && explicitError !== null && 'message' in (explicitError as Record<string, unknown>)) {
-        errorText = String((explicitError as Record<string, unknown>)['message']);
-      }
-
-      // If no explicit error, extract from result content
-      if (!errorText && result?.content) {
-        const textParts = result.content
-          .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-          .map(c => c.text);
-        if (textParts.length > 0) {
-          errorText = textParts.join('\n');
-        }
-      }
-
-      payload.error = errorText ?? 'unknown error';
-    }
-    return payload;
-  }
-
-  return undefined;
+  return payload;
 }

@@ -5,6 +5,7 @@ import type { PiEvent } from '../../src/event-bridge.js';
 import type { AgentLoopConfig, ThinkingLevel } from '../../src/types.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 // ---------------------------------------------------------------------------
 // Mock pi-ai module
@@ -33,7 +34,7 @@ vi.mock('@earendil-works/pi-ai/providers/all', () => ({
 // ---------------------------------------------------------------------------
 
 interface MockPiAgent extends PiAgent {
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
 }
 
 function createMockPiAgent(): MockPiAgent {
@@ -51,15 +52,15 @@ function createMockPiAgent(): MockPiAgent {
       return () => { eventHandler = null; };
     },
 
-    emitEvent(event: PiEvent): void {
-      if (eventHandler) eventHandler(event);
+    emitEvent(event: LoosePiEvent): void {
+      if (eventHandler) eventHandler(event as unknown as PiEvent);
     },
 
     async prompt(): Promise<unknown> {
       agent.emitEvent({ type: 'agent_start' });
       agent.emitEvent({ type: 'turn_start' });
       agent.emitEvent({ type: 'turn_end', text: 'Mock response' });
-      agent.emitEvent({ type: 'agent_end' });
+      agent.emitEvent({ type: 'agent_end', messages: [] });
       return { content: 'Mock response' };
     },
 

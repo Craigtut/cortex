@@ -94,11 +94,11 @@ describe('wireLoopEvents', () => {
     const onComplete = vi.fn();
     t.loopComplete.add(onComplete);
     t.state.errorMessage = 'boom';
-    t.emit({ type: 'agent_end' });
+    t.emit({ type: 'agent_end', messages: [] });
     expect(onComplete).not.toHaveBeenCalled();
     expect(t.onLoopEnd).not.toHaveBeenCalled();
     t.state.errorMessage = undefined;
-    t.emit({ type: 'agent_end' });
+    t.emit({ type: 'agent_end', messages: [] });
     expect(onComplete).toHaveBeenCalledWith({ loopPath: 'main' });
     expect(t.onLoopEnd).toHaveBeenCalledTimes(1);
   });

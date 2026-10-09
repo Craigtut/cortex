@@ -61,7 +61,7 @@ function createMockPiAgent(): LongLivedMockPiAgent {
         },
       });
       agent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
-      agent.emitEvent({ type: 'agent_end' });
+      agent.emitEvent({ type: 'agent_end', messages: [] });
       return { content: 'ok' };
     },
 

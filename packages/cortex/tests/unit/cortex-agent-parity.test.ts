@@ -26,6 +26,7 @@ import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
 import { CortexAgent } from '../../src/cortex-agent.js';
 import type { CortexAgentConfig } from '../../src/cortex-agent.js';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 // ---------------------------------------------------------------------------
 // Mock PiAgent: holdable runs, failure injection, queues, usage on turn_end.
@@ -33,7 +34,7 @@ import type { CortexAgentConfig } from '../../src/cortex-agent.js';
 // ---------------------------------------------------------------------------
 
 interface ParityMockPiAgent extends PiAgent {
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
   promptCalls: Array<string | AgentMessage[]>;
   steeringQueue: Array<{ role: string; content: string }>;
   followUpQueue: Array<{ role: string; content: string }>;
@@ -68,8 +69,8 @@ function createMockPiAgent(): ParityMockPiAgent {
       };
     },
 
-    emitEvent(event: PiEvent): void {
-      eventHandler?.(event);
+    emitEvent(event: LoosePiEvent): void {
+      eventHandler?.(event as unknown as PiEvent);
     },
 
     async prompt(input: string | AgentMessage[]): Promise<unknown> {
@@ -120,7 +121,7 @@ function createMockPiAgent(): ParityMockPiAgent {
           content: 'ok',
           timestamp: Date.now(),
         });
-        agent.emitEvent({ type: 'agent_end' });
+        agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {
         running = false;
@@ -143,7 +144,7 @@ function createMockPiAgent(): ParityMockPiAgent {
         content: 'recovered',
         timestamp: Date.now(),
       });
-      agent.emitEvent({ type: 'agent_end' });
+      agent.emitEvent({ type: 'agent_end', messages: [] });
       return { content: 'recovered' };
     },
 

@@ -3,10 +3,13 @@ import { BudgetGuard } from '../../src/budget-guard.js';
 import { EventBridge } from '../../src/event-bridge.js';
 import type { PiEvent, PiEventSource } from '../../src/event-bridge.js';
 
+/** A partially written pi event: only the fields a test reads. */
+type LoosePiEvent = { type: PiEvent['type']; [key: string]: unknown };
+
 /**
  * Create a mock pi-agent-core event source.
  */
-function createMockSource(): PiEventSource & { emit: (event: PiEvent) => void } {
+function createMockSource(): PiEventSource & { emit: (event: LoosePiEvent) => void } {
   let handler: ((event: PiEvent) => void) | null = null;
 
   return {
@@ -16,9 +19,9 @@ function createMockSource(): PiEventSource & { emit: (event: PiEvent) => void } 
         handler = null;
       };
     },
-    emit(event: PiEvent): void {
+    emit(event): void {
       if (handler) {
-        handler(event);
+        handler(event as unknown as PiEvent);
       }
     },
   };
@@ -28,7 +31,7 @@ function createMockSource(): PiEventSource & { emit: (event: PiEvent) => void } 
  * Build a pi-ai-shaped turn_end event with usage and cost data.
  * Mimics the real AssistantMessage.usage structure from pi-ai.
  */
-function turnEndWithCost(total: number): PiEvent {
+function turnEndWithCost(total: number): LoosePiEvent {
   return {
     type: 'turn_end',
     message: {

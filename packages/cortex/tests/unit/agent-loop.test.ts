@@ -12,6 +12,7 @@ import { TOOL_NAMES } from '../../src/tools/index.js';
 import { partsOf } from './agent-loop/parts.js';
 import { backgroundTaskState } from '../../src/agent-loop/background-task-text.js';
 import { getCurrentSystemPrompt } from '@earendil-works/pi-ai/utils/transcript';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 // ---------------------------------------------------------------------------
 // Mock PiAgent factory
@@ -19,7 +20,7 @@ import { getCurrentSystemPrompt } from '@earendil-works/pi-ai/utils/transcript';
 
 interface MockPiAgent extends PiAgent {
   /** Manually emit a pi-agent-core event */
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
   /** Track whether abort was called */
   abortCalled: boolean;
   /** Track whether reset was called */
@@ -57,9 +58,9 @@ function createMockPiAgent(options?: {
       };
     },
 
-    emitEvent(event: PiEvent): void {
+    emitEvent(event: LoosePiEvent): void {
       if (eventHandler) {
-        eventHandler(event);
+        eventHandler(event as unknown as PiEvent);
       }
     },
 
@@ -83,7 +84,7 @@ function createMockPiAgent(options?: {
             errorMessage: agent.promptError.message,
           } as never);
           // Emit agent_end before throwing
-          agent.emitEvent({ type: 'agent_end' });
+          agent.emitEvent({ type: 'agent_end', messages: [] });
           throw agent.promptError;
         }
 
@@ -100,7 +101,7 @@ function createMockPiAgent(options?: {
         } as never);
 
         // Emit agent_end
-        agent.emitEvent({ type: 'agent_end' });
+        agent.emitEvent({ type: 'agent_end', messages: [] });
 
         return agent.promptResult;
       } finally {
@@ -1090,12 +1091,12 @@ You have 12 emotions.`;
       // must NOT fire (firing it would let a consumer mark the turn idle while a
       // retry is still pending, desyncing its run-state).
       piAgent.state.errorMessage = 'Connection error.';
-      piAgent.emitEvent({ type: 'agent_end' });
+      piAgent.emitEvent({ type: 'agent_end', messages: [] });
       expect(handler).not.toHaveBeenCalled();
 
       // The run that finally succeeds clears errorMessage; onLoopComplete fires once.
       piAgent.state.errorMessage = undefined;
-      piAgent.emitEvent({ type: 'agent_end' });
+      piAgent.emitEvent({ type: 'agent_end', messages: [] });
       expect(handler).toHaveBeenCalledTimes(1);
     });
 

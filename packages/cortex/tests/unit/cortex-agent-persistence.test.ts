@@ -20,6 +20,7 @@ import type {
   CortexAgentConfig,
   CortexAgentStateV2,
 } from '../../src/cortex-agent.js';
+import type { LoosePiEvent } from '../helpers/pi-events.js';
 
 /**
  * The passthrough facade's session, for planting state no public surface
@@ -39,7 +40,7 @@ function passthroughSessionOf(facade: CortexAgent): PassthroughSession {
 // ---------------------------------------------------------------------------
 
 interface PersistenceMockPiAgent extends PiAgent {
-  emitEvent: (event: PiEvent) => void;
+  emitEvent: (event: LoosePiEvent) => void;
   promptCalls: Array<string | AgentMessage[]>;
   hold: boolean;
   releaseRun: () => void;
@@ -69,8 +70,8 @@ function createMockPiAgent(): PersistenceMockPiAgent {
       };
     },
 
-    emitEvent(event: PiEvent): void {
-      eventHandler?.(event);
+    emitEvent(event: LoosePiEvent): void {
+      eventHandler?.(event as unknown as PiEvent);
     },
 
     async prompt(input: string | AgentMessage[]): Promise<unknown> {
@@ -107,7 +108,7 @@ function createMockPiAgent(): PersistenceMockPiAgent {
           content: 'ok',
           timestamp: Date.now(),
         });
-        agent.emitEvent({ type: 'agent_end' });
+        agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {
         running = false;
