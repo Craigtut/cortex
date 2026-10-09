@@ -2,7 +2,7 @@
 
 All notable changes to `@animus-labs/cortex-code` are documented here.
 
-## Unreleased
+## 0.7.0
 
 - A local endpoint's model sends its own connection key: the session's `getAuth` answers nothing for `custom` and `ollama`, and Cortex sends the key the model was created with (or a placeholder for a keyless server). The session no longer borrows a key from its current provider's entry, which handed a duplex talker still on a custom endpoint the placeholder instead of its key after `/model` moved the session to a cloud provider.
 - Fix a torn or corrupt `~/.cortex/credentials.json` wiping every other provider: it read as empty, and the next write (a token refresh, a login) replaced the file with only its own change. The file is now replaced whole (a temp file renamed over it), so a crash or a concurrent reader never sees half of it, and a file that does not parse is an error that names it rather than an empty store.
