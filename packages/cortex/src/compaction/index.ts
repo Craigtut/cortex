@@ -22,7 +22,7 @@ import type { AgentMessage, AgentContext } from '../context-manager.js';
 import type { CortexLogger, CortexCompactionConfig } from '../types.js';
 import { NOOP_LOGGER } from '../noop-logger.js';
 import { estimateTokens } from '../token-estimator.js';
-import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS, extractTextContent, isToolResultMessage, capToolResult, extractToolName, getToolCategory, applyBookend } from './microcompaction.js';
+import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS, extractTextContent } from './microcompaction.js';
 import { FAILSAFE_DEFAULTS } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
 import type {
@@ -609,136 +609,15 @@ export class CompactionManager {
   }
 
   /**
-   * Apply insertion-time cap to all uncapped tool results in the source
-   * messages array (mutates in place).
-   *
-   * Called from the transformContext hook on `agent.state.messages` so that
-   * Tier 1 capping is automatically applied when tool results enter
-   * conversation history through pi-agent-core's internal tool execution
-   * loop. The cap is applied at most once per tool result part; already
-   * capped content (containing the insertion marker) is skipped.
-   *
-   * @param messages - The source messages array (mutated in place)
-   * @param historyStart - Index of the first history message (past the system head and slots)
-   * @param isStale - When provided and true, the pass has been abandoned
-   *   (digestIdle timed out and advanced the generation) and no further
-   *   mutation may land: the aggregate phase awaits a consumer
-   *   persistResult, and a pass hanging there could otherwise write a
-   *   stale message back at an index a later splice has changed.
+   * Apply the insertion-time cap to every uncapped tool result in the
+   * source messages, in place (see MicrocompactionEngine.capInsertedResults).
    */
-  async applyInsertionCap(
+  applyInsertionCap(
     messages: AgentMessage[],
     historyStart: number,
     isStale?: () => boolean,
   ): Promise<void> {
-    const config = this.microcompaction.getConfig();
-
-    // Phase 1: Individual per-result cap
-    for (let i = historyStart; i < messages.length; i++) {
-      const msg = messages[i]!;
-      if (!isToolResultMessage(msg)) continue;
-      if (typeof msg.content === 'string') continue;
-
-      let modified = false;
-      const newContent = msg.content.map(part => {
-        const isLegacyToolResult = part.type === 'tool_result' && typeof part.text === 'string';
-        const isRuntimeToolResultText = msg.role === 'toolResult' && part.type === 'text' && typeof part.text === 'string';
-        if (!isLegacyToolResult && !isRuntimeToolResultText) {
-          return part;
-        }
-        // Skip already-capped content
-        if ((part.text as string).includes('tokens trimmed at insertion')) {
-          return part;
-        }
-        const capped = capToolResult(part.text as string, config);
-        if (capped !== part.text) {
-          modified = true;
-          return { ...part, text: capped };
-        }
-        return part;
-      });
-
-      if (modified) {
-        messages[i] = { ...msg, content: newContent };
-      }
-    }
-
-    // Phase 2: Aggregate per-message budget
-    const aggregateLimit = config.maxAggregateTurnTokens ?? 150_000;
-    if (aggregateLimit <= 0) return;
-
-    for (let i = historyStart; i < messages.length; i++) {
-      const msg = messages[i]!;
-      if (!isToolResultMessage(msg)) continue;
-      if (typeof msg.content === 'string') continue;
-
-      const parts = msg.content;
-      const partInfos: Array<{ index: number; tokens: number; text: string; toolName: string }> = [];
-      let totalTokens = 0;
-
-      for (let p = 0; p < parts.length; p++) {
-        const part = parts[p]!;
-        const isLegacyToolResult = part.type === 'tool_result' && typeof part.text === 'string';
-        const isRuntimeToolResultText = msg.role === 'toolResult' && part.type === 'text' && typeof part.text === 'string';
-        if (!isLegacyToolResult && !isRuntimeToolResultText) {
-          continue;
-        }
-
-        const text = part.text as string;
-        const tokens = estimateTokens(text);
-        const name = (typeof (part as Record<string, unknown>)['name'] === 'string'
-          ? (part as Record<string, unknown>)['name'] as string
-          : null) ?? extractToolName(msg) ?? 'unknown';
-        partInfos.push({ index: p, tokens, text, toolName: name });
-        totalTokens += tokens;
-      }
-
-      if (totalTokens <= aggregateLimit) continue;
-
-      const sorted = [...partInfos].sort((a, b) => b.tokens - a.tokens);
-      const newParts = [...parts];
-      let currentTotal = totalTokens;
-
-      for (const info of sorted) {
-        if (currentTotal <= aggregateLimit) break;
-        if (info.tokens <= config.maxResultTokens / 2) break;
-
-        const part = newParts[info.index]!;
-        let replacement: string;
-
-        if (config.persistResult) {
-          const category = getToolCategory(info.toolName, config.toolCategories);
-          try {
-            const path = await config.persistResult(info.text, {
-              toolName: info.toolName,
-              messageIndex: i,
-              category: category ?? 'rereadable',
-            });
-            const bookended = applyBookend(info.text, config.bookendMaxChars, config.bookendMaxChars, info.tokens);
-            replacement = `${bookended}\n\n[Full content persisted to ${path} -- use Read to access]`;
-          } catch {
-            replacement = applyBookend(info.text, config.bookendMaxChars, config.bookendMaxChars, info.tokens);
-          }
-          // The await above is the pass's only suspension point: an
-          // abandoned pass settling here must not mutate live history it
-          // no longer owns.
-          if (isStale?.()) return;
-        } else {
-          replacement = applyBookend(info.text, config.bookendMaxChars, config.bookendMaxChars, info.tokens);
-        }
-
-        const newTokens = estimateTokens(replacement);
-        currentTotal = currentTotal - info.tokens + newTokens;
-        newParts[info.index] = { ...part, text: replacement };
-      }
-
-      // Identity check before the write-back: if the slot no longer holds
-      // the message this pass read (a splice landed during the awaited
-      // persist), writing the capped copy would resurrect stale content at
-      // an unrelated index. Skipping is safe; the cap is an optimization.
-      if (messages[i] !== msg) continue;
-      messages[i] = { ...msg, content: newParts };
-    }
+    return this.microcompaction.capInsertedResults(messages, historyStart, isStale);
   }
 
   // -----------------------------------------------------------------------
