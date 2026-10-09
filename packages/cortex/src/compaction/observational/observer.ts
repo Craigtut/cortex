@@ -17,6 +17,7 @@ import type { ObserverOutput } from './types.js';
 import { OBSERVER_SYSTEM_PROMPT } from './constants.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { isSystemMessage } from '../../system-transcript.js';
+import { readObservationsBlock } from './reply.js';
 
 // ---------------------------------------------------------------------------
 // Message Formatting
@@ -253,20 +254,20 @@ function truncateValue(value: string, maxLen: number): string {
  * Parse the raw LLM output from the observer.
  *
  * Extracts content from `<observations>`, `<current-task>`, and
- * `<suggested-response>` XML blocks. Uses simple string matching
- * (not a DOM parser) and is lenient with malformed output.
+ * `<suggested-response>` XML blocks with simple string matching (not a DOM
+ * parser). The `<observations>` block is required and must be closed; the
+ * hints are optional and lenient. A well-formed but empty block is a valid
+ * judgment that the span held nothing worth recording.
  *
- * If no `<observations>` tag is found, the entire output is used as
- * observations (graceful fallback).
+ * @throws MemoryReplyError when the reply is empty, has no observations
+ *   block, or ends inside it
  */
 export function parseObserverOutput(raw: string): ObserverOutput {
-  const observations = extractTagContent(raw, 'observations') ?? raw.trim();
+  const observations = readObservationsBlock(raw, 'observer');
   const rawTask = extractTagContent(raw, 'current-task');
   const rawSuggested = extractTagContent(raw, 'suggested-response');
 
-  const result: ObserverOutput = {
-    observations: observations.trim(),
-  };
+  const result: ObserverOutput = { observations };
 
   const trimmedTask = rawTask?.trim();
   if (trimmedTask && hasMeaningfulContent(trimmedTask)) {

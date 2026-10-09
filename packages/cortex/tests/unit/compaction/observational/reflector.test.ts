@@ -12,6 +12,7 @@ import {
   COMPRESSION_LEVEL_GUIDANCE,
 } from '../../../../src/compaction/observational/constants.js';
 import type { CompleteFn } from '../../../../src/compaction/compaction.js';
+import { MemoryReplyError } from '../../../../src/compaction/observational/reply.js';
 
 // ---------------------------------------------------------------------------
 // Tests: buildReflectorPrompt
@@ -117,15 +118,12 @@ describe('parseReflectorOutput', () => {
     expect(result).not.toContain('thinking');
   });
 
-  it('handles plain text fallback when no observations tags', () => {
-    const raw = 'Just some consolidated observations without tags';
-    const result = parseReflectorOutput(raw);
-    expect(result).toBe('Just some consolidated observations without tags');
+  it('rejects output with no observations tags', () => {
+    expect(() => parseReflectorOutput('Just some consolidated observations without tags')).toThrow(MemoryReplyError);
   });
 
-  it('returns trimmed output for empty string', () => {
-    const result = parseReflectorOutput('  \n  ');
-    expect(result).toBe('');
+  it('rejects whitespace-only output', () => {
+    expect(() => parseReflectorOutput('  \n  ')).toThrow(MemoryReplyError);
   });
 });
 
@@ -245,7 +243,7 @@ describe('runReflector', () => {
 
     const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(oversizedOutput);
 
-    const result = await runReflector(mockComplete, 'observations', {
+    const result = await runReflector(mockComplete, 'o'.repeat(20_000), {
       reflectionThreshold: 10, // impossibly tight
     });
 
@@ -256,12 +254,21 @@ describe('runReflector', () => {
     expect(result.compressionLevel).toBeGreaterThan(0);
   });
 
+  it('rejects a final reflection that is no smaller than its input', async () => {
+    const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(
+      '<observations>\n' + 'x'.repeat(10_000) + '\n</observations>',
+    );
+
+    await expect(runReflector(mockComplete, 'short observations', { reflectionThreshold: 10 }))
+      .rejects.toThrow(MemoryReplyError);
+  });
+
   it('stops at compression level 4 even if more retries remain', async () => {
     const oversizedOutput = '<observations>\n' + 'x'.repeat(10_000) + '\n</observations>';
 
     const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(oversizedOutput);
 
-    const result = await runReflector(mockComplete, 'observations', {
+    const result = await runReflector(mockComplete, 'o'.repeat(20_000), {
       reflectionThreshold: 10,
     });
 

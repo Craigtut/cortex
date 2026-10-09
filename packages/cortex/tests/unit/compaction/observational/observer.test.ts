@@ -8,6 +8,7 @@ import {
   runObserver,
 } from '../../../../src/compaction/observational/observer.js';
 import { OBSERVER_SYSTEM_PROMPT } from '../../../../src/compaction/observational/constants.js';
+import { MemoryReplyError } from '../../../../src/compaction/observational/reply.js';
 import type { CompleteFn } from '../../../../src/compaction/compaction.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
 
@@ -159,10 +160,8 @@ describe('parseObserverOutput', () => {
     expect(result.suggestedResponse).toContain('Continue with the next test file.');
   });
 
-  it('falls back to full output when no observations tag present', () => {
-    const raw = 'Just some plain text output without tags';
-    const result = parseObserverOutput(raw);
-    expect(result.observations).toBe('Just some plain text output without tags');
+  it('rejects output with no observations tag', () => {
+    expect(() => parseObserverOutput('Just some plain text output without tags')).toThrow(MemoryReplyError);
   });
 
   it('omits currentTask and suggestedResponse when tags are missing', () => {
@@ -173,9 +172,8 @@ describe('parseObserverOutput', () => {
     expect(result.suggestedResponse).toBeUndefined();
   });
 
-  it('handles empty output', () => {
-    const result = parseObserverOutput('');
-    expect(result.observations).toBe('');
+  it('rejects empty output', () => {
+    expect(() => parseObserverOutput('')).toThrow(MemoryReplyError);
   });
 
   it('omits currentTask when tag content is empty whitespace', () => {

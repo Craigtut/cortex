@@ -18,6 +18,7 @@ import {
   COMPRESSION_LEVEL_GUIDANCE,
 } from './constants.js';
 import { estimateTokens } from '../../token-estimator.js';
+import { MemoryReplyError, readObservationsBlock } from './reply.js';
 
 // ---------------------------------------------------------------------------
 // Prompt Building
@@ -91,11 +92,14 @@ export function buildReflectorMessages(
 /**
  * Parse the raw LLM output from the reflector.
  *
- * Extracts content from `<observations>` tags if present, strips any
- * analysis/thinking tags, and trims whitespace.
+ * Strips analysis/thinking tags, then returns the content of the required
+ * `<observations>` block. An empty block is a failure here: a reflection
+ * replaces the whole log, so an empty one would erase it.
  *
  * @param raw - The raw string output from the reflector LLM call.
  * @returns The cleaned observation text.
+ * @throws MemoryReplyError when the reply is empty, has no observations
+ *   block, ends inside it, or the block is empty
  */
 export function parseReflectorOutput(raw: string): string {
   let output = raw;
@@ -104,13 +108,11 @@ export function parseReflectorOutput(raw: string): string {
   output = output.replace(/<analysis>[\s\S]*?<\/analysis>/g, '');
   output = output.replace(/<thinking>[\s\S]*?<\/thinking>/g, '');
 
-  // Extract content from <observations> tags if present
-  const match = /<observations>([\s\S]*?)<\/observations>/.exec(output);
-  if (match?.[1]) {
-    output = match[1];
+  const observations = readObservationsBlock(output, 'reflector');
+  if (observations.length === 0) {
+    throw new MemoryReplyError('empty', 'The reflector returned an empty observations block');
   }
-
-  return output.trim();
+  return observations;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,9 +177,9 @@ const MAX_COMPRESSION_LEVEL = 4;
  * reflection threshold. Retries up to 3 times, incrementing the
  * compression level each time (capped at level 4).
  *
- * Even if the final attempt does not validate, the best result is returned.
- * The observation slot will be larger than ideal, but the next reflection
- * cycle will try again.
+ * Even if the final attempt does not validate, it is returned when it is
+ * smaller than the input: the observation slot will be larger than ideal,
+ * but the next reflection cycle will try again.
  *
  * @param complete - The LLM completion function.
  * @param observations - The full observation text to consolidate.
@@ -185,6 +187,8 @@ const MAX_COMPRESSION_LEVEL = 4;
  *   optional reflectorInstruction.
  * @returns The reflector output with consolidated observations and the
  *   compression level that was applied.
+ * @throws MemoryReplyError when a reply is unusable or the final reflection
+ *   is no smaller than its input
  */
 export async function runReflector(
   complete: CompleteFn,
@@ -217,5 +221,10 @@ export async function runReflector(
     retries++;
   }
 
+  // Over target at every level. Still worth keeping only if it shrank the
+  // log; a reflection no smaller than its input would only lose detail.
+  if (estimateTokens(parsedOutput) >= estimateTokens(observations)) {
+    throw new MemoryReplyError('not-smaller', 'The reflection is no smaller than the observations it condensed');
+  }
   return { observations: parsedOutput, compressionLevel: level };
 }
