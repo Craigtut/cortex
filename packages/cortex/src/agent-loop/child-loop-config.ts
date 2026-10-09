@@ -157,6 +157,7 @@ export function buildChildLoopConfig(
     childCortexConfig.resolveNetworkAccess = config.resolveNetworkAccess;
   }
   if (config.getApiKey) childCortexConfig.getApiKey = config.getApiKey;
+  if (config.getAuth) childCortexConfig.getAuth = config.getAuth;
   if (config.ambientCredentials !== undefined) childCortexConfig.ambientCredentials = config.ambientCredentials;
   // The raw consumer callback, so the child stamps its own loopPath.
   if (parent.rawPersistResult) childCortexConfig.persistResult = parent.rawPersistResult;

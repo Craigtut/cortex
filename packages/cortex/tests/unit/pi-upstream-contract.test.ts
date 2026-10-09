@@ -224,4 +224,63 @@ describe('installed Pi integration', () => {
       await loop.destroy();
     }
   });
+  it("sends getAuth's headers and base URL with loop and direct requests, over getApiKey", async () => {
+    const manager = new ProviderManager();
+    const catalog = await manager.listModels('anthropic');
+    const model = await manager.resolveModel('anthropic', catalog[0]!.id);
+    const transport = anthropicTransport();
+    const calls: Array<{ baseUrl: string; options: Record<string, unknown> | undefined }> = [];
+    const respond = (rawModel: { api: string; provider: string; id: string; baseUrl: string }) => {
+      const events = createAssistantMessageEventStream();
+      const message: AssistantMessage = {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done' }],
+        api: rawModel.api,
+        provider: rawModel.provider,
+        model: rawModel.id,
+        usage: {
+          input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      };
+      events.push({ type: 'start', partial: message });
+      events.push({ type: 'done', reason: 'stop', message });
+      return events;
+    };
+    vi.spyOn(transport, 'streamSimple').mockImplementation((rawModel, _context, options) => {
+      calls.push({ baseUrl: rawModel.baseUrl, options: options as Record<string, unknown> | undefined });
+      return respond(rawModel);
+    });
+    vi.spyOn(transport, 'stream').mockImplementation((rawModel, _context, options) => {
+      calls.push({ baseUrl: rawModel.baseUrl, options: options as Record<string, unknown> | undefined });
+      return respond(rawModel);
+    });
+
+    const loop = await AgentLoop.create({
+      model,
+      workingDirectory: process.cwd(),
+      initialBasePrompt: 'Test the upstream integration.',
+      getApiKey: async () => 'ignored-key',
+      getAuth: async () => ({ headers: { Authorization: 'Bearer header-token' }, baseUrl: 'https://alt.example.test' }),
+      compaction: { strategy: 'classic' },
+      disableTools: Object.values(TOOL_NAMES),
+      enableSubAgentTool: false,
+      enableLoadSkillTool: false,
+    });
+
+    try {
+      await loop.prompt('Hello.');
+      await loop.directComplete({ systemPrompt: 'System', messages: [{ role: 'user', content: 'Hi' }] });
+      expect(calls).toHaveLength(2);
+      for (const call of calls) {
+        expect(call.baseUrl).toBe('https://alt.example.test');
+        expect(call.options).toMatchObject({ headers: { Authorization: 'Bearer header-token' } });
+        expect(call.options?.['apiKey']).toBeUndefined();
+      }
+    } finally {
+      await loop.destroy();
+    }
+  });
 });

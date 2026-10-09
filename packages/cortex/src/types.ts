@@ -13,6 +13,7 @@
  *   - working-tags.md
  */
 
+import type { ModelAuth } from '@earendil-works/pi-ai';
 import type { CortexModel } from './model-wrapper.js';
 import type {
   ObservationalMemoryConfig,
@@ -329,6 +330,17 @@ export interface AgentLoopConfig {
    * Returns the API key string on success. Must never return empty string.
    */
   getApiKey?: (provider: string) => Promise<string>;
+
+  /**
+   * Callback to resolve a request's auth by provider name: an API key, auth
+   * headers, and a base URL, any of which a provider may need. Kimi Coding's
+   * OAuth authorizes with a header and GitHub Copilot's with a per-account
+   * base URL, which a plain key cannot carry. Takes precedence over
+   * `getApiKey`, which stays the simple path. `ProviderManager.getAuth()`
+   * has this shape. Throws on failure (classified as authentication error);
+   * resolving `undefined` means no credentials.
+   */
+  getAuth?: (provider: string) => Promise<ModelAuth | undefined>;
 
   /**
    * Let pi-ai resolve credentials from the environment for a request that

@@ -255,6 +255,7 @@ export function assembleLoop(params: {
       utilityPi: models.utilityPi,
     }),
     getApiKey: config.getApiKey,
+    getAuth: config.getAuth,
     ambientCredentials: config.ambientCredentials === true,
     cacheRetention: () => models.cacheRetention,
     sessionId: () => models.sessionId,

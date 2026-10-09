@@ -11,7 +11,7 @@ import {
   resolveDirectCompletionContext,
 } from '../cache-breakpoints.js';
 import type { CacheBreakpointIndices, DirectCompletionContext } from '../cache-breakpoints.js';
-import type { Context } from '@earendil-works/pi-ai';
+import type { Context, ModelAuth } from '@earendil-works/pi-ai';
 import { toError } from '../error-classifier.js';
 import { streamModel } from '../model-runtime.js';
 import type { ModelRequestOptions } from '../model-runtime.js';
@@ -53,6 +53,8 @@ export interface DirectCompletionOptions {
 export interface DirectCompletionPorts {
   models(): { primary: CortexModel; primaryPi: PiModel; utility: CortexModel; utilityPi: PiModel };
   getApiKey: ((provider: string) => Promise<string>) | undefined;
+  /** Resolves request auth; takes precedence over getApiKey (AgentLoopConfig.getAuth). */
+  getAuth: ((provider: string) => Promise<ModelAuth | undefined>) | undefined;
   /** Let pi resolve ambient credentials when no key was resolved (AgentLoopConfig.ambientCredentials). */
   ambientCredentials: boolean;
   cacheRetention(): CacheRetention | null;
@@ -141,8 +143,15 @@ export class DirectCompletions {
     // A key-resolution failure is remembered, not thrown: pi-ai may still
     // succeed, and if it fails this is the more actionable cause.
     let apiKey: string | undefined;
+    let auth: ModelAuth | undefined;
     let keyError: Error | undefined;
-    if (this.ports.getApiKey) {
+    if (this.ports.getAuth) {
+      try {
+        auth = await this.ports.getAuth(model.provider);
+      } catch (err) {
+        keyError = toError(err);
+      }
+    } else if (this.ports.getApiKey) {
       try {
         apiKey = await this.ports.getApiKey(model.provider);
       } catch (err) {
@@ -167,6 +176,7 @@ export class DirectCompletions {
         {
           ...completeOptions,
           ...request?.options,
+          ...(auth ? { auth } : {}),
           ambientCredentials: this.ports.ambientCredentials,
         } as ModelRequestOptions,
       ).result();

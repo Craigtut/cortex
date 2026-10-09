@@ -106,17 +106,24 @@ export function buildPiAgentConfig(params: {
         thinkingLevel: toPiThinkingLevel(cortexConfig.thinkingLevel),
       }),
     },
-    getApiKey: cortexConfig.getApiKey,
+    // With getAuth, the stream function resolves auth itself: pi's own hook
+    // carries only a key.
+    ...(cortexConfig.getAuth ? {} : { getApiKey: cortexConfig.getApiKey }),
     toolExecution: cortexConfig.toolExecution ?? 'sequential',
   };
 
   const ambientCredentials = cortexConfig.ambientCredentials === true;
-  agentConfig['streamFn'] = (model: PiModel, context: Context, options?: SimpleStreamOptions) => {
+  const getAuth = cortexConfig.getAuth;
+  agentConfig['streamFn'] = async (model: PiModel, context: Context, options?: SimpleStreamOptions) => {
     const { retention, sessionId } = host()?.streamOptions() ?? { retention: null, sessionId: null };
+    // A getAuth failure rejects the stream, which pi records on the run like
+    // a failed getApiKey.
+    const auth = getAuth ? await getAuth(model.provider) : undefined;
     return streamModelSimple(model, context, {
       ...options,
       ...(retention ? { cacheRetention: retention } : {}),
       ...(sessionId ? { sessionId } : {}),
+      ...(auth ? { auth } : {}),
       ambientCredentials,
     });
   };

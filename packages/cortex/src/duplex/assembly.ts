@@ -248,6 +248,7 @@ export function buildTalkerConfig(
 
   // Shared environment-level wiring.
   if (config.getApiKey) talker.getApiKey = config.getApiKey;
+  if (config.getAuth) talker.getAuth = config.getAuth;
   if (config.ambientCredentials !== undefined) talker.ambientCredentials = config.ambientCredentials;
   if (config.sandbox) talker.sandbox = config.sandbox;
   if (config.envOverrides) talker.envOverrides = config.envOverrides;
@@ -308,6 +309,7 @@ export function buildQuickLookupConfig(
     enableLoadSkillTool: false,
   };
   if (config.getApiKey) lookup.getApiKey = config.getApiKey;
+  if (config.getAuth) lookup.getAuth = config.getAuth;
   if (config.ambientCredentials !== undefined) lookup.ambientCredentials = config.ambientCredentials;
   if (config.sandbox) lookup.sandbox = config.sandbox;
   if (config.envOverrides) lookup.envOverrides = config.envOverrides;

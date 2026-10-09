@@ -134,6 +134,7 @@ export type {
   ImageContent,
   Message,
   Model,
+  ModelAuth,
   StopReason,
   SystemMessage,
   TextContent,

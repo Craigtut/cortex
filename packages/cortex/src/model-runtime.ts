@@ -22,6 +22,7 @@ import type {
   AuthContext,
   Context,
   Model,
+  ModelAuth,
   MutableModels,
   Provider,
   ProviderStreams,
@@ -51,6 +52,13 @@ import { ollamaProvider } from './providers/ollama/provider.js';
 
 /** The credential policy of one request. */
 export interface CredentialOptions {
+  /**
+   * Request auth the caller resolved (AgentLoopConfig.getAuth): a key, auth
+   * headers, and a base URL that replaces the model's. With a key or auth
+   * headers here, or an `apiKey` option, the request carries the caller's
+   * credentials and pi resolves none.
+   */
+  auth?: ModelAuth | undefined;
   /**
    * Let pi resolve credentials from the environment (provider env vars such
    * as `ANTHROPIC_API_KEY`, Anthropic workload identity federation, AWS
@@ -164,34 +172,88 @@ export class ModelRuntime {
   }
 
   /** A request at pi's API level, like pi's `stream()`. */
-  stream(model: Model<Api>, context: Context, options: StreamOptions = {}): AssistantMessageEventStream {
-    if (hasCallerKey(options)) {
-      return this.providerFor(model).stream(model, normalizeContext(context), options as ApiStreamOptions<Api>);
+  stream(
+    model: Model<Api>,
+    context: Context,
+    options: StreamOptions & { auth?: ModelAuth | undefined } = {},
+  ): AssistantMessageEventStream {
+    const caller = withCallerAuth(model, options);
+    if (caller) {
+      return this.providerFor(caller.model).stream(
+        caller.model,
+        normalizeContext(context),
+        caller.options as ApiStreamOptions<Api>,
+      );
     }
-    return this.models.stream(model, context, withoutKey(options) as ApiStreamOptions<Api>);
+    return this.models.stream(model, context, withoutCallerAuth(options) as ApiStreamOptions<Api>);
   }
 
   /** A request at pi's reasoning level, like pi's `streamSimple()`. */
-  streamSimple(model: Model<Api>, context: Context, options: SimpleStreamOptions = {}): AssistantMessageEventStream {
-    if (hasCallerKey(options)) {
-      return this.providerFor(model).streamSimple(model, normalizeContext(context), options);
+  streamSimple(
+    model: Model<Api>,
+    context: Context,
+    options: SimpleStreamOptions & { auth?: ModelAuth | undefined } = {},
+  ): AssistantMessageEventStream {
+    const caller = withCallerAuth(model, options);
+    if (caller) {
+      return this.providerFor(caller.model).streamSimple(caller.model, normalizeContext(context), caller.options);
     }
-    return this.models.streamSimple(model, context, withoutKey(options));
+    return this.models.streamSimple(model, context, withoutCallerAuth(options));
   }
 }
 
-/** Whether the caller resolved credentials for the request. */
-function hasCallerKey(options: StreamOptions): boolean {
-  return typeof options.apiKey === 'string' && options.apiKey.length > 0;
+/**
+ * The request as the caller's credentials shape it, or null when the caller
+ * resolved none: auth headers go under the request's own headers, and an
+ * auth base URL replaces the model's (GitHub Copilot's per-account endpoint).
+ */
+function withCallerAuth<T extends StreamOptions & { auth?: ModelAuth | undefined }>(
+  model: Model<Api>,
+  options: T,
+): { model: Model<Api>; options: Omit<T, 'auth'> } | null {
+  const { auth, ...rest } = options;
+  const apiKey = nonEmpty(auth?.apiKey) ?? nonEmpty(rest.apiKey);
+  const authHeaders = auth?.headers && Object.keys(auth.headers).length > 0 ? auth.headers : undefined;
+  if (!apiKey && !authHeaders) return null;
+  const headers = authHeaders ? mergeHeaders(authHeaders, rest.headers) : rest.headers;
+  return {
+    model: auth?.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model,
+    options: {
+      ...rest,
+      ...(apiKey ? { apiKey } : {}),
+      ...(headers ? { headers } : {}),
+    },
+  };
 }
 
 /**
  * Without caller credentials, pi resolves them through the runtime's auth
  * context. Drop an empty key so it is not taken as an explicit one.
  */
-function withoutKey<T extends StreamOptions>(options: T): T {
-  const { apiKey: _empty, ...rest } = options;
-  return rest as T;
+function withoutCallerAuth<T extends StreamOptions & { auth?: ModelAuth | undefined }>(
+  options: T,
+): Omit<T, 'auth' | 'apiKey'> {
+  const { auth: _auth, apiKey: _empty, ...rest } = options;
+  return rest;
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** `override` over `base`, header names compared case-insensitively, as pi merges them. */
+function mergeHeaders(
+  base: Record<string, string | null>,
+  override: Record<string, string | null> | undefined,
+): Record<string, string | null> {
+  const merged = { ...base };
+  for (const [name, value] of Object.entries(override ?? {})) {
+    for (const existing of Object.keys(merged)) {
+      if (existing.toLowerCase() === name.toLowerCase()) delete merged[existing];
+    }
+    merged[name] = value;
+  }
+  return merged;
 }
 
 let envBlindRuntime: ModelRuntime | null = null;
