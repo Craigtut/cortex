@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all';
 import { inferUtilityModelId } from '../../src/utility-model-inference.js';
 
 function model(id: string, input = 1, output = 1): Record<string, unknown> {
@@ -26,6 +27,21 @@ describe('utility-model-inference', () => {
       model('claude-haiku-4-5-20251001', 1, 5),
       model('claude-sonnet-4-6', 3, 15),
     ])).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('never picks a batch-priced variant, however cheap', () => {
+    expect(inferUtilityModelId([
+      model('mistralai/mistral-small-2603', 0.15, 0.6),
+      model('mistralai/mistral-small-2603:batch', 0.075, 0.3),
+    ])).toBe('mistralai/mistral-small-2603');
+  });
+
+  it("picks a real-time model from OpenRouter's catalog", () => {
+    const openRouter = getBuiltinModels('openrouter') as unknown as Array<Record<string, unknown>>;
+    // Precondition: the catalog carries batch variants of utility models.
+    expect(openRouter.some((candidate) => candidate['id'] === 'mistralai/mistral-small-2603:batch')).toBe(true);
+
+    expect(inferUtilityModelId(openRouter)).not.toMatch(/:batch$/);
   });
 
   it('prefers a newer version over a dated snapshot of an older one', () => {

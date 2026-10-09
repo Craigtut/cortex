@@ -2,7 +2,9 @@ type RawModel = Record<string, unknown>;
 
 const MIN_UTILITY_CONTEXT_WINDOW = 32_000;
 
-const SPECIAL_PURPOSE_MODEL_PATTERN = /(?:embedding|embed|rerank|moderation|whisper|tts|audio|speech|image-generation|vision|live|deep-research|safety|safeguard|guard|search|transcrib)/i;
+// `:batch` is OpenRouter's batch-priced variant of a model: cheaper, so it
+// would otherwise win, but not for the real-time calls a utility model serves.
+const SPECIAL_PURPOSE_MODEL_PATTERN = /(?:embedding|embed|rerank|moderation|whisper|tts|audio|speech|image-generation|vision|live|deep-research|safety|safeguard|guard|search|transcrib|:batch\b)/i;
 
 const UTILITY_TERMS: Array<{ pattern: RegExp; score: number }> = [
   { pattern: /(?:^|[\s._/-])flash[\s._/-]?lite(?:$|[\s._/-])/, score: 110 },
