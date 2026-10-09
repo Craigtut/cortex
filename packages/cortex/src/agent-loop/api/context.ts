@@ -7,11 +7,14 @@
 
 import type { CompactionManager } from '../../compaction/index.js';
 import type {
+  CompactNowOptions,
+  CompactNowResult,
   MemoryErrorInfo,
   MemoryGapInfo,
   MemoryRecoveredInfo,
   ObservationEvent,
   ObservationalMemoryState,
+  ObserveNowResult,
   ReflectionEvent,
 } from '../../compaction/observational/types.js';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
@@ -171,10 +174,27 @@ export interface LoopContextApi {
   restoreObservationalMemoryState(state: ObservationalMemoryState): void;
 
   /**
-   * Force a synchronous observation cycle.
-   * Useful after critical user corrections.
+   * Compact now, whatever the context utilization: observe what is not yet
+   * observed, up to the verbatim tail (the most recent messages, which stay
+   * as they are), swap those observations in for the messages they cover,
+   * then condense the log if it is due. Waits for a running turn to end
+   * first, and for a background observer already covering some of the
+   * messages, which it never observes twice.
+   *
+   * When an observer call fails, or `options.signal` stops the call,
+   * history and the log are unchanged and the result says why. With
+   * `options.observe` false, only what is already observed swaps in and
+   * nothing waits on the memory model.
    */
-  triggerObservation(): Promise<void>;
+  compactNow(options?: CompactNowOptions): Promise<CompactNowResult>;
+
+  /**
+   * Record everything not yet in the observation log, now, without
+   * removing anything from history: for a correction the log should carry
+   * at once. Waits for a running turn to end first. Calling it again with
+   * nothing new observes nothing.
+   */
+  observeNow(options?: { signal?: AbortSignal }): Promise<ObserveNowResult>;
 
   /**
    * Register a handler for observation events.

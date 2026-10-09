@@ -129,7 +129,10 @@ export const AGENT_LOOP_DELEGATION = {
   getObservationalMemoryState: 'forwarded',
   digestIdle: 'forwarded',
   checkAndRunCompaction: 'forwarded',
-  triggerObservation: 'forwarded',
+  // Composite: every resident loop compacts, so the facade's result is
+  // per loop (CortexAgent.compactNow).
+  compactNow: 'forwarded',
+  observeNow: 'forwarded',
   getCompactionManager: 'forwarded',
   // Tools, MCP, skills.
   addConsumerTool: 'forwarded',

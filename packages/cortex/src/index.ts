@@ -221,7 +221,7 @@ export type {
   DuplexTuningConfig,
   ConfigDestination,
 } from './facade/config.js';
-export type { CortexAbortScope, CortexDeliverOptions } from './facade/session-mode.js';
+export type { CortexAbortScope, CortexCompactNowResult, CortexDeliverOptions } from './facade/session-mode.js';
 export type {
   CortexAgentStateV1,
   CortexAgentStateV2,
@@ -446,6 +446,10 @@ export type {
   MemoryRecoveredInfo,
   MemoryGapInfo,
   MemoryEventPayload,
+  CompactNowOptions,
+  CompactNowResult,
+  ObserveNowResult,
+  ReflectionOutcome,
 } from './compaction/index.js';
 
 // Model Wrapper (Phase 1D)

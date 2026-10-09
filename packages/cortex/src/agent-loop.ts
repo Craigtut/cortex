@@ -16,11 +16,14 @@ import type { BudgetGuard } from './budget-guard.js';
 import type { DirectCompletionContext } from './cache-breakpoints.js';
 import type { CompactionManager } from './compaction/index.js';
 import type {
+  CompactNowOptions,
+  CompactNowResult,
   MemoryErrorInfo,
   MemoryGapInfo,
   MemoryRecoveredInfo,
   ObservationalMemoryState,
   ObservationEvent,
+  ObserveNowResult,
   ReflectionEvent,
 } from './compaction/observational/types.js';
 import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core';
@@ -462,11 +465,12 @@ export class AgentLoop implements
     }
   }
 
-  async triggerObservation(): Promise<void> {
-    const { compactionManager, contextManager } = this.parts;
-    await compactionManager.triggerObservation(this.agent.state.messages, contextManager.historyStart);
-    const slotContent = compactionManager.getObservationSlotContent();
-    if (slotContent) contextManager.setSlot('_observations', slotContent);
+  async compactNow(options?: CompactNowOptions): Promise<CompactNowResult> {
+    return this.parts.pipeline.compactNow(options);
+  }
+
+  async observeNow(options?: { signal?: AbortSignal }): Promise<ObserveNowResult> {
+    return this.parts.pipeline.observeNow(options);
   }
 
   onObservation(handler: (event: ObservationEvent, origin: LoopOriginContext) => void): void {

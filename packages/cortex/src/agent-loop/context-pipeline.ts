@@ -2,8 +2,9 @@
  * The context pipeline: what the model sees on each call. The composed
  * transformContext hook (insertion cap, view injections at the history
  * boundary, sanitization, compaction, cache-breakpoint indices), the
- * consumer-fed headline block, and idle digestion (the same pipeline run
- * outside a prompt, in idle windows).
+ * consumer-fed headline block, idle digestion (the same pipeline run
+ * outside a prompt, in idle windows), and explicit compaction. Digestion,
+ * compactNow and observeNow all hold the loop gate, so none races a turn.
  *
  * The digestion generation guards abandoned passes: a timed-out or
  * preempted digestion pass is abandoned, not cancelled (nothing can
@@ -20,7 +21,7 @@
 
 import { computeCacheBreakpointIndices } from '../cache-breakpoints.js';
 import type { CacheBreakpointIndices } from '../cache-breakpoints.js';
-import type { CompactionManager } from '../compaction/index.js';
+import type { CompactionManager, CompactNowOptions, CompactNowResult, ObserveNowResult } from '../compaction/index.js';
 import { DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS } from '../compaction/observational/index.js';
 import type { AgentContext, AgentMessage, ContextManager } from '../context-manager.js';
 import { errorMessageOf } from '../error-classifier.js';
@@ -373,6 +374,45 @@ export class ContextPipeline {
       boundary,
     );
     return this.ports.compaction().estimateCurrentContextTokens(snapshot);
+  }
+
+  /** {@link CompactionManager.compactNow} under the loop gate. */
+  compactNow(options?: CompactNowOptions): Promise<CompactNowResult> {
+    this.ports.assertNotShuttingDown();
+    return this.ports.gate.enqueue(async () => {
+      if (this.ports.isShuttingDown()) return { status: 'failed', error: new Error('The loop is shutting down') };
+      const historyStart = this.ports.slots.historyStart;
+      const result = await this.ports.compaction().compactNow(
+        () => this.ports.agentState().messages.slice(historyStart),
+        (history) => this.writeSource(history),
+        { ...options, tokensBefore: this.estimateTokens() },
+      );
+      this.refreshObservationSlot();
+      return result;
+    });
+  }
+
+  /** {@link CompactionManager.observeNow} under the loop gate. */
+  observeNow(options?: { signal?: AbortSignal }): Promise<ObserveNowResult> {
+    this.ports.assertNotShuttingDown();
+    return this.ports.gate.enqueue(async () => {
+      if (this.ports.isShuttingDown()) return { status: 'failed', error: new Error('The loop is shutting down') };
+      const historyStart = this.ports.slots.historyStart;
+      const result = await this.ports.compaction().observeNow(
+        () => this.ports.agentState().messages.slice(historyStart),
+        { ...options, tokensBefore: this.estimateTokens() },
+      );
+      this.refreshObservationSlot();
+      return result;
+    });
+  }
+
+  /** Point the observation slot at the log, once there is one. */
+  private refreshObservationSlot(): void {
+    const compaction = this.ports.compaction();
+    if (compaction.hasObservations()) {
+      this.ports.slots.setSlot('_observations', compaction.getObservationSlotContent());
+    }
   }
 
   digest(options?: IdleDigestionOptions): Promise<IdleDigestionResult> {

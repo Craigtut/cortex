@@ -14,7 +14,8 @@ export const compactCommand: Command = {
       // In observational mode, force a synchronous observation flush
       app.showStatusSpinner('Flushing observations...');
       try {
-        await agent.triggerObservation();
+        const result = await agent.observeNow();
+        if (result.status === 'failed') throw result.error;
         app.hideStatusSpinner();
         const cm = agent.getCompactionManager();
         const memK = (cm.getObservationTokenCount() / 1000).toFixed(1);

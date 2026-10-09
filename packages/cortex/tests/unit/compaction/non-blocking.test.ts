@@ -218,13 +218,16 @@ describe('ObservationalMemoryEngine allowSync', () => {
 
   it('with allowSync false, reflection at threshold launches async instead of running inline', async () => {
     const { engine } = buildEngine();
-    // Seed observations well past the reflection threshold via a manual
-    // trigger (the explicit digestion path, which stays synchronous).
-    const bigObservations =
-      '<observations>\n' + Array.from({ length: 30_000 }, (_, i) => `* line ${i}`).join('\n') + '\n</observations>';
-    const seedComplete = vi.fn().mockResolvedValue(bigObservations);
-    engine.setCompleteFn(seedComplete as unknown as CompleteFn);
-    await engine.triggerObservation([makeUserMsg('seed')], 0);
+    // Seed observations well past the reflection threshold.
+    const bigObservations = Array.from({ length: 30_000 }, (_, i) => `* line ${i}`).join('\n');
+    engine.restoreState({
+      observations: bigObservations,
+      continuationHint: null,
+      observationTokenCount: Math.ceil(bigObservations.length / 4),
+      generationCount: 0,
+      bufferedChunks: [],
+      bufferWatermark: 0,
+    });
 
     // Now a reflector-shaped completion that never settles: if reflection
     // ran inline, activation below would hang; async launch keeps it

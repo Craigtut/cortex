@@ -1034,7 +1034,8 @@ const POST_DESTROY_PROBES: Record<ForwardedLoopMember, PostDestroyProbe> = {
   getObservationalMemoryState: { call: (t) => t.getObservationalMemoryState() },
   digestIdle: { skip: 'runs the observer/reflector against a real model' },
   checkAndRunCompaction: { skip: 'can run real summarization completions' },
-  triggerObservation: { skip: 'runs the observer against a real model' },
+  compactNow: { call: (t) => t.compactNow() },
+  observeNow: { call: (t) => t.observeNow() },
   getCompactionManager: { call: (t) => t.getCompactionManager() },
   // Tools, MCP, skills.
   addConsumerTool: { call: (t) => t.addConsumerTool(probeTool) },
@@ -1167,7 +1168,6 @@ describe('CortexAgent forwarded lifecycle semantics', () => {
       'directComplete',
       'spawnBackgroundSubAgent',
       'structuredComplete',
-      'triggerObservation',
       'utilityComplete',
     ]);
   });

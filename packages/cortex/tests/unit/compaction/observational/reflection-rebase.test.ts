@@ -91,8 +91,9 @@ describe('in-band reflection', () => {
 
     const pass = activate(engine, 'hello');
     await flushPromises();
-    // A manual observation lands while the inline reflection is in flight.
-    await engine.triggerObservation([userMsg('a correction')], 0);
+    // An explicit observation lands while the inline reflection is in flight.
+    const correction = [userMsg('a correction')];
+    await engine.observeNow(() => correction, { tokensBefore: 0 });
     releaseReflector('<observations>\nREFLECTED\n</observations>');
     await pass;
 

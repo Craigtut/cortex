@@ -82,6 +82,7 @@ import type {
   MemoryRecoveredInfo,
   ObservationEvent,
   ObservationalMemoryState,
+  ObserveNowResult,
   ReflectionEvent,
 } from '../compaction/index.js';
 
@@ -314,7 +315,10 @@ export abstract class LoopSurface {
 
   async checkAndRunCompaction(): Promise<CompactionResult | null> { return this.topology.work.checkAndRunCompaction(); }
 
-  async triggerObservation(): Promise<void> { return this.topology.work.triggerObservation(); }
+  /** The work loop's, in both modes (see CortexAgent.compactNow for both loops). */
+  async observeNow(options?: { signal?: AbortSignal }): Promise<ObserveNowResult> {
+    return this.topology.work.observeNow(options);
+  }
 
   /**
    * The reasoner's compaction manager. Each loop runs its own in duplex

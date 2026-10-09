@@ -11,7 +11,7 @@ import type { CortexLogger, PendingAsk, SessionUsage } from '../types.js';
 import type { CortexModel } from '../model-wrapper.js';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { ContextManager } from '../context-manager.js';
-import type { ObservationalMemoryState } from '../compaction/index.js';
+import type { CompactNowOptions, CompactNowResult, ObservationalMemoryState } from '../compaction/index.js';
 import type { BudgetGuard } from '../budget-guard.js';
 import type { EventBridge } from '../event-bridge.js';
 import type { CausationSource } from '../duplex/cause-tags.js';
@@ -51,6 +51,17 @@ export interface CortexDeliverOptions {
    * `prompt()` is unambiguous user speech and always mints the user tag.
    */
   speaker?: 'user' | 'system';
+}
+
+/** CortexAgent.compactNow's result: each resident loop's. */
+export interface CortexCompactNowResult {
+  /** The work loop: the reasoner, in both modes. */
+  reasoner: CompactNowResult;
+  /**
+   * The talker, in duplex: a swap of what it had already observed, which
+   * never waits on the memory model. Absent in passthrough.
+   */
+  talker?: CompactNowResult;
 }
 
 /** The non-reasoner side of the persisted artifact. */
@@ -113,6 +124,8 @@ export interface SessionMode {
   setModel(model: CortexModel): void;
   setUtilityModel(model: CortexModel): void;
   setSessionId(value: string | null): void;
+  /** Compact every resident loop now (CortexAgent.compactNow). */
+  compactNow(options?: CompactNowOptions): Promise<CortexCompactNowResult>;
 
   /** Settled spend of work outside the resident loops, or null if none can exist. */
   lookupUsage(): SessionUsage | null;

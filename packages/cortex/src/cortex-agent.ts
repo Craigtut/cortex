@@ -53,10 +53,12 @@ import { PromptTracker, Settlement } from './facade/settlement.js';
 import { PassthroughSession } from './facade/passthrough-session.js';
 import type {
   CortexAbortScope,
+  CortexCompactNowResult,
   CortexDeliverOptions,
   FacadeServices,
   SessionMode,
 } from './facade/session-mode.js';
+import type { CompactNowOptions } from './compaction/index.js';
 import { assembleDuplexLoops } from './duplex/assembly.js';
 import { DuplexSession } from './duplex/session.js';
 
@@ -80,7 +82,7 @@ export type {
   CortexAgentUsageBreakdown,
   _V1OptionalFieldsAcceptNull,
 } from './facade/persisted-state.js';
-export type { CortexAbortScope, CortexDeliverOptions } from './facade/session-mode.js';
+export type { CortexAbortScope, CortexCompactNowResult, CortexDeliverOptions } from './facade/session-mode.js';
 
 type AssertExtends<A extends B, B> = A;
 
@@ -673,6 +675,18 @@ export class CortexAgent extends LoopSurface {
    */
   setSessionId(value: string | null): void {
     this.session.setSessionId(value);
+  }
+
+  /**
+   * Compact now, whatever the context utilization (AgentLoop.compactNow),
+   * on every resident loop, with each loop's result. The reasoner runs the
+   * full sequence under `options`. In duplex the talker, the
+   * latency-critical loop, swaps in only what it has already observed and
+   * never waits on the memory model. A running idle digestion yields.
+   */
+  async compactNow(options?: CompactNowOptions): Promise<CortexCompactNowResult> {
+    this.assertNotDestroyed();
+    return this.session.compactNow(options);
   }
 
   /**

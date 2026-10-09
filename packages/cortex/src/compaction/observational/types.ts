@@ -389,6 +389,65 @@ export type MemoryEventPayload =
   | { kind: 'gap'; info: MemoryGapInfo };
 
 // ---------------------------------------------------------------------------
+// Explicit compaction and observation
+// ---------------------------------------------------------------------------
+
+/** Options for `compactNow()`. */
+export interface CompactNowOptions {
+  /** Ends the call's memory calls; a stopped call changes nothing. */
+  signal?: AbortSignal;
+  /**
+   * Whether to observe what is not yet observed before the swap (default
+   * true). False swaps in only what is already observed and never waits
+   * on the memory model: for a loop whose latency matters more than how
+   * much the swap frees.
+   */
+  observe?: boolean;
+}
+
+/** What a reflection check did. */
+export type ReflectionOutcome =
+  | { status: 'not-due' }
+  | { status: 'reflected' }
+  /** A reflector runs in the background; a later swap brings its result in. */
+  | { status: 'in-background' }
+  /** The current log stays, larger than ideal. */
+  | { status: 'failed'; error: Error };
+
+/** The result of `compactNow()`. */
+export type CompactNowResult =
+  | {
+    status: 'compacted';
+    /** Messages that left history (their observations are in the log). */
+    removedMessages: number;
+    /** Estimated context size before and after, in tokens. */
+    tokensBefore: number;
+    tokensAfter: number;
+    /** The reflection check after the swap; a failed one leaves the swap standing. */
+    reflection: ReflectionOutcome;
+  }
+  /** Everything already fits the verbatim tail. */
+  | { status: 'nothing-to-compact' }
+  /**
+   * An observer call failed or the call was stopped: history and the log
+   * are unchanged. Pieces observed before the failure stay buffered, so
+   * the next swap does not observe them again.
+   */
+  | { status: 'failed'; error: Error };
+
+/** The result of `observeNow()`. */
+export type ObserveNowResult =
+  | {
+    status: 'observed';
+    /** Messages whose observations this call added to the log. */
+    observedMessages: number;
+  }
+  /** Every message was already in the log. */
+  | { status: 'nothing-to-observe' }
+  /** An observer call failed or the call was stopped: the log is unchanged. */
+  | { status: 'failed'; error: Error };
+
+// ---------------------------------------------------------------------------
 // Recall
 // ---------------------------------------------------------------------------
 

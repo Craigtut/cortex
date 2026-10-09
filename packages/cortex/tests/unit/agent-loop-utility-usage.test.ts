@@ -166,9 +166,9 @@ describe('utility usage accounting', () => {
     const piAgent = (loop as unknown as { agent: PiAgent }).agent;
     piAgent.state.messages.push({ role: 'user', content: 'work happened', timestamp: 1 } as never);
 
-    // Drive the observer through the real wiring (manual trigger uses the
-    // same setObservationalCompleteFn path activation uses).
-    await loop.triggerObservation();
+    // Drive the observer through the real wiring (observeNow uses the same
+    // setObservationalCompleteFn path activation uses).
+    await loop.observeNow();
 
     const usage = loop.getSessionUsage();
     expect(usage.utility!['observer']?.calls).toBeGreaterThanOrEqual(1);

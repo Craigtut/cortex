@@ -35,6 +35,11 @@ function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Record `history` in the log through the explicit entry point. */
+function observeNow(engine: ObservationalMemoryEngine, history: AgentMessage[]) {
+  return engine.observeNow(() => history, { tokensBefore: 0 });
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Constructor
 // ---------------------------------------------------------------------------
@@ -98,8 +103,8 @@ describe('ObservationalMemoryEngine', () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
-      // Trigger observation to set continuation hints
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      // Observe to set continuation hints
+      await observeNow(engine, [userMsg('Hello')]);
 
       const slot = engine.buildSlotContent();
       expect(slot).toContain('<current-task>');
@@ -113,7 +118,7 @@ describe('ObservationalMemoryEngine', () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      await observeNow(engine, [userMsg('Hello')]);
 
       const slot = engine.buildSlotContent();
       expect(slot).toContain('Test observation');
@@ -141,7 +146,7 @@ describe('ObservationalMemoryEngine', () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      await observeNow(engine, [userMsg('Hello')]);
       const savedState = engine.getState();
 
       // Create a new engine and restore state
@@ -160,7 +165,7 @@ describe('ObservationalMemoryEngine', () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      await observeNow(engine, [userMsg('Hello')]);
       const originalSlot = engine.getSlotContent();
       const savedState = engine.getState();
 
@@ -292,7 +297,7 @@ describe('ObservationalMemoryEngine', () => {
   // -------------------------------------------------------------------------
 
   describe('onObservation / onReflection', () => {
-    it('fires observation handler with correct payload on triggerObservation', async () => {
+    it('fires observation handler with correct payload on observeNow', async () => {
       const engine = new ObservationalMemoryEngine({}, 0);
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
@@ -300,10 +305,11 @@ describe('ObservationalMemoryEngine', () => {
       const handler = vi.fn();
       engine.onObservation(handler);
 
-      await engine.triggerObservation([userMsg('Hello'), assistantMsg('Hi')], 0);
+      await observeNow(engine, [userMsg('Hello'), assistantMsg('Hi')]);
 
       expect(handler).toHaveBeenCalledOnce();
       const event: ObservationEvent = handler.mock.calls[0]![0];
+      expect(event.trigger).toBe('observe-now');
       expect(event.observedMessages.length).toBe(2);
       expect(event.removedMessages).toEqual([]);
       expect(event.observations).toContain('Test observation');
@@ -321,7 +327,7 @@ describe('ObservationalMemoryEngine', () => {
       engine.onObservation(handler1);
       engine.onObservation(handler2);
 
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      await observeNow(engine, [userMsg('Hello')]);
 
       expect(handler1).toHaveBeenCalledOnce();
       expect(handler2).toHaveBeenCalledOnce();
@@ -338,7 +344,7 @@ describe('ObservationalMemoryEngine', () => {
       engine.onObservation(throwingHandler);
       engine.onObservation(goodHandler);
 
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      await observeNow(engine, [userMsg('Hello')]);
 
       expect(throwingHandler).toHaveBeenCalledOnce();
       expect(goodHandler).toHaveBeenCalledOnce();
@@ -486,26 +492,27 @@ describe('ObservationalMemoryEngine', () => {
       const mockComplete = vi.fn<CompleteFn>().mockResolvedValue(OBSERVER_OUTPUT);
       engine.setCompleteFn(mockComplete);
 
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      await observeNow(engine, [userMsg('Hello')]);
       expect(engine.getObservations()).toContain('Test observation');
     });
 
-    it('triggerObservation does nothing when completeFn is not set', async () => {
+    it('observeNow fails without a memory model and leaves the log empty', async () => {
       const engine = new ObservationalMemoryEngine({}, 0);
-      await engine.triggerObservation([userMsg('Hello')], 0);
+      const result = await observeNow(engine, [userMsg('Hello')]);
+      expect(result.status).toBe('failed');
       expect(engine.getObservations()).toBe('');
     });
 
-    it('triggerObservation does nothing with empty messages', async () => {
+    it('observeNow has nothing to observe with empty history', async () => {
       const engine = new ObservationalMemoryEngine({}, 0);
       const mockComplete = vi.fn<CompleteFn>();
       engine.setCompleteFn(mockComplete);
 
-      await engine.triggerObservation([], 0);
+      expect(await observeNow(engine, [])).toEqual({ status: 'nothing-to-observe' });
       expect(mockComplete).not.toHaveBeenCalled();
     });
 
-    it('appends observations on subsequent triggers', async () => {
+    it('appends only what is new on a later observeNow', async () => {
       const engine = new ObservationalMemoryEngine({}, 0);
       let callCount = 0;
       const mockComplete = vi.fn<CompleteFn>().mockImplementation(async () => {
@@ -514,12 +521,17 @@ describe('ObservationalMemoryEngine', () => {
       });
       engine.setCompleteFn(mockComplete);
 
-      await engine.triggerObservation([userMsg('First')], 0);
-      await engine.triggerObservation([userMsg('Second')], 0);
+      const history = [userMsg('First')];
+      await observeNow(engine, history);
+      history.push(userMsg('Second'));
+      await observeNow(engine, history);
 
       const observations = engine.getObservations();
       expect(observations).toContain('Observation batch 1');
       expect(observations).toContain('Observation batch 2');
+      const secondInput = JSON.stringify(mockComplete.mock.calls[1]![0].messages);
+      expect(secondInput).toContain('Second');
+      expect(secondInput).not.toContain('First');
     });
   });
 

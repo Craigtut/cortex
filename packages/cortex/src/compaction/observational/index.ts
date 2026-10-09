@@ -24,12 +24,13 @@ import type {
   ObservationChunk,
   ObservationEvent,
   ReflectionEvent,
-  ContinuationHint,
   RecallConfig,
-  ObserverOutput,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
   MemoryGapInfo,
+  CompactNowOptions,
+  CompactNowResult,
+  ObserveNowResult,
 } from './types.js';
 import { OBSERVATIONAL_MEMORY_DEFAULTS } from './constants.js';
 import { Reflection } from './reflection.js';
@@ -39,7 +40,7 @@ import { RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import { MemoryHealth } from './health.js';
 import { InBandObserver } from './in-band.js';
-import { messageTokens, pieceEnd } from './units.js';
+import { historyTokens, pieceEnd } from './units.js';
 import { selectTail } from './tail.js';
 import { applySwap, removedBy, removesAny, swapCut } from './swap.js';
 import { OverflowDrop, truncateView } from './emergency.js';
@@ -73,6 +74,10 @@ export type {
   MemoryRecoveredInfo,
   MemoryGapInfo,
   MemoryEventPayload,
+  CompactNowOptions,
+  CompactNowResult,
+  ObserveNowResult,
+  ReflectionOutcome,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -87,10 +92,9 @@ export type {
  */
 export const DEFAULT_IDLE_DIGESTION_OBSERVER_TIMEOUT_MS = 60_000;
 
-/** The continuation hint an observer output carries, if it carries one. */
-function hintOf(output: ObserverOutput): ContinuationHint | null {
-  if (!output.currentTask && !output.suggestedResponse) return null;
-  return { currentTask: output.currentTask ?? '', suggestedResponse: output.suggestedResponse ?? '' };
+/** Whether `now` still holds exactly the messages of `snapshot`. */
+function unchanged(snapshot: AgentMessage[], now: AgentMessage[]): boolean {
+  return snapshot.length === now.length && snapshot.every((message, i) => message === now[i]);
 }
 
 /**
@@ -362,7 +366,7 @@ export class ObservationalMemoryEngine {
 
       // Step 3: Report it (the pass is known live: stale returned above).
       const tokensBefore = Math.round(utilization * this.contextWindow);
-      const removedTokens = applied.removed.reduce((sum, message) => sum + messageTokens(message), 0);
+      const removedTokens = historyTokens(applied.removed);
       this.fireObservationEvent({
         trigger: 'activation',
         observedMessages: applied.observed,
@@ -377,7 +381,7 @@ export class ObservationalMemoryEngine {
     }
 
     // Step 4: Handle reflection (may condense the log)
-    await this.reflection.reflectIfDue(allowSync, isStale, passSignal);
+    await this.reflection.reflectIfDue({ allowSync, ...(isStale ? { isStale } : {}), signal: passSignal, trigger: 'activation' });
 
     // Step 5: Build slot content AFTER reflection so it contains post-reflection
     // observations. Previously this was captured before reflection, requiring
@@ -423,7 +427,7 @@ export class ObservationalMemoryEngine {
    */
   private utilizationAfter(history: AgentMessage[], swap: SwapCut, utilization: number): number {
     if (this.contextWindow <= 0) return utilization;
-    const removedTokens = removedBy(history, swap).reduce((sum, message) => sum + messageTokens(message), 0);
+    const removedTokens = historyTokens(removedBy(history, swap));
     let start = this.buffering.ledger.observedPrefix;
     const merging = this.buffering.ledger.completedChunks().filter((chunk) => {
       const covers = start < swap.cut;
@@ -631,42 +635,106 @@ export class ObservationalMemoryEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Manual trigger
+  // Explicit compaction and observation
   // -------------------------------------------------------------------------
 
   /**
-   * Force a synchronous observation cycle.
+   * Swap observations in now, whatever the utilization: observe up to the
+   * verbatim tail, swap, then reflect if the log is due. The caller holds
+   * the loop's gate, so no turn runs meanwhile.
    *
-   * Used by consumers after critical corrections to ensure the observation
-   * log captures the correction immediately.
+   * When an observer call fails or the signal stops it, history and the
+   * log are unchanged; pieces observed before the failure stay buffered.
+   * With `observe` false nothing waits on the memory model: only what is
+   * already observed swaps in, and a due reflection runs in the background.
    *
-   * @param messages - The full message array (may include slot messages)
-   * @param historyStart - Index of the first history message (past the system head and slots)
+   * @param tokensBefore - the context's estimated size now
    */
-  async triggerObservation(
-    messages: AgentMessage[],
-    historyStart: number,
-  ): Promise<void> {
-    const history = messages.slice(historyStart);
-    if (!this.completeFn || history.length === 0) return;
+  async compactNow(
+    getSource: () => AgentMessage[],
+    setSource: (history: AgentMessage[]) => void,
+    options: CompactNowOptions & { tokensBefore: number },
+  ): Promise<CompactNowResult> {
+    const observe = options.observe ?? true;
+    const signal = options.signal ?? new AbortController().signal;
+    const history = getSource();
+    const tail = selectTail(history, this.tailBudget());
+    if (observe) {
+      const { error } = await this.inBand.catchUp(history, tail.start, 'compact-now', signal);
+      if (error) return { status: 'failed', error };
+      if (!unchanged(history, getSource())) return { status: 'failed', error: new Error('History changed while compacting') };
+    }
+    const swap = swapCut(history, tail, this.buffering.getWatermark());
+    if (!removesAny(swap)) return { status: 'nothing-to-compact' };
 
-    const output = await this.inBand.observe(history, 'observe-now');
-    if (output instanceof Error) throw output;
+    const { tokensBefore } = options;
+    const slotBefore = this.slotTokens();
+    const applied = applySwap(history, swap, this.buffering.ledger, this.log);
+    setSource(applied.kept);
+    const removedTokens = historyTokens(applied.removed);
+    const tokensNow = (): number => Math.max(0, tokensBefore - removedTokens + this.slotTokens() - slotBefore);
+    this.fireObservationEvent({
+      trigger: 'compact-now',
+      observedMessages: applied.observed,
+      removedMessages: applied.removed,
+      observations: this.log.text,
+      contextUtilization: this.contextWindow > 0 ? tokensBefore / this.contextWindow : 0,
+      tokensBefore,
+      tokensAfter: tokensNow(),
+      sync: observe,
+      timestamp: new Date(),
+    });
 
-    this.log.append(output.observations, hintOf(output));
+    // A failed reflection keeps the current log; the swap stands.
+    const reflection = await this.reflection.reflectIfDue({ allowSync: observe, signal, trigger: 'compact-now' });
+    return { status: 'compacted', removedMessages: applied.removed.length, tokensBefore, tokensAfter: tokensNow(), reflection };
+  }
 
-    // Fire observation event
+  /**
+   * Record everything not yet in the log, now, removing nothing: observe
+   * from the watermark to the end, then move every buffered chunk into the
+   * log. The messages stay in history as observed, so nothing is observed
+   * twice. For a correction the log should carry at once. A failed or
+   * stopped observer call leaves the log unchanged, as in compactNow.
+   *
+   * @param tokensBefore - the context's estimated size now
+   */
+  async observeNow(
+    getSource: () => AgentMessage[],
+    options: { tokensBefore: number; signal?: AbortSignal },
+  ): Promise<ObserveNowResult> {
+    const signal = options.signal ?? new AbortController().signal;
+    const history = getSource();
+    const { error } = await this.inBand.catchUp(history, history.length, 'observe-now', signal);
+    if (error) return { status: 'failed', error };
+    if (!unchanged(history, getSource())) return { status: 'failed', error: new Error('History changed while observing') };
+
+    const ledger = this.buffering.ledger;
+    const priorPrefix = ledger.observedPrefix;
+    const absorbed = ledger.absorb();
+    if (absorbed.length === 0) return { status: 'nothing-to-observe' };
+    const slotBefore = this.slotTokens();
+    const merged = this.log.merge(absorbed);
+    this.log.append(merged.observations, merged.hint);
+    const observed = history.slice(priorPrefix, ledger.observedPrefix);
+    const { tokensBefore } = options;
     this.fireObservationEvent({
       trigger: 'observe-now',
-      observedMessages: history,
+      observedMessages: observed,
       removedMessages: [],
-      tokensBefore: 0,
-      tokensAfter: 0,
       observations: this.log.text,
-      contextUtilization: 0, // manual trigger, utilization unknown
+      contextUtilization: this.contextWindow > 0 ? tokensBefore / this.contextWindow : 0,
+      tokensBefore,
+      tokensAfter: tokensBefore + this.slotTokens() - slotBefore,
       sync: true,
       timestamp: new Date(),
     });
+    return { status: 'observed', observedMessages: observed.length };
+  }
+
+  /** Estimated tokens of the observation slot; empty while the log is. */
+  private slotTokens(): number {
+    return this.log.text ? estimateTokens(this.log.slotContent()) : 0;
   }
 
   // -------------------------------------------------------------------------

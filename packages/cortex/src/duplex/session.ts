@@ -10,6 +10,7 @@ import type { McpClientManager } from '../mcp-client.js';
 import type { CortexLogger, PendingAsk, SessionUsage } from '../types.js';
 import type { CortexModel } from '../model-wrapper.js';
 import type { ContextManager } from '../context-manager.js';
+import type { CompactNowOptions } from '../compaction/index.js';
 import type { BudgetGuard } from '../budget-guard.js';
 import type { EventBridge } from '../event-bridge.js';
 import type { LogRecorder } from '../facade/log-recorder.js';
@@ -25,6 +26,7 @@ import type { ResolvedCortexAgentConfig } from '../facade/config.js';
 import { requeueSilent } from '../facade/composite-state.js';
 import type {
   CortexAbortScope,
+  CortexCompactNowResult,
   CortexDeliverOptions,
   FacadeServices,
   RestoredSessionParts,
@@ -362,6 +364,21 @@ export class DuplexSession implements SessionMode {
   setSessionId(value: string | null): void {
     this.reasoner.setSessionId(value);
     this.talker.setSessionId(value === null ? null : `${value}${TALKER_SESSION_ID_SUFFIX}`);
+  }
+
+  /**
+   * Both loops compact, since a consumer never sees the split. The reasoner
+   * runs the full compactNow. The talker is the latency-critical loop: it
+   * swaps in what it has already observed and never waits on an observer
+   * call. An idle digestion pass holding either gate yields first.
+   */
+  async compactNow(options?: CompactNowOptions): Promise<CortexCompactNowResult> {
+    this.parts.digestion.preempt();
+    const [reasoner, talker] = await Promise.all([
+      this.reasoner.compactNow(options),
+      this.talker.compactNow({ ...(options?.signal ? { signal: options.signal } : {}), observe: false }),
+    ]);
+    return { reasoner, talker };
   }
 
   // -------------------------------------------------------------------------

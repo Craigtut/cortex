@@ -9,7 +9,7 @@ import type { PendingAsk, SessionUsage } from '../types.js';
 import type { CortexModel } from '../model-wrapper.js';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { ContextManager } from '../context-manager.js';
-import type { ObservationalMemoryState } from '../compaction/index.js';
+import type { CompactNowOptions, ObservationalMemoryState } from '../compaction/index.js';
 import type { EventBridge } from '../event-bridge.js';
 import { collectCauseTags } from '../duplex/cause-tags.js';
 import type { CausationSource, CauseTag } from '../duplex/cause-tags.js';
@@ -23,6 +23,7 @@ import {
 import type { SettlementTerm } from './settlement.js';
 import type {
   CortexAbortScope,
+  CortexCompactNowResult,
   CortexDeliverOptions,
   FacadeServices,
   RestoredSessionParts,
@@ -207,6 +208,10 @@ export class PassthroughSession implements SessionMode {
 
   setSessionId(value: string | null): void {
     this.reasoner.setSessionId(value);
+  }
+
+  async compactNow(options?: CompactNowOptions): Promise<CortexCompactNowResult> {
+    return { reasoner: await this.reasoner.compactNow(options) };
   }
 
   lookupUsage(): SessionUsage | null {

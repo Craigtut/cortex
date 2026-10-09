@@ -12,10 +12,10 @@ import type { CompleteFn } from '../compaction.js';
 import type { BufferingCoordinator } from './buffering.js';
 import { MemoryCallError } from './calls.js';
 import type { CallPolicy } from './calls.js';
-import type { MemoryHealth } from './health.js';
+import type { MemoryCallTrigger, MemoryHealth } from './health.js';
 import type { ObservationLog } from './log.js';
 import { computeEffectiveReflectionThreshold, runReflector } from './reflector.js';
-import type { ReflectionEvent, ReflectorOutput } from './types.js';
+import type { ReflectionEvent, ReflectionOutcome, ReflectorOutput } from './types.js';
 
 export interface ReflectionPorts {
   log: ObservationLog;
@@ -41,16 +41,23 @@ export class Reflection {
   /**
    * Reflect if the log is due.
    *
-   * @param allowSync - false under the non-blocking posture: a buffered
-   *   reflection still swaps in, but the reflector never runs while the
-   *   caller waits
-   * @param isStale - a stale pass applies its work but reports no event
-   * @param signal - ends a waited-on reflection
+   * @param pass.allowSync - false under the non-blocking posture: a
+   *   buffered reflection still swaps in, but the reflector never runs
+   *   while the caller waits
+   * @param pass.isStale - a stale pass applies its work but reports no event
+   * @param pass.signal - ends a waited-on reflection
+   * @param pass.trigger - what the pass is, for failure reports
    */
-  async reflectIfDue(allowSync: boolean, isStale?: () => boolean, signal?: AbortSignal): Promise<void> {
+  async reflectIfDue(pass: {
+    allowSync: boolean;
+    isStale?: () => boolean;
+    signal?: AbortSignal;
+    trigger: MemoryCallTrigger;
+  }): Promise<ReflectionOutcome> {
+    const { allowSync, isStale, signal } = pass;
     const { log, buffering } = this.ports;
     const completeFn = this.ports.completeFn();
-    if (!completeFn) return;
+    if (!completeFn) return { status: 'not-due' };
 
     const { contextWindow, utilityModelContextWindow } = this.ports.windows();
     const config = this.ports.config();
@@ -60,11 +67,11 @@ export class Reflection {
       utilityModelContextWindow,
     );
     const action = buffering.shouldReflect(log.tokenCount, threshold, config.reflectionBufferActivation);
-    if (action === 'none') return;
+    if (action === 'none') return { status: buffering.isReflectorInFlight() ? 'in-background' : 'not-due' };
 
     if (action === 'async') {
       buffering.launchReflector(completeFn, log.text, this.reflectorConfig(threshold), this.ports.logger() ?? undefined);
-      return;
+      return { status: 'in-background' };
     }
 
     const previousObservations = log.text;
@@ -76,7 +83,7 @@ export class Reflection {
       // Suppressed for an abandoned pass: the swap-in keeps the engine
       // coherent, but the event must not report it as landed work.
       if (!isStale?.()) this.fire(previousObservations, buffered.compressionLevel);
-      return;
+      return { status: 'reflected' };
     }
 
     // None ready. Under the non-blocking posture the inline call is
@@ -85,7 +92,7 @@ export class Reflection {
       if (!buffering.isReflectorInFlight()) {
         buffering.launchReflector(completeFn, log.text, this.reflectorConfig(threshold), this.ports.logger() ?? undefined);
       }
-      return;
+      return { status: 'in-background' };
     }
 
     // Run while the caller waits. A failed reflection keeps the current
@@ -99,23 +106,26 @@ export class Reflection {
       });
       this.ports.health.succeeded();
     } catch (err) {
-      this.recordFailure(err);
-      return;
+      return { status: 'failed', error: this.recordFailure(pass.trigger, err) };
     }
-    if (!log.reflect(input, output.observations)) return;
+    if (!log.reflect(input, output.observations)) {
+      return { status: 'failed', error: new Error('The log was replaced while the reflector ran') };
+    }
     if (!isStale?.()) this.fire(previousObservations, output.compressionLevel);
+    return { status: 'reflected' };
   }
 
-  private recordFailure(err: unknown): void {
+  private recordFailure(trigger: MemoryCallTrigger, err: unknown): Error {
     const error = err instanceof MemoryCallError ? err.lastError : err instanceof Error ? err : new Error(String(err));
-    this.ports.logger()?.warn(`Reflector call failed (activation): ${error.message}`);
-    if (err instanceof MemoryCallError && err.aborted) return;
+    this.ports.logger()?.warn(`Reflector call failed (${trigger}): ${error.message}`);
+    if (err instanceof MemoryCallError && err.aborted) return error;
     this.ports.health.failed({
       operation: 'reflect',
-      trigger: 'activation',
+      trigger,
       error,
       attempts: err instanceof MemoryCallError ? err.attempts : 1,
     });
+    return error;
   }
 
   /** The reflector config (no undefined optional fields: exactOptionalPropertyTypes). */

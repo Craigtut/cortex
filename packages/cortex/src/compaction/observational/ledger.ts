@@ -144,6 +144,18 @@ export class ObservationLedger {
   }
 
   /**
+   * Every buffered chunk leaves for the log and nothing leaves the source:
+   * the observed region becomes observed-and-kept. Returns those chunks,
+   * oldest first. A pending call starts at the watermark and stays.
+   */
+  absorb(): RangedChunk[] {
+    const absorbed = this.chunks;
+    this.prefix = this.watermark;
+    this.chunks = [];
+    return absorbed;
+  }
+
+  /**
    * Messages were dropped from the front without a swap (reactive overflow
    * truncation). Observed ones keep their chunk text, which stays buffered;
    * a pending call whose messages were dropped is invalidated.

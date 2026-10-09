@@ -50,6 +50,9 @@ import type {
   MemoryErrorInfo,
   MemoryRecoveredInfo,
   MemoryGapInfo,
+  CompactNowOptions,
+  CompactNowResult,
+  ObserveNowResult,
 } from './observational/types.js';
 import { resolvePromptCacheTtlMs } from '../provider-registry.js';
 import type { CacheRetention } from '../provider-registry.js';
@@ -79,6 +82,10 @@ export type {
   MemoryRecoveredInfo,
   MemoryGapInfo,
   MemoryEventPayload,
+  CompactNowOptions,
+  CompactNowResult,
+  ObserveNowResult,
+  ReflectionOutcome,
 } from './observational/types.js';
 export { createRecallTool } from './observational/recall-tool.js';
 // computeAdaptiveThreshold is defined below in this file and exported at the declaration site
@@ -663,10 +670,42 @@ export class CompactionManager {
   }
 
   /**
-   * Force a synchronous observation cycle.
+   * Swap observations in now, whatever the utilization (see
+   * ObservationalMemoryEngine.compactNow). The caller holds the loop's gate.
+   *
+   * @param tokensBefore - the context's estimated size now
    */
-  async triggerObservation(messages: AgentMessage[], historyStart: number): Promise<void> {
-    await this.observationalEngine?.triggerObservation(messages, historyStart);
+  async compactNow(
+    getSource: () => AgentMessage[],
+    setSource: (history: AgentMessage[]) => void,
+    options: CompactNowOptions & { tokensBefore: number },
+  ): Promise<CompactNowResult> {
+    if (!this.observationalEngine) {
+      return { status: 'failed', error: new Error('compactNow needs the observational strategy') };
+    }
+    const result = await this.observationalEngine.compactNow(getSource, setSource, options);
+    // The measured context no longer exists.
+    if (result.status === 'compacted') this.invalidateContextTokenCount();
+    return result;
+  }
+
+  /**
+   * Record everything not yet in the log, removing nothing (see
+   * ObservationalMemoryEngine.observeNow). The caller holds the loop's gate.
+   *
+   * @param tokensBefore - the context's estimated size now
+   */
+  async observeNow(
+    getSource: () => AgentMessage[],
+    options: { tokensBefore: number; signal?: AbortSignal },
+  ): Promise<ObserveNowResult> {
+    if (!this.observationalEngine) {
+      return { status: 'failed', error: new Error('observeNow needs the observational strategy') };
+    }
+    const result = await this.observationalEngine.observeNow(getSource, options);
+    // The slot grew: the measured context no longer exists.
+    if (result.status === 'observed') this.invalidateContextTokenCount();
+    return result;
   }
 
   /**
