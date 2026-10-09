@@ -113,7 +113,7 @@ export function decodeLauncherPayload(env: Record<string, string | undefined>): 
 }
 
 // ---------------------------------------------------------------------------
-// The SDK surface the launcher uses (structural; the SDK is an optional peer)
+// The SDK surface the launcher uses (structural; the SDK is a Windows-only optional dependency)
 // ---------------------------------------------------------------------------
 
 export interface MxcAvailableBackend {

@@ -118,7 +118,12 @@ describe('MxcSandboxProvider.initialize', () => {
     const h = harness({ resolveSdk: () => undefined });
     const status = await provider(h).initialize(policy());
     expect(status.backend).toBe('none');
-    expect(status.degradations[0]).toMatch(/npm install @microsoft\/mxc-sdk/);
+    // npm installs the SDK with Cortex on Windows, so the reason points at a
+    // reinstall rather than at installing the SDK by hand.
+    expect(status.degradations[0]).toMatch(/@animus-labs\/cortex-win32/);
+    expect(status.degradations[0]).toMatch(/--omit=optional/);
+    expect(status.degradations[0]).toMatch(/run npm install/);
+    expect(status.degradations[0]).not.toMatch(/npm install @microsoft\/mxc-sdk/);
     expect(h.deps.runProbe).not.toHaveBeenCalled();
     expect(h.deps.startProxy).not.toHaveBeenCalled();
   });

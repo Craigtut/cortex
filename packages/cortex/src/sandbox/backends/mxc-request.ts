@@ -6,8 +6,8 @@
  * unit-testable on any OS.
  *
  * The request shapes mirror the subset of `@microsoft/mxc-sdk/v1` that Cortex
- * uses. The SDK is an optional peer that only the launcher process loads, so
- * its types are restated structurally instead of imported.
+ * uses. The SDK is a Windows-only optional dependency that only the launcher
+ * process loads, so its types are restated structurally instead of imported.
  *
  * See docs/cortex/sandboxing.md ("Windows backend: MXC BaseContainer").
  */

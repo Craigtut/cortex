@@ -20,7 +20,7 @@ export function defaultMxcHostDeps(): MxcProviderDeps {
   return {
     platform: process.platform,
     nodePath: process.execPath,
-    resolveSdk: resolveMxcSdk,
+    resolveSdk: () => resolveMxcSdk(),
     prepareLauncher,
     removeDir: (dir) => rmSync(dir, { recursive: true, force: true }),
     gatherReadSet,
@@ -30,10 +30,38 @@ export function defaultMxcHostDeps(): MxcProviderDeps {
   };
 }
 
-/** Locate `@microsoft/mxc-sdk/v1` from Cortex's own location, without loading it. */
-export function resolveMxcSdk(): { entry: string; packageRoot: string } | undefined {
+/**
+ * The optional dependency the published Cortex declares for Windows: an alias
+ * of `@animus-labs/cortex@<version>-win32`, a package.json-only release whose
+ * one dependency is the pinned SDK. Staged by tools/release/cortex-packages.mjs.
+ */
+export const MXC_SDK_PLATFORM_PACKAGE = '@animus-labs/cortex-win32';
+
+/**
+ * Locate `@microsoft/mxc-sdk/v1` without loading it. Ordinary resolution from
+ * Cortex's location comes first, which finds a hoisted install and an SDK the
+ * consumer installed. Layouts that keep a dependency's own dependencies
+ * private (npm's nested and linked strategies, pnpm) leave the SDK reachable
+ * only from the platform package, so that is tried next. `from` is the module
+ * location resolution starts at.
+ */
+export function resolveMxcSdk(from: string | URL = import.meta.url): { entry: string; packageRoot: string } | undefined {
+  const fromCortex = createRequire(from);
+  return resolveSdkWith(fromCortex) ?? resolveSdkThroughPlatformPackage(fromCortex);
+}
+
+function resolveSdkThroughPlatformPackage(fromCortex: NodeJS.Require): { entry: string; packageRoot: string } | undefined {
+  let manifest: string;
   try {
-    const require = createRequire(import.meta.url);
+    manifest = fromCortex.resolve(`${MXC_SDK_PLATFORM_PACKAGE}/package.json`);
+  } catch {
+    return undefined;
+  }
+  return resolveSdkWith(createRequire(manifest));
+}
+
+function resolveSdkWith(require: NodeJS.Require): { entry: string; packageRoot: string } | undefined {
+  try {
     const entry = require.resolve('@microsoft/mxc-sdk/v1');
     const packageRoot = dirname(require.resolve('@microsoft/mxc-sdk/package.json'));
     return { entry: pathToFileURL(entry).href, packageRoot };

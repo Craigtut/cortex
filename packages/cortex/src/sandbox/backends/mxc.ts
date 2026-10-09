@@ -22,7 +22,7 @@
  */
 import { dirname } from 'node:path';
 import { DEFAULT_CREDENTIAL_ENV_VARS } from '../policy.js';
-import { defaultMxcHostDeps } from './mxc-host.js';
+import { MXC_SDK_PLATFORM_PACKAGE, defaultMxcHostDeps } from './mxc-host.js';
 import {
   LAUNCHER_ENV_PREFIX,
   LAUNCHER_ERROR_PREFIX,
@@ -101,8 +101,10 @@ const UNCONTAINED = (reason: string): SandboxStatus => ({
 
 const SDK_MISSING =
   'MXC sandboxing needs @microsoft/mxc-sdk, which is not installed, so shell commands run WITHOUT OS ' +
-  'containment. Install it next to @animus-labs/cortex (npm install @microsoft/mxc-sdk) on Windows 11 ' +
-  '24H2/25H2 with the August 2026 update, or 26H1/26H2.';
+  `containment. npm installs it with @animus-labs/cortex on Windows, through the optional dependency ` +
+  `${MXC_SDK_PLATFORM_PACKAGE}. It goes missing when optional dependencies were skipped ` +
+  '(--omit=optional) or node_modules or the lockfile came from another OS; run npm install on this ' +
+  'machine to restore it.';
 
 /** The command used only for the availability probe; it is never executed. */
 const PROBE_COMMAND = 'cmd.exe /d /c exit 0';
