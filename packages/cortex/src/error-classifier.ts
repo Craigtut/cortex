@@ -69,6 +69,17 @@ const USAGE_WINDOW_PATTERNS: RegExp[] = [
   /server requested \d+(?:\.\d+)?s retry delay/i,
 ];
 
+/**
+ * pi-ai's wrappers around a credential failure (`ModelsError`): a token
+ * refresh, auth derivation, key resolution, or credential store access
+ * failed, with the cause's text after the colon. The cause decides: a
+ * network blip or a token endpoint's 5xx during a refresh is transient,
+ * not a credential to replace. (Anthropic's refresh failures also name
+ * `/oauth/token`, which the authentication patterns would match first.)
+ */
+const CREDENTIAL_FAILURE_PREFIX =
+  /^(?:OAuth refresh failed|OAuth refresh returned a token that expires too soon|OAuth auth derivation failed|API key auth(?: check)? failed|Credential store (?:read|modify) failed) for (?:provider )?[\w.-]+(?::\s*)?/i;
+
 const AUTHENTICATION_PATTERNS: RegExp[] = [
   /invalid.api.key/i,
   /unauthorized/i,
@@ -319,7 +330,9 @@ export interface ClassifyErrorOptions {
  * Classify an error into an actionable category.
  *
  * In priority order (first match wins):
- * 1. Cancelled (if wasAborted is true)
+ * 1. Cancelled (if wasAborted is true); then a pi-ai credential failure
+ *    (a failed OAuth refresh) is its cause's transient category, else
+ *    authentication
  * 2. Billing: exhausted credit or a monthly plan limit (fatal, never retried)
  * 3. Usage window: a rate limit with a stated reset (`retryAfterMs`)
  * 4. Authentication
@@ -348,6 +361,13 @@ export function classifyError(
   // 1. Cancelled (highest priority if wasAborted flag is set)
   if (options?.wasAborted) {
     return buildResult('cancelled', message, causeDetail);
+  }
+
+  // A credential failure: transient when its cause is, else authentication.
+  const credentialFailure = CREDENTIAL_FAILURE_PREFIX.exec(matchTarget);
+  if (credentialFailure) {
+    const cause = matchTarget.slice(credentialFailure[0].length);
+    return buildResult(transientCategoryOf(cause) ?? 'authentication', message, causeDetail);
   }
 
   // 2. Billing
@@ -390,6 +410,19 @@ export function classifyError(
 
   // 8. Unknown (catch-all)
   return buildResult('unknown', message, causeDetail);
+}
+
+/**
+ * The transient category a failure's text names, checked before anything
+ * else: a rate limit, a server error, a network failure, or what pi-ai
+ * calls transient. Undefined when it names none.
+ */
+function transientCategoryOf(text: string): ErrorCategory | undefined {
+  if (text.length === 0) return undefined;
+  if (matchesAny(text, RATE_LIMIT_PATTERNS)) return 'rate_limit';
+  if (matchesAny(text, SERVER_ERROR_PATTERNS)) return 'server_error';
+  if (matchesAny(text, NETWORK_PATTERNS)) return 'network';
+  return isRetryableAssistantError(failedResponse(text, undefined)) ? 'server_error' : undefined;
 }
 
 /**

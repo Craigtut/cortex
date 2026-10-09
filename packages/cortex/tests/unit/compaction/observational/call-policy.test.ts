@@ -93,6 +93,21 @@ describe('retries', () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a memory call whose OAuth refresh failed on the network', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn<CompleteFn>()
+      .mockRejectedValueOnce(new Error('OAuth refresh failed for anthropic: fetch failed'))
+      .mockResolvedValue(OBSERVED);
+    const engine = newEngine(complete);
+
+    const pass = activate(engine);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await pass;
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(engine.getObservations()).toContain('OBSERVED');
+  });
+
   it('does not retry a billing failure, and memory goes degraded', async () => {
     vi.useFakeTimers();
     const complete = vi.fn<CompleteFn>().mockRejectedValue(new Error(

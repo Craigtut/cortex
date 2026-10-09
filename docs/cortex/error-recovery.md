@@ -241,6 +241,8 @@ The `getApiKey` callback (e.g. a consumer's `CortexCredentialService.resolveApiK
 
 A resolution failure is remembered, not swallowed. The completion still runs without a key, which succeeds for providers that need none and, with `ambientCredentials: true`, for credentials pi-ai finds in the environment; otherwise pi-ai reports the provider as not configured. If the call then fails, the remembered resolution error is surfaced as the cause (it is more actionable than the downstream provider error) and classified as `authentication` / `fatal`. In the agentic loop, pi-agent-core invokes `getApiKey` and stores the failure on `agent.state.errorMessage`, which `AgentLoop` re-throws and classifies the same way.
 
+A credential failure pi-ai reports (`OAuth refresh failed for <provider>: <cause>`, and its auth derivation, key resolution, and credential store failures) is classified by its cause: a network failure, a rate limit, or a token endpoint's 5xx during a refresh is that transient category and retried; any other cause (a refused refresh token, `invalid_grant`) is `authentication`.
+
 ### Post-Call (Provider Rejection)
 
 The LLM call fails with an auth error string (e.g., "Invalid API key"). The error classifier detects this via regex patterns.
