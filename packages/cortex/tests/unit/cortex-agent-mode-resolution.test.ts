@@ -80,6 +80,15 @@ function ollamaModel(
 }
 
 describe('omitted mode', () => {
+  it('runs an Anthropic duplex talker on the newest Haiku', async () => {
+    const model = await new ProviderManager().resolveModel('anthropic', 'claude-opus-5-5');
+
+    const { loops } = await create({ model });
+
+    // pi-ai 1.1.0 ships claude-haiku-5-5 beside the dated claude-haiku-4-5-20251001.
+    expect(loops.get('talker')!.getModel().modelId).toBe('claude-haiku-5-5');
+  });
+
   it('resolves to duplex on a hosted provider', async () => {
     const model = await new ProviderManager().resolveModel('anthropic', 'claude-sonnet-4-6');
     expect(model.capabilities?.concurrency).toBe('parallel');

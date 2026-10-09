@@ -25,8 +25,31 @@ interface UtilityCandidate {
   id: string;
   name: string;
   utilityScore: number;
-  recencyScore: number;
+  recency: Recency;
   costScore: number;
+}
+
+/**
+ * How new a model is, from its version and its release date, either of
+ * which can be missing (0).
+ */
+interface Recency {
+  version: number;
+  date: number;
+}
+
+/**
+ * Versions decide when both models have one: a dated snapshot of an older
+ * version (`claude-haiku-4-5-20251001`) must not outrank a newer version
+ * that carries no date (`claude-haiku-5-5`). Otherwise dates decide when
+ * both have one (`mistral-small-2603`, named "Mistral Small 4" with no
+ * dotted version, against `mistral-small-2506`). Otherwise whichever signal
+ * exists, as before.
+ */
+function compareRecency(a: Recency, b: Recency): number {
+  if (a.version > 0 && b.version > 0 && a.version !== b.version) return a.version - b.version;
+  if (a.date > 0 && b.date > 0 && a.date !== b.date) return a.date - b.date;
+  return Math.max(a.version, a.date) - Math.max(b.version, b.date);
 }
 
 export function inferUtilityModel(models: readonly RawModel[] | null | undefined): RawModel | null {
@@ -71,13 +94,14 @@ function toUtilityCandidate(model: RawModel): UtilityCandidate | null {
     id,
     name,
     utilityScore: inferUtilityScore(searchable),
-    recencyScore: inferRecencyScore(searchable),
+    recency: inferRecency(searchable),
     costScore: inferCostScore(model),
   };
 }
 
 function compareUtilityCandidates(a: UtilityCandidate, b: UtilityCandidate): number {
-  if (b.recencyScore !== a.recencyScore) return b.recencyScore - a.recencyScore;
+  const recency = compareRecency(b.recency, a.recency);
+  if (recency !== 0) return recency;
   if (a.costScore !== b.costScore) return a.costScore - b.costScore;
   if (b.utilityScore !== a.utilityScore) return b.utilityScore - a.utilityScore;
   return a.id.localeCompare(b.id);
@@ -85,7 +109,8 @@ function compareUtilityCandidates(a: UtilityCandidate, b: UtilityCandidate): num
 
 function compareFallbackCandidates(a: UtilityCandidate, b: UtilityCandidate): number {
   if (a.costScore !== b.costScore) return a.costScore - b.costScore;
-  if (b.recencyScore !== a.recencyScore) return b.recencyScore - a.recencyScore;
+  const recency = compareRecency(b.recency, a.recency);
+  if (recency !== 0) return recency;
   return a.id.localeCompare(b.id);
 }
 
@@ -105,10 +130,8 @@ function inferUtilityScore(searchable: string): number {
   return score;
 }
 
-function inferRecencyScore(searchable: string): number {
-  const dateScore = inferDateScore(searchable);
-  const versionScore = inferVersionScore(searchable);
-  return Math.max(dateScore, versionScore);
+function inferRecency(searchable: string): Recency {
+  return { version: inferVersionScore(searchable), date: inferDateScore(searchable) };
 }
 
 function inferDateScore(searchable: string): number {
@@ -154,11 +177,15 @@ function inferVersionScore(searchable: string): number {
     score = Math.max(score, scoreVersionParts(match[0]!.split('.').map(Number)));
   }
 
+  // Runs of numeric tokens, such as `haiku-4-5` (4.5). Only whole runs
+  // count: a run's tail (the `5` of `4-5`) is not a version. A lone number
+  // is not one either: it is as often a size or a date's day as a major.
   const tokens = scrubbed.split(/[^a-z0-9]+/).filter(Boolean);
+  const isNumber = (token: string | undefined): boolean => token !== undefined && /^\d+$/.test(token);
   for (let i = 0; i < tokens.length; i++) {
-    if (!/^\d+$/.test(tokens[i]!)) continue;
+    if (!isNumber(tokens[i]) || isNumber(tokens[i - 1])) continue;
     const parts: number[] = [];
-    for (let j = i; j < tokens.length && /^\d+$/.test(tokens[j]!) && parts.length < 4; j++) {
+    for (let j = i; j < tokens.length && isNumber(tokens[j]) && parts.length < 4; j++) {
       parts.push(Number(tokens[j]));
     }
     if (parts.length >= 2) {

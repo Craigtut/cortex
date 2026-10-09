@@ -44,21 +44,19 @@ const agent = await CortexAgent.create({
 - **`'default'`**: Cortex selects from a built-in mapping based on the primary model's provider. This is the recommended setting.
 - **Explicit `Model` object**: The consumer specifies exactly which model to use. Must be from the same provider as the primary model (avoids needing multiple API keys).
 
-### Provider Default Mapping
+### Provider Default Inference
 
-Cortex maintains a small mapping of recommended utility models per provider. This is updated as providers release new models.
+Cortex infers the utility model from the provider's pi-ai catalog (`utility-model-inference.ts`): among the models whose names mark them as a small tier (mini, nano, haiku, flash, lite, small, 8B and similar), the newest wins, then the cheapest. "Newest" compares versions when both models have one, so a dated snapshot of an older version (`claude-haiku-4-5-20251001`) does not outrank a newer version without a date (`claude-haiku-5-5`), and compares release dates otherwise. `UTILITY_MODEL_OVERRIDES` pins a model for a provider when inference picks badly. The defaults follow pi-ai releases; with pi-ai 1.1.0 they include:
 
-| Provider | Default Utility Model | Model ID | Notes |
+| Provider | Default Utility Model | Model ID | Price (input/output per 1M tokens) |
 |----------|----------------------|----------|-------|
-| Anthropic | Claude Haiku 4.5 | `claude-haiku-4-5-20251001` | $1.00/$5.00 per 1M tokens |
-| OpenAI | GPT-4.1 Nano | `gpt-4.1-nano` | $0.10/$0.40 per 1M tokens |
-| Google | Gemini 2.5 Flash Lite | `gemini-2.5-flash-lite` | $0.10/$0.40 per 1M tokens |
-| Groq | Llama 3.1 8B Instant | `llama-3.1-8b-instant` | ~$0.05/$0.08 per 1M tokens |
-| Cerebras | Llama 3.1 8B | `llama3.1-8b` | ~$0.10/$0.10 per 1M tokens |
-| Mistral | Mistral Small 2506 | `mistral-small-2506` | $0.06/$0.18 per 1M tokens |
-| *Others* | Same as primary | n/a | No known cheaper option; utility calls still work, just at full price |
+| Anthropic | Claude Haiku 5.5 | `claude-haiku-5-5` | $0.10/$0.50 |
+| OpenAI | GPT-5.4 nano | `gpt-5.4-nano` | $0.20/$1.25 |
+| Google | Gemini 3.8 Flash | `gemini-3.8-flash` | $0.75/$3.75 |
+| Groq | Llama 3.1 8B | `llama-3.1-8b-instant` | $0.05/$0.08 |
+| Mistral | Mistral Small 4 | `mistral-small-2603` | $0.15/$0.60 |
 
-For providers without a mapping (Ollama, OpenRouter, custom endpoints, etc.), the primary model is used as the utility model. This means utility calls cost the same as primary calls, but everything still works.
+A duplex talker without a pinned model runs on this utility model. For providers whose models cannot be enumerated (Ollama, custom endpoints), the primary model is used as the utility model. Utility calls then cost the same as primary calls, but everything still works.
 
 ### Same-Provider Constraint
 

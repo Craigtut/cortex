@@ -256,7 +256,9 @@ describe('duplex contextWindowLimit routing', () => {
     expect(talkerLoop.effectiveContextWindow).toBe(40_000);
 
     facade.setContextWindowLimit(null);
-    expect(talkerLoop.effectiveContextWindow).toBe(testModel().contextWindow);
+    // Back to the talker's own window: its auto-resolved model, not the reasoner's.
+    expect(talkerLoop.effectiveContextWindow).toBe(talkerLoop.getModel().contextWindow);
+    expect(reasonerLoop.effectiveContextWindow).toBe(testModel().contextWindow);
   });
 });
 

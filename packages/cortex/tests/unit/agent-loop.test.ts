@@ -239,7 +239,7 @@ describe('AgentLoop', () => {
       const agent = createTestAgentLoop(piAgent, config);
       const utilityModel = agent.getUtilityModel();
       expect(utilityModel.provider).toBe('anthropic');
-      expect(utilityModel.modelId).toBe('claude-haiku-4-5-20251001');
+      expect(utilityModel.modelId).toBe('claude-haiku-5-5');
     });
 
     it('infers utility model dynamically for openai', () => {
@@ -301,7 +301,7 @@ describe('AgentLoop', () => {
       const agent = createTestAgentLoop(piAgent, config);
       const auto = agent.getAutoResolvedUtilityModel();
       expect(auto.provider).toBe('anthropic');
-      expect(auto.modelId).toBe('claude-haiku-4-5-20251001');
+      expect(auto.modelId).toBe('claude-haiku-5-5');
     });
 
     it('returns the primary model for providers Cortex cannot enumerate (Ollama/custom)', () => {
@@ -327,7 +327,7 @@ describe('AgentLoop', () => {
       // ...but the peek still reports what Auto would resolve to, and does not
       // mutate the override state.
       const auto = agent.getAutoResolvedUtilityModel();
-      expect(auto.modelId).toBe('claude-haiku-4-5-20251001');
+      expect(auto.modelId).toBe('claude-haiku-5-5');
       expect(agent.getUtilityModel()).toBe(override);
       expect(agent.isUtilityModelOverridden()).toBe(true);
     });

@@ -4,6 +4,7 @@ All notable changes to `@animus-labs/cortex` are documented here.
 
 ## Unreleased
 
+- Utility-model inference compares versions before release dates, so Anthropic's utility model, and with it the duplex talker, is now `claude-haiku-5-5` instead of the dated `claude-haiku-4-5-20251001` snapshot (Amazon Bedrock likewise). It also reads a version only from a whole run of numbers.
 - Upgrade pi-agent-core and pi-ai from `0.87.1` to `1.1.0`, pinned exactly: pi ships breaking changes in patch and minor releases. pi-agent-core no longer depends on chord, esbuild, or yaml. See `docs/cortex/pi-upgrade-1.x.md`.
 - Breaking: the Azure provider id is now `azure` (pi-ai renamed it from `azure-openai-responses`) in `PROVIDER_REGISTRY` and `PRIMARY_MODEL_DEFAULTS`. Its API id, `azure-openai-responses`, is unchanged.
 - A tool result returned with `isError: true` is now an error result (pi-agent-core honors the flag; it was ignored before).
