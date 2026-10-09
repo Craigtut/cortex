@@ -150,6 +150,8 @@ export interface ContextPipelinePorts {
   boundary(): number;
   setBoundary(boundary: number): void;
   isPrompting(): boolean;
+  /** The current run's abort signal: aborting ends a pass's memory calls. */
+  runSignal(): AbortSignal;
   gate: LoopGate;
   assertNotShuttingDown(): void;
   isShuttingDown(): boolean;
@@ -268,6 +270,7 @@ export class ContextPipeline {
       {
         ...(this.forceBlockingCompaction ? { allowBlocking: true } : {}),
         isStale: passIsStale,
+        signal: this.ports.runSignal(),
       },
     );
     if (passIsStale()) return result;

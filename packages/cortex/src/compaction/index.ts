@@ -76,6 +76,7 @@ export type {
   MemoryCallTrigger,
   MemoryErrorInfo,
   MemoryRecoveredInfo,
+  MemoryEventPayload,
 } from './observational/types.js';
 export { createRecallTool } from './observational/recall-tool.js';
 // computeAdaptiveThreshold is defined below in this file and exported at the declaration site

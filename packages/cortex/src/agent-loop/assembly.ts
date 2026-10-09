@@ -247,7 +247,7 @@ export function assembleLoop(params: {
     onModelChanged: () => skills.rebuildDescription(),
     logger,
   });
-  const completions = new DirectCompletions({
+  const completionPorts: ConstructorParameters<typeof DirectCompletions>[0] = {
     models: () => ({
       primary: models.primary,
       primaryPi: models.primaryPi,
@@ -264,7 +264,11 @@ export function assembleLoop(params: {
     emitUtilityUsage: (category, spend) => eventBridge.emitUtilityUsage(category, spend),
     ledger: usage,
     logger,
-  });
+  };
+  const completions = new DirectCompletions(completionPorts);
+  // Observational memory's own calls report failures once, through the
+  // memory events, after their retries: not through onError on every attempt.
+  const memoryCompletions = new DirectCompletions({ ...completionPorts, emitError: () => {} });
 
   // Built-in tools (minus disableTools), then the consumer's.
   const builtinTools = createBuiltinTools({
@@ -398,6 +402,7 @@ export function assembleLoop(params: {
       runner.boundary = boundary;
     },
     isPrompting: () => runner.isPrompting,
+    runSignal: () => abortState.signal,
     gate,
     assertNotShuttingDown: () => lifecycle.assertNotShuttingDown(),
     isShuttingDown: () => lifecycle.isShuttingDown,
@@ -452,13 +457,18 @@ export function assembleLoop(params: {
   compactionManager.setCompleteFn(async (context) =>
     host.directComplete(context, { usageCategory: 'summarization' }));
   compactionManager.setObservationalCompleteFn(async (context, completeOptions) =>
-    host.utilityComplete(
+    memoryCompletions.utility(
       {
         systemPrompt: context.systemPrompt,
         messages: context.messages as Array<{ role: string; content: string }>,
       },
-      { usageCategory: completeOptions?.purpose ?? 'observation' },
+      {
+        usageCategory: completeOptions?.purpose ?? 'observation',
+        ...(completeOptions?.signal ? { signal: completeOptions.signal } : {}),
+      },
     ));
+  compactionManager.onMemoryError((info) => eventBridge.emitMemory({ kind: 'error', info }));
+  compactionManager.onMemoryRecovered((info) => eventBridge.emitMemory({ kind: 'recovered', info }));
 
   parts = {
     agent, logger, retryPolicy, origin, lifecycle, gate, abortState, runner, queues, background, deadLetters,

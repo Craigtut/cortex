@@ -34,6 +34,7 @@ import type {
   UtilityUsagePayload,
 } from './types.js';
 import { extractPayload } from './event-payloads.js';
+import type { MemoryEventPayload } from './compaction/observational/types.js';
 import type { CortexEventPayloads } from './event-payloads.js';
 import { NOOP_LOGGER } from './noop-logger.js';
 import { parseWorkingTags, plainTextOutput } from './working-tags.js';
@@ -58,7 +59,8 @@ export type CortexEventType =
   | 'tool_call_update'
   | 'tool_call_end'
   | 'utility_usage'
-  | 'talker_delta';
+  | 'talker_delta'
+  | 'memory';
 
 /**
  * Normalized event data emitted by the event bridge.
@@ -75,8 +77,8 @@ export interface CortexEvent {
   textOutput?: AgentTextOutput;
   /**
    * Typed payload for tool events (tool_call_start, tool_call_update,
-   * tool_call_end), turn_end and loop_end, utility_usage events, and the
-   * duplex facade's talker_delta events. Read it with {@link payloadOf},
+   * tool_call_end), turn_end and loop_end, utility_usage and memory events,
+   * and the duplex facade's talker_delta events. Read it with {@link payloadOf},
    * which narrows by event type, instead of casting `data`.
    */
   payload?: CortexEventPayloads[keyof CortexEventPayloads];
@@ -318,6 +320,14 @@ export class EventBridge {
       usage,
       payload: { category } satisfies UtilityUsagePayload,
     });
+  }
+
+  /**
+   * Emit a memory event: an observer or reflector call failed after all its
+   * attempts, or memory recovered (see LoopContextApi.onMemoryError).
+   */
+  emitMemory(payload: MemoryEventPayload): void {
+    this.emit({ type: 'memory', payload });
   }
 
   /**

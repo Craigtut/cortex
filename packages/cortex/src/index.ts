@@ -433,6 +433,10 @@ export type {
   ReflectionEvent,
   RecallConfig,
   RecallResult,
+  MemoryCallTrigger,
+  MemoryErrorInfo,
+  MemoryRecoveredInfo,
+  MemoryEventPayload,
 } from './compaction/index.js';
 
 // Model Wrapper (Phase 1D)

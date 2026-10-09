@@ -17,6 +17,7 @@ import type {
   TurnEndPayload,
   UtilityUsagePayload,
 } from './types.js';
+import type { MemoryEventPayload } from './compaction/observational/types.js';
 
 /** The payload each event type carries. */
 export interface CortexEventPayloads {
@@ -27,6 +28,7 @@ export interface CortexEventPayloads {
   loop_end: LoopEndPayload;
   utility_usage: UtilityUsagePayload;
   talker_delta: TalkerDeltaPayload;
+  memory: MemoryEventPayload;
 }
 
 /**

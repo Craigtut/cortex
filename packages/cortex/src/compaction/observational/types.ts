@@ -328,6 +328,15 @@ export interface MemoryRecoveredInfo {
   degradedForMs: number;
 }
 
+/**
+ * The `memory` event on the event bridge: the same reports as the memory
+ * callbacks, so they forward from sub-agents (with `childTaskId`) and carry
+ * the loop's path on a composite facade's merged stream.
+ */
+export type MemoryEventPayload =
+  | { kind: 'error'; info: MemoryErrorInfo }
+  | { kind: 'recovered'; info: MemoryRecoveredInfo };
+
 // ---------------------------------------------------------------------------
 // Recall
 // ---------------------------------------------------------------------------
