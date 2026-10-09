@@ -6,6 +6,7 @@ import {
 } from '../../../src/compaction/index.js';
 import type { AgentContext, AgentMessage } from '../../../src/context-manager.js';
 import type { CortexCompactionConfig } from '../../../src/types.js';
+import type { ObservationEvent } from '../../../src/compaction/observational/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -439,6 +440,36 @@ describe('CompactionManager', () => {
       expect(replacedHistory).not.toBeNull();
       expect(replacedHistory!.length).toBeLessThan(history.length);
       expect(manager.getObservationalMemoryState().observations).toContain('GAP:');
+    });
+
+    it('reports the observed messages that left with the context size before and after', () => {
+      manager.setContextWindow(100_000);
+      manager.updateCurrentContextTokenCount(150_000);
+      const history = Array.from({ length: 20 }, (_, i) =>
+        (i % 2 ? makeAssistantMsg('a'.repeat(30_000)) : makeUserMsg('u'.repeat(30_000))));
+      // The first four messages are observed; the rest are not.
+      manager.restoreObservationalMemoryState({
+        observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
+        bufferedChunks: [{ observations: '* (10:00) the first exchanges', messageTokensObserved: 30_000, createdAt: new Date(), endIndex: 4 }],
+        bufferWatermark: 4,
+      });
+      const events: ObservationEvent[] = [];
+      manager.onObservation((event) => events.push(event));
+      let replaced: AgentMessage[] = [];
+
+      manager.handleOverflowError(() => history, (h) => { replaced = h; });
+
+      // Precondition: the observed messages left as a swap, the rest as a gap.
+      expect(events).toHaveLength(1);
+      expect(events[0]!.trigger).toBe('emergency');
+      expect(events[0]!.removedMessages).toHaveLength(4);
+      // The rejected context was at least what was measured; what is left
+      // fits the window, and is what the kept history and the log weigh.
+      const { tokensBefore, tokensAfter, contextUtilization } = events[0]!;
+      expect(tokensBefore).toBeGreaterThanOrEqual(150_000);
+      expect(contextUtilization).toBe(tokensBefore / 100_000);
+      expect(tokensAfter).toBeGreaterThan(replaced.length * 7_000);
+      expect(tokensAfter).toBeLessThan(100_000);
     });
 
     it('is a no-op for empty history', () => {

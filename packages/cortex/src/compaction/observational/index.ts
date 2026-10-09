@@ -177,17 +177,6 @@ export class ObservationalMemoryEngine {
       log: this.log,
       lastError: () => this.health.lastError,
       invalidateObserver: () => this.buffering.invalidateObserver(),
-      swapped: (applied) => this.fireObservationEvent({
-        trigger: 'emergency',
-        observedMessages: applied.observed,
-        removedMessages: applied.removed,
-        observations: this.log.text,
-        contextUtilization: 0,
-        tokensBefore: 0,
-        tokensAfter: 0,
-        sync: false,
-        timestamp: new Date(),
-      }),
       logger: () => this.logger,
     });
   }
@@ -407,11 +396,33 @@ export class ObservationalMemoryEngine {
   /**
    * Shrink the source after the provider rejected a request for overflow,
    * so the history fits `budgetTokens` (see emergency.ts OverflowDrop).
+   * Observed messages that left are reported as an observation, sized from
+   * `tokensBefore` less everything that left (dropped messages too) plus
+   * what the log grew by.
    *
+   * @param tokensBefore - the rejected context's estimated size
    * @returns the new source history, or null when nothing could be dropped
    */
-  dropForOverflow(source: AgentMessage[], budgetTokens: number): AgentMessage[] | null {
-    return this.overflow.drop(source, budgetTokens);
+  dropForOverflow(source: AgentMessage[], budgetTokens: number, tokensBefore: number): AgentMessage[] | null {
+    const slotBefore = this.slotTokens();
+    const rewrite = this.overflow.drop(source, budgetTokens);
+    if (!rewrite) return null;
+    const { swapped, dropped } = rewrite;
+    if (swapped.removed.length > 0) {
+      const leftTokens = historyTokens(swapped.removed) + historyTokens(dropped);
+      this.fireObservationEvent({
+        trigger: 'emergency',
+        observedMessages: swapped.observed,
+        removedMessages: swapped.removed,
+        observations: this.log.text,
+        contextUtilization: this.contextWindow > 0 ? tokensBefore / this.contextWindow : 0,
+        tokensBefore,
+        tokensAfter: Math.max(0, tokensBefore - leftTokens + this.slotTokens() - slotBefore),
+        sync: false,
+        timestamp: new Date(),
+      });
+    }
+    return rewrite.kept;
   }
 
   /**

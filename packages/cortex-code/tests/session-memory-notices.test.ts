@@ -21,6 +21,7 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 import type { CompleteFn } from '@animus-labs/cortex';
+import type { TranscriptWriter } from '../src/persistence/transcript-writer.js';
 import { createPassthroughSession, destroyHarnessAgents } from './helpers/duplex-harness.js';
 
 let cwd: string;
@@ -67,5 +68,34 @@ describe('memory notices', () => {
       'Memory model failing',
       'Memory model recovered',
     ]);
+  });
+});
+
+describe('the durable marker for an overflow drop', () => {
+  it('records the context size before and after the drop', async () => {
+    const { session, agent } = await createPassthroughSession(cwd);
+    const writer = (session as unknown as { transcriptWriter: TranscriptWriter }).transcriptWriter;
+    const addCompaction = vi.spyOn(writer, 'addCompaction');
+    const manager = agent.getCompactionManager();
+    const capacity = manager.modelContextWindow || manager.contextWindow;
+    // Twice the window, in twenty messages; the first four are observed.
+    const size = Math.ceil((capacity * 2 * 4) / 20);
+    const history = Array.from({ length: 20 }, (_, i) =>
+      ({ role: i % 2 ? 'assistant' : 'user', content: String(i).repeat(size), timestamp: i + 1 }));
+    manager.restoreObservationalMemoryState({
+      observations: '', continuationHint: null, observationTokenCount: 0, generationCount: 0,
+      bufferedChunks: [{ observations: '* (10:00) the first exchanges', messageTokensObserved: 1_000, createdAt: new Date(), endIndex: 4 }],
+      bufferWatermark: 4,
+    });
+
+    manager.handleOverflowError(() => history as never, () => {});
+
+    // Precondition: the observed messages left as a swap, so a marker is written.
+    expect(addCompaction).toHaveBeenCalledOnce();
+    const marker = addCompaction.mock.calls[0]![0]!;
+    expect(marker.reason).toBe('emergency');
+    expect(marker.beforeTokens).toBeGreaterThan(capacity);
+    expect(marker.afterTokens).toBeGreaterThan(0);
+    expect(marker.afterTokens).toBeLessThan(capacity);
   });
 });

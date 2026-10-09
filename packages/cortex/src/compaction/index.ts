@@ -921,13 +921,12 @@ export class CompactionManager {
     if (history.length === 0) return;
 
     const capacity = this._modelContextWindow > 0 ? this._modelContextWindow : this._contextWindow;
-    const overhead = Math.max(
-      this._currentContextTokenCount - this.estimateHistoryTokens(history),
-      this.lastOverheadTokens,
-    );
+    const historyTokens = this.estimateHistoryTokens(history);
+    const overhead = Math.max(this._currentContextTokenCount - historyTokens, this.lastOverheadTokens);
     const rewritten = this.observationalEngine.dropForOverflow(
       history,
       Math.max(0, capacity * OVERFLOW_TARGET_RATIO - overhead),
+      overhead + historyTokens,
     );
     if (rewritten) {
       setHistory(rewritten);

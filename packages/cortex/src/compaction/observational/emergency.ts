@@ -55,9 +55,17 @@ export interface OverflowPorts {
   lastError(): Error | null;
   /** Forget the pending observer call: messages in its range were dropped. */
   invalidateObserver(): void;
-  /** Report the swap that came before the drop. */
-  swapped(applied: AppliedSwap): void;
   logger(): { warn: (msg: string) => void } | null;
+}
+
+/** What an overflow drop did to the source. */
+export interface OverflowRewrite {
+  /** The new source history. */
+  kept: AgentMessage[];
+  /** The swap that came first: observed messages that left as in any swap. */
+  swapped: AppliedSwap;
+  /** Unobserved messages dropped, which the log records as a gap. */
+  dropped: AgentMessage[];
 }
 
 /**
@@ -81,9 +89,9 @@ export class OverflowDrop {
    * swap. Unobserved messages outside it are dropped, oldest first, and the
    * log records the gap. The latest user message and the last unit stay.
    *
-   * @returns the new source history, or null when nothing could be dropped
+   * @returns the rewrite, or null when nothing could be dropped
    */
-  drop(source: AgentMessage[], budgetTokens: number): AgentMessage[] | null {
+  drop(source: AgentMessage[], budgetTokens: number): OverflowRewrite | null {
     const { ledger, log } = this.ports;
     const tail = selectTail(source, budgetTokens);
     const watermark = ledger.watermark;
@@ -117,9 +125,8 @@ export class OverflowDrop {
         note,
       });
     }
-    if (applied.removed.length > 0) this.ports.swapped(applied);
     const droppedSet = new Set(dropped);
-    return applied.kept.filter((message) => !droppedSet.has(message));
+    return { kept: applied.kept.filter((message) => !droppedSet.has(message)), swapped: applied, dropped };
   }
 
   private dispatchGap(info: MemoryGapInfo): void {
