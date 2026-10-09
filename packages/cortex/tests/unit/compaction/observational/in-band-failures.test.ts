@@ -12,9 +12,10 @@ import { wrapModel } from '../../../../src/model-wrapper.js';
 import type { AgentLoopConfig } from '../../../../src/types.js';
 import type { CompleteFn, MemoryErrorInfo } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
-const assistantMsg = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 0 });
+const assistantMsg = (content: string): AgentMessage => textAssistant(content, 0);
 
 function context(messages: AgentMessage[]): AgentContext {
   return { systemPrompt: '', model: null, messages, tools: [], thinkingLevel: 'medium' };

@@ -8,6 +8,7 @@ import { estimateTokens } from '../../../../src/token-estimator.js';
 import { ObservationalMemoryEngine } from '../../../../src/compaction/observational/index.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
 
@@ -34,7 +35,7 @@ function newEngine(complete: CompleteFn, observations: string): ObservationalMem
 /** An activation over an older message the verbatim tail cannot hold, then `content`. */
 async function activate(engine: ObservationalMemoryEngine, content: string): Promise<void> {
   let source: AgentMessage[] = [
-    { role: 'assistant', content: 'older ' + 'o'.repeat(20_000), timestamp: 0 },
+    textAssistant('older ' + 'o'.repeat(20_000), 0),
     userMsg(content),
   ];
   await engine.applyInTransformContext(

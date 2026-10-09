@@ -14,6 +14,7 @@ import { partsOf } from './agent-loop/parts.js';
 import { backgroundTaskState } from '../../src/agent-loop/background-task-text.js';
 import { getCurrentSystemPrompt } from '@earendil-works/pi-ai/utils/transcript';
 import type { LoosePiEvent } from '../helpers/pi-events.js';
+import { restoredMessage } from '../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Mock PiAgent factory
@@ -1875,10 +1876,10 @@ You have 12 emotions.`;
       expect(text).toContain('Use the Read tool with offset/limit');
       expect(text).toContain('tokens trimmed');
 
-      piAgent.state.messages.push({
+      piAgent.state.messages.push(restoredMessage({
         role: 'tool',
         content: [{ type: 'tool_result', name: 'Bash', toolCallId: 'tc-bash-oversized', text }],
-      });
+      }));
 
       const history = agent.getConversationHistory();
       expect(history).toHaveLength(1);

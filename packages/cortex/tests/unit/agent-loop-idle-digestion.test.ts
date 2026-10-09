@@ -14,6 +14,7 @@ import type { AgentMessage } from '../../src/context-manager.js';
 import type { CompleteFn } from '../../src/compaction/observational/types.js';
 import { ObservationalMemoryEngine } from '../../src/compaction/observational/index.js';
 import { wrapModel } from '../../src/model-wrapper.js';
+import { textAssistant } from '../helpers/messages.js';
 
 type TestAgentLoopConstructor = new (
   agent: PiAgent,
@@ -53,7 +54,7 @@ function createMockPiAgent(): DigestMockPiAgent {
         agent.hangNextRun = false;
         await new Promise<void>((resolve) => { release = resolve; });
       }
-      agent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      agent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     },
     releaseRun() {
@@ -119,7 +120,7 @@ const OBSERVER_OUTPUT =
 function seedHistory(piAgent: PiAgent, chars = 30_000): void {
   piAgent.state.messages.push(
     { role: 'user', content: 'work '.repeat(Math.ceil(chars / 10)), timestamp: 1 } as AgentMessage,
-    { role: 'assistant', content: 'done '.repeat(Math.ceil(chars / 10)), timestamp: 2 } as AgentMessage,
+    textAssistant('done '.repeat(Math.ceil(chars / 10)), 2),
   );
 }
 

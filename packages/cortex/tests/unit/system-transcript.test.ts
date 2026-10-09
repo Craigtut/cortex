@@ -7,11 +7,11 @@ import {
   spliceHistory,
   withoutSystemMessages,
 } from '../../src/system-transcript.js';
-import type { SystemTranscriptMessage } from '../../src/system-transcript.js';
+import type { SystemMessage } from '@earendil-works/pi-ai';
 
 const tool = (name: string) => ({ name, description: name, parameters: { type: 'object' } });
 const user = (content: string) => ({ role: 'user', content, timestamp: 1 });
-const system = (fields: Partial<SystemTranscriptMessage>): SystemTranscriptMessage =>
+const system = (fields: Partial<SystemMessage>): SystemMessage =>
   ({ role: 'system', content: '', timestamp: 2, ...fields });
 
 describe('spliceHistory', () => {

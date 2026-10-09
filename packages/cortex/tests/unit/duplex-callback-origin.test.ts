@@ -23,6 +23,7 @@ import {
   waitUntil,
 } from './duplex-scenario-harness.js';
 import type { ScriptedPiAgent } from './duplex-scenario-harness.js';
+import { textAssistant } from '../helpers/messages.js';
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -41,7 +42,7 @@ const OBSERVER_OUTPUT = [
 function seedHistory(pi: ScriptedPiAgent, chars = 30_000): void {
   pi.state.messages.push(
     { role: 'user', content: 'work '.repeat(Math.ceil(chars / 10)), timestamp: 1 } as AgentMessage,
-    { role: 'assistant', content: 'done '.repeat(Math.ceil(chars / 10)), timestamp: 2 } as AgentMessage,
+    textAssistant('done '.repeat(Math.ceil(chars / 10)), 2),
   );
 }
 

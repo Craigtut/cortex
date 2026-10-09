@@ -4,7 +4,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
+import type { SystemMessage, Tool } from '@earendil-works/pi-ai';
 import type { AgentMessage } from '../../../src/context-manager.js';
+import { restoredMessage } from '../../helpers/messages.js';
 import { INSTRUCTIONS_SECTION, SystemPromptState } from '../../../src/agent-loop/system-prompt.js';
 import { TOOL_NAMES } from '../../../src/tools/index.js';
 
@@ -22,12 +24,16 @@ function createState(options: { initialPrompt?: string; tools?: string[]; workin
   return { state, ports };
 }
 
-const head = (fields: Partial<AgentMessage> = {}): AgentMessage =>
+const head = (fields: Partial<SystemMessage> = {}): AgentMessage =>
   ({ role: 'system', content: '', timestamp: 0, ...fields });
-const tool = (name: string) => ({ name, description: name, parameters: { type: 'object' } });
+/** A tool declaration with an untyped JSON schema. */
+const tool = (name: string): Tool => ({ name, description: name, parameters: { type: 'object' } }) as unknown as Tool;
 const user = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 1 });
 const assistant = (text: string): AgentMessage =>
-  ({ role: 'assistant', content: [{ type: 'text', text }], timestamp: 2 });
+  restoredMessage({ role: 'assistant', content: [{ type: 'text', text }], timestamp: 2 });
+/** The system message at `index`, read for its section patches. */
+const sectionsAt = (transcript: AgentMessage[], index: number) =>
+  (transcript[index] as SystemMessage | undefined)?.sections;
 
 describe('SystemPromptState.syncTranscript', () => {
   it('before any answer, rebuilds the head with pi\'s first tool declarations folded in', () => {
@@ -72,7 +78,7 @@ describe('SystemPromptState.syncTranscript', () => {
     expect(transcript[0]).toBe(firstHead);
     const patch = transcript[transcript.length - 1]!;
     expect(patch.role).toBe('system');
-    expect(Object.keys(patch.sections ?? {})).toEqual(['Tool Usage']);
+    expect(Object.keys(sectionsAt(transcript, transcript.length - 1) ?? {})).toEqual(['Tool Usage']);
     expect(getCurrentSystemPrompt(transcript as never)).toBe(state.current());
   });
 
@@ -87,7 +93,7 @@ describe('SystemPromptState.syncTranscript', () => {
     state.refresh();
     state.syncTranscript(transcript);
 
-    expect(transcript[transcript.length - 1]!.sections).toMatchObject({ 'Response Delivery': null });
+    expect(sectionsAt(transcript, transcript.length - 1)).toMatchObject({ 'Response Delivery': null });
     expect(getCurrentSystemPrompt(transcript as never)).toBe(state.current());
   });
 
@@ -101,7 +107,7 @@ describe('SystemPromptState.syncTranscript', () => {
 
     // History indices (the observational watermark) must hold.
     expect(transcript.slice(1, 5)).toEqual([user('slot'), user('hi'), assistant('hello'), delta]);
-    expect(transcript[0]!.sections).toMatchObject({ [INSTRUCTIONS_SECTION]: 'Base.' });
+    expect(sectionsAt(transcript, 0)).toMatchObject({ [INSTRUCTIONS_SECTION]: 'Base.' });
     expect(getCurrentTools(transcript as never).map((t) => t.name)).toEqual(['probe']);
     expect(getCurrentSystemPrompt(transcript as never)).toBe(state.current());
   });

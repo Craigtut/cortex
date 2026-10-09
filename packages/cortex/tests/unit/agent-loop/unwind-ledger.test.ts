@@ -13,6 +13,7 @@ import type { AgentMessage } from '../../../src/context-manager.js';
 import type { CompleteFn } from '../../../src/compaction/observational/types.js';
 import { wrapModel } from '../../../src/model-wrapper.js';
 import { partsOf } from './parts.js';
+import { textAssistant } from '../../helpers/messages.js';
 
 type Ctor = new (agent: PiAgent, config: AgentLoopConfig, tools?: unknown[], options?: Record<string, unknown>) => AgentLoop;
 
@@ -45,7 +46,7 @@ function createLoop(piAgent: PiAgent): AgentLoop {
 }
 
 const user = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 1 });
-const assistant = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 2 });
+const assistant = (content: string): AgentMessage => textAssistant(content, 2);
 const toolCallTurn = (): AgentMessage =>
   ({ role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'Bash', arguments: {} }], stopReason: 'toolUse', timestamp: 3 }) as unknown as AgentMessage;
 const errorStub = (): AgentMessage =>

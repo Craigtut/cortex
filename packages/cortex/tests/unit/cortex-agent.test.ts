@@ -23,6 +23,7 @@ import {
 import type { CortexAgentConfig, ForwardedLoopMember } from '../../src/cortex-agent.js';
 import { partsOf } from './agent-loop/parts.js';
 import type { LoosePiEvent } from '../helpers/pi-events.js';
+import { textAssistant } from '../helpers/messages.js';
 
 // These harnesses bypass create() and inject already-resolved loop configuration.
 type ResolvedFacadeConfig = Omit<CortexAgentConfig, 'sandbox'> & Pick<AgentLoopConfig, 'sandbox'>;
@@ -119,11 +120,7 @@ function createMockPiAgent(): FacadeMockPiAgent {
             cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
           },
         });
-        agent.state.messages.push({
-          role: 'assistant',
-          content: 'ok',
-          timestamp: Date.now(),
-        });
+        agent.state.messages.push(textAssistant('ok', Date.now()));
         agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {

@@ -11,6 +11,7 @@ import type { AgentLoopConfig, LoopOriginContext } from '../../../../src/types.j
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 import type { MemoryErrorInfo, MemoryRecoveredInfo } from '../../../../src/compaction/observational/types.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 type Ctor = new (
   agent: PiAgent,
@@ -55,7 +56,7 @@ function createLoop(): { loop: AgentLoop; piAgent: PiAgent } {
 function seed(piAgent: PiAgent): void {
   piAgent.state.messages.push(
     { role: 'user', content: 'work '.repeat(3_000), timestamp: 1 } as AgentMessage,
-    { role: 'assistant', content: 'done '.repeat(3_000), timestamp: 2 } as AgentMessage,
+    textAssistant('done '.repeat(3_000), 2),
   );
 }
 

@@ -14,6 +14,7 @@ import { wrapModel } from '../../src/model-wrapper.js';
 import { estimateTokens } from '../../src/token-estimator.js';
 import type { CacheBreakpointIndices } from '../../src/cache-breakpoints.js';
 import { partsOf } from './agent-loop/parts.js';
+import { textAssistant } from '../helpers/messages.js';
 
 type TestAgentLoopConstructor = new (
   agent: PiAgent,
@@ -114,9 +115,9 @@ describe('setHeadlineProvider', () => {
     loop.getContextManager().setSlot('notes', 'stable slot content');
     piAgent.state.messages.push(
       { role: 'user', content: 'old question', timestamp: 1 },
-      { role: 'assistant', content: 'old answer', timestamp: 2 },
+      textAssistant('old answer', 2),
       { role: 'user', content: 'follow-up', timestamp: 3 },
-      { role: 'assistant', content: 'more detail', timestamp: 4 },
+      textAssistant('more detail', 4),
     );
     // Everything above is pre-prompt history, so BP3 sits after it.
     internals.runner.boundary = piAgent.state.messages.length;

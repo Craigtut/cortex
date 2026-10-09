@@ -4,23 +4,24 @@ import { extractTextContent } from '../../../src/compaction/tool-messages.js';
 import { charsForTokens } from '../../../src/token-estimator.js';
 import type { AgentMessage } from '../../../src/context-manager.js';
 import type { MicrocompactionConfig, PersistResultFn } from '../../../src/types.js';
+import { readParts, restoredMessage, textAssistant } from '../../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function makeAssistantMsg(content: string): AgentMessage {
-  return { role: 'assistant', content, timestamp: 0 };
+  return textAssistant(content, 0);
 }
 
 function makeToolResult(content: string, toolName: string): AgentMessage {
-  return {
+  return restoredMessage({
     role: 'user',
     content: [
       { type: 'tool_result', text: content, name: toolName },
     ],
     timestamp: 0,
-  };
+  });
 }
 
 // Content of N tokens, as estimateTokens counts them (to within one).
@@ -187,14 +188,14 @@ describe('MicrocompactionEngine disk persistence', () => {
 
     const partA = 'WebFetch A content unique to first parallel call';
     const partB = 'Bash B content totally different from A';
-    const multiPart: AgentMessage = {
+    const multiPart = restoredMessage({
       role: 'user',
       content: [
         { type: 'tool_result', tool_use_id: 'toolu_a', text: partA, name: 'WebFetch' },
         { type: 'tool_result', tool_use_id: 'toolu_b', text: partB, name: 'Bash' },
       ],
       timestamp: 0,
-    };
+    });
     const history: AgentMessage[] = [
       multiPart,
       makeAssistantMsg(makeContentOfTokens(PUSH_TO_PLACEHOLDER)),
@@ -211,7 +212,7 @@ describe('MicrocompactionEngine disk persistence', () => {
     // Each part's replacement should reference its own disk path
     const replaced = result[0]!;
     expect(Array.isArray(replaced.content)).toBe(true);
-    const parts = replaced.content as Array<Record<string, unknown>>;
+    const parts = readParts(replaced);
     expect(parts.length).toBe(2);
 
     const textA = parts[0]!.text as string;

@@ -13,6 +13,7 @@ import {
 } from './duplex-scenario-harness.js';
 import type { AgentMessage } from '../../src/context-manager.js';
 import type { CompleteFn } from '../../src/compaction/observational/types.js';
+import { textAssistant } from '../helpers/messages.js';
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -25,9 +26,9 @@ const OBSERVED = '<observations>\n* (10:00) observed\n</observations>';
 function seed(messages: AgentMessage[]): void {
   messages.push(
     { role: 'user', content: 'a'.repeat(20_000), timestamp: 1 } as AgentMessage,
-    { role: 'assistant', content: 'b'.repeat(20_000), timestamp: 2 } as AgentMessage,
+    textAssistant('b'.repeat(20_000), 2),
     { role: 'user', content: 'the latest question', timestamp: 3 } as AgentMessage,
-    { role: 'assistant', content: 'c'.repeat(2_000), timestamp: 4 } as AgentMessage,
+    textAssistant('c'.repeat(2_000), 4),
   );
 }
 
@@ -79,7 +80,7 @@ describe('CortexAgent.compactNow', () => {
     h.talkerLoop.getCompactionManager().memory.setCompleteFn(hung as unknown as CompleteFn);
     h.talkerPi.state.messages.push(
       { role: 'user', content: 'talk '.repeat(3_000), timestamp: 1 } as AgentMessage,
-      { role: 'assistant', content: 'reply '.repeat(3_000), timestamp: 2 } as AgentMessage,
+      textAssistant('reply '.repeat(3_000), 2),
     );
     h.talkerPi.script = [{ text: 'Hello.' }];
     await h.facade.prompt('hi');

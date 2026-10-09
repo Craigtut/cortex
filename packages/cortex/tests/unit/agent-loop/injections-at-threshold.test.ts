@@ -12,6 +12,7 @@ import type { AgentContext, AgentMessage } from '../../../src/context-manager.js
 import type { CompleteFn } from '../../../src/compaction/observational/types.js';
 import { wrapModel } from '../../../src/model-wrapper.js';
 import { assertNoOrphans, makeToolCallMsg, makeToolResultMsg } from '../compaction/helpers.js';
+import { textAssistant } from '../../helpers/messages.js';
 
 type Ctor = new (agent: PiAgent, config: AgentLoopConfig, tools?: unknown[], options?: Record<string, unknown>) => AgentLoop;
 
@@ -44,7 +45,7 @@ function createLoop(piAgent: PiAgent, compaction: Record<string, unknown> = {}):
 }
 
 const user = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 1 });
-const assistant = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 2 });
+const assistant = (content: string): AgentMessage => textAssistant(content, 2);
 const OBSERVED = '<observations>\n* (10:00) the older exchange\n</observations>';
 
 async function runHook(loop: AgentLoop, piAgent: { state: { messages: AgentMessage[] } }): Promise<AgentContext> {

@@ -16,6 +16,7 @@ import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-co
 import type { CompleteFn } from '../../src/compaction/observational/types.js';
 import type { ObservationEvent } from '../../src/compaction/index.js';
 import { wrapModel } from '../../src/model-wrapper.js';
+import { textAssistant } from '../helpers/messages.js';
 
 type TestAgentLoopConstructor = new (
   agent: PiAgent,
@@ -47,7 +48,7 @@ function createPiAgent(): HoldingPiAgent {
         agent.holdNextRun = false;
         await new Promise<void>((resolve) => { release = resolve; });
       }
-      agent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      agent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     },
     releaseRun() {
@@ -87,7 +88,7 @@ function createLoop(piAgent: PiAgent, observational: Record<string, unknown> = {
 const OBSERVED = '<observations>\n* (10:00) observed\n</observations>';
 
 const user = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 1 });
-const assistant = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 2 });
+const assistant = (content: string): AgentMessage => textAssistant(content, 2);
 
 /**
  * An older exchange (about 10k tokens) and a recent one that fits the tail,

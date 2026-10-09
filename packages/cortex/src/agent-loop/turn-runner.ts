@@ -463,12 +463,12 @@ export class TurnRunner {
 
   /** Whether trimming the failure stubs leaves a transcript continue() can resume. */
   private resumableAfterTrim(): boolean {
-    return isResumableAfterTrim(this.ports.agent.state.messages as AgentMessage[], this.ports.historyStart());
+    return isResumableAfterTrim(this.ports.agent.state.messages, this.ports.historyStart());
   }
 
   /** Remove trailing synthetic failure messages so continue() can resume. */
   private trimFailureStubs(): void {
-    if (trimTrailingFailures(this.ports.agent.state.messages as AgentMessage[])) {
+    if (trimTrailingFailures(this.ports.agent.state.messages)) {
       this.ports.notifyTailTrimmed();
     }
   }

@@ -12,6 +12,7 @@ import type { AgentLoopConfig } from '../../src/types.js';
 import type { AgentMessage } from '../../src/context-manager.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 import { EventBridge } from '../../src/event-bridge.js';
+import { textAssistant } from '../helpers/messages.js';
 
 type Ctor = new (
   agent: PiAgent,
@@ -40,7 +41,7 @@ function setup(tool: string, params: unknown): Harness {
       if (runs.length === 1) {
         await pi.state.tools.find((t) => t.name === tool)!.execute('tc-1', params);
       }
-      pi.state.messages.push({ role: 'assistant', content: 'ok', timestamp: 0 } as AgentMessage);
+      pi.state.messages.push(textAssistant('ok', 0));
       return {};
     },
     abort() {},

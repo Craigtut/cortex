@@ -10,6 +10,7 @@ import { ObservationalMemoryEngine } from '../../../../src/compaction/observatio
 import type { ObservationalMemoryConfig } from '../../../../src/compaction/observational/types.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
 const OBSERVED = '<observations>\n* (10:00) OBSERVED\n</observations>';
@@ -33,7 +34,7 @@ async function activate(
 ): Promise<AgentMessage[]> {
   let source = [
     userMsg('u'.repeat(16_000)),
-    { role: 'assistant', content: 'v'.repeat(16_000), timestamp: 0 } as AgentMessage,
+    textAssistant('v'.repeat(16_000), 0),
     userMsg('latest'),
   ];
   await engine.applyInTransformContext(

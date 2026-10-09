@@ -26,7 +26,6 @@ import type {
   ObserveNowResult,
   ReflectionEvent,
 } from './compaction/observational/types.js';
-import type { AgentMessage as PiAgentMessage } from '@earendil-works/pi-agent-core';
 import type { AgentContext, AgentMessage, ContextManager } from './context-manager.js';
 import { classifyError } from './error-classifier.js';
 import type { EventBridge } from './event-bridge.js';
@@ -380,25 +379,22 @@ export class AgentLoop implements
 
   getContextManager(): ContextManager { return this.parts.contextManager; }
 
-  getConversationHistory(): PiAgentMessage[] {
-    return this.loopHistory() as PiAgentMessage[];
+  getConversationHistory(): AgentMessage[] {
+    return this.loopHistory();
   }
 
   /**
    * Everything after the slots, system messages included: they declare the
    * prompt and tools in effect at their point, and the observational
    * watermark counts them. A restore replays them; the loop then patches
-   * the prompt and pi the tools to what is live now. The transcript is pi's;
-   * the loop's internals read it through the looser view in
-   * context-manager.ts, and this and restoreConversationHistory() are where
-   * the two meet.
+   * the prompt and pi the tools to what is live now.
    */
   private loopHistory(): AgentMessage[] {
     return this.agent.state.messages.slice(this.parts.contextManager.historyStart);
   }
 
-  restoreConversationHistory(history: PiAgentMessage[]): void {
-    const messages = history as AgentMessage[];
+  restoreConversationHistory(history: AgentMessage[]): void {
+    const messages = history;
     const { compactionManager, contextManager } = this.parts;
     // Replace everything after the slots, folding the replaced history's
     // system messages into the head so the transcript still declares the

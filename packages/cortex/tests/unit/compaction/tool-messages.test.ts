@@ -15,6 +15,7 @@ import {
   makeToolCallMsg,
   makeToolResultMsg,
 } from './helpers.js';
+import { restoredMessage } from '../../helpers/messages.js';
 
 let seq = 0;
 
@@ -46,14 +47,14 @@ describe('extractTextContent', () => {
   });
 
   it('extracts text from legacy tool_result parts', () => {
-    const msg: AgentMessage = {
+    const msg = restoredMessage({
       role: 'user',
       content: [
         { type: 'text', text: 'hello' },
         { type: 'tool_result', text: 'result' },
       ],
       timestamp: 0,
-    };
+    });
     expect(extractTextContent(msg)).toBe('hello\nresult');
   });
 
@@ -102,11 +103,11 @@ describe('isToolResultMessage', () => {
   });
 
   it('returns true for legacy tool_result content parts', () => {
-    const msg: AgentMessage = {
+    const msg = restoredMessage({
       role: 'user',
       content: [{ type: 'tool_result', text: 'result' }],
       timestamp: 0,
-    };
+    });
     expect(isToolResultMessage(msg)).toBe(true);
   });
 
@@ -145,11 +146,11 @@ describe('isToolCallMessage', () => {
   it('regression: the wrong Anthropic-style tool_use key is NOT a pi toolCall', () => {
     // Real pi-ai assistant blocks are typed 'toolCall'. Keying on 'tool_use'
     // made the structural-pair guard never fire (C-5/H-5).
-    const msg: AgentMessage = {
+    const msg = restoredMessage({
       role: 'assistant',
       content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: {} }],
       timestamp: 0,
-    };
+    });
     expect(isToolCallMessage(msg)).toBe(false);
   });
 });
@@ -164,11 +165,11 @@ describe('extractToolName', () => {
   });
 
   it('extracts name from legacy tool_result parts with a name field', () => {
-    const msg: AgentMessage = {
+    const msg = restoredMessage({
       role: 'user',
       content: [{ type: 'tool_result', text: 'content', name: 'Glob' }],
       timestamp: 0,
-    };
+    });
     expect(extractToolName(msg)).toBe('Glob');
   });
 

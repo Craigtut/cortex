@@ -13,13 +13,14 @@
 
 import { expect } from 'vitest';
 import type { AgentMessage } from '../../../src/context-manager.js';
+import { restoredMessage, textAssistant } from '../../helpers/messages.js';
 
 export function makeUserMsg(content: string): AgentMessage {
   return { role: 'user', content, timestamp: 0 };
 }
 
 export function makeAssistantMsg(content: string): AgentMessage {
-  return { role: 'assistant', content, timestamp: 0 };
+  return textAssistant(content, 0);
 }
 
 export interface ToolCallSpec {
@@ -45,7 +46,8 @@ export function makeToolCallMsg(calls: ToolCallSpec[], text?: string): AgentMess
       arguments: call.arguments ?? {},
     });
   }
-  return { role: 'assistant', content, timestamp: 0 };
+  // Content as pi writes it, without the response fields a test never reads.
+  return restoredMessage({ role: 'assistant', content, timestamp: 0 });
 }
 
 /**
@@ -91,9 +93,7 @@ export function assertNoOrphans(messages: AgentMessage[]): void {
 
     const callIds =
       msg.role === 'assistant' && Array.isArray(msg.content)
-        ? msg.content
-            .filter(p => p.type === 'toolCall' && typeof p['id'] === 'string')
-            .map(p => p['id'] as string)
+        ? msg.content.flatMap(p => (p.type === 'toolCall' && typeof p.id === 'string' ? [p.id] : []))
         : [];
 
     if (callIds.length === 0) {
@@ -104,8 +104,8 @@ export function assertNoOrphans(messages: AgentMessage[]): void {
     // Consume the contiguous run of toolResult messages answering this call.
     const remaining = new Set(callIds);
     let j = i + 1;
-    while (j < messages.length && messages[j]!.role === 'toolResult') {
-      const id = messages[j]!.toolCallId;
+    for (let next = messages[j]; next?.role === 'toolResult'; next = messages[j]) {
+      const id = next.toolCallId;
       expect(
         typeof id === 'string' && remaining.has(id),
         `tool result at index ${j} (${String(id)}) does not match an open call from the assistant message at index ${i}`,

@@ -5,7 +5,7 @@
  * that changes them fails the build here; the classes still load lazily.
  */
 
-import type { Agent } from '@earendil-works/pi-agent-core';
+import type { Agent, AgentState } from '@earendil-works/pi-agent-core';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { AgentMessage, AgentStateAccessor } from '../context-manager.js';
 import type { PiEventSource } from '../event-bridge.js';
@@ -73,7 +73,7 @@ export interface PiAgent extends AgentStateAccessor, PiEventSource {
    */
   hasQueuedMessages?(): boolean;
   /** Context transformation hook installed by Cortex. */
-  transformContext?: (messages: unknown[]) => Promise<unknown[]>;
+  transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 }
 
 /** The methods of {@link PiAgent} that pi's Agent provides. */
@@ -82,6 +82,14 @@ type PiAgentMethods = Exclude<keyof PiAgent, keyof AgentStateAccessor | 'transfo
 /** Compile-time check: pi's Agent satisfies every method the loop drives. */
 type AgentSatisfies<T extends Pick<PiAgent, PiAgentMethods>> = T;
 export type PiAgentContractCheck = AgentSatisfies<Pick<Agent, PiAgentMethods>>;
+
+/** Compile-time check: pi's Agent state satisfies the state the loop reads and writes. */
+type StateSatisfies<T extends AgentStateAccessor['state']> = T;
+export type PiAgentStateContractCheck = StateSatisfies<AgentState>;
+
+/** Compile-time check: the transform hook the loop installs is the one pi's Agent calls. */
+type TransformSatisfies<T extends NonNullable<PiAgent['transformContext']>> = T;
+export type PiTransformContractCheck = TransformSatisfies<NonNullable<Agent['transformContext']>>;
 
 /** Drain mode for pi's steering and follow-up queues. */
 export type QueueDrainMode = 'all' | 'one-at-a-time';

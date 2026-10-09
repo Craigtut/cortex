@@ -12,13 +12,14 @@ import { CompactionManager, buildCompactionConfig } from '../../../src/compactio
 import { ObservationalMemoryEngine } from '../../../src/compaction/observational/index.js';
 import type { CompleteFn } from '../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../src/context-manager.js';
+import { textAssistant } from '../../helpers/messages.js';
 
 function makeUserMsg(content: string): AgentMessage {
   return { role: 'user', content, timestamp: 0 };
 }
 
 function makeAssistantMsg(content: string): AgentMessage {
-  return { role: 'assistant', content, timestamp: 0 };
+  return textAssistant(content, 0);
 }
 
 function buildHistory(turnCount: number): AgentMessage[] {

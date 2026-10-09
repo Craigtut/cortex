@@ -15,20 +15,8 @@
  * Reference: system-prompt.md, context-manager.md
  */
 
+import type { SystemMessage } from '@earendil-works/pi-ai';
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
-
-/** The system message shape Cortex reads and writes (pi-ai's SystemMessage). */
-export interface SystemTranscriptMessage {
-  role: 'system';
-  content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
-  /** Named prompt sections; a later message patches them by name, null removes one. */
-  sections?: Record<string, string | null>;
-  /** Tool declarations that become available at this point. */
-  toolsAdded?: unknown[];
-  /** Tools that stop being available at this point. */
-  toolsRemoved?: unknown[];
-  timestamp: number;
-}
 
 /** One named part of the system prompt, in render order. */
 export interface PromptSection {
@@ -36,13 +24,13 @@ export interface PromptSection {
   content: string;
 }
 
-export function isSystemMessage(message: unknown): message is SystemTranscriptMessage {
+export function isSystemMessage(message: unknown): message is SystemMessage {
   return typeof message === 'object' && message !== null
     && (message as { role?: unknown }).role === 'system';
 }
 
 /** A head that declares nothing: the placeholder before a prompt is set. */
-export function emptySystemHead(): SystemTranscriptMessage {
+export function emptySystemHead(): SystemMessage {
   return { role: 'system', content: '', timestamp: 0 };
 }
 
@@ -56,9 +44,8 @@ export function withoutSystemMessages<T>(messages: readonly T[]): T[] {
  * appended, sections patched by name, tools resolved. An empty head when
  * nothing is declared.
  */
-export function foldSystemMessages(messages: readonly unknown[]): SystemTranscriptMessage {
-  const folded = getCurrentSystemMessage(messages as ReadonlyArray<{ role: string }>);
-  return folded ? (folded as SystemTranscriptMessage) : emptySystemHead();
+export function foldSystemMessages(messages: readonly unknown[]): SystemMessage {
+  return getCurrentSystemMessage(messages as ReadonlyArray<{ role: string }>) ?? emptySystemHead();
 }
 
 /** The sections the transcript currently declares, after replay, in render order. */

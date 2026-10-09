@@ -14,9 +14,10 @@ import type { CompleteFn } from '../../../../src/compaction/observational/types.
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 import type { CortexCompactionConfig } from '../../../../src/types.js';
 import { makeToolCallMsg, makeToolResultMsg, assertNoOrphans } from '../helpers.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
-const assistantMsg = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 0 });
+const assistantMsg = (content: string): AgentMessage => textAssistant(content, 0);
 const OBSERVED = '<observations>\n* (10:00) observed\n</observations>';
 
 function newEngine(complete: CompleteFn, contextWindow = 20_000): ObservationalMemoryEngine {

@@ -15,6 +15,7 @@ import {
 import type { DuplexScenarioHarness } from './duplex-scenario-harness.js';
 import type { AgentMessage } from '../../src/context-manager.js';
 import type { CompleteFn } from '../../src/compaction/observational/types.js';
+import { textAssistant } from '../helpers/messages.js';
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -32,7 +33,7 @@ async function talkerDigestingOnAHungObserver(): Promise<DuplexScenarioHarness> 
   h.talkerLoop.getCompactionManager().memory.setCompleteFn(hung as unknown as CompleteFn);
   h.talkerPi.state.messages.push(
     { role: 'user', content: 'talk '.repeat(3_000), timestamp: 1 } as AgentMessage,
-    { role: 'assistant', content: 'reply '.repeat(3_000), timestamp: 2 } as AgentMessage,
+    textAssistant('reply '.repeat(3_000), 2),
   );
   h.talkerPi.script = [{ text: 'Hello.' }];
   await h.facade.prompt('hi');

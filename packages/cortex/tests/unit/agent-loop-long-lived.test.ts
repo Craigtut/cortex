@@ -15,6 +15,7 @@ import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
 import type { CortexToolRuntime } from '../../src/tools/runtime.js';
 import { partsOf } from './agent-loop/parts.js';
+import { textAssistant } from '../helpers/messages.js';
 
 interface LongLivedMockPiAgent extends PiAgent {
   emitEvent: (event: PiEvent) => void;
@@ -60,7 +61,7 @@ function createMockPiAgent(): LongLivedMockPiAgent {
           },
         },
       });
-      agent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      agent.state.messages.push(textAssistant('ok', Date.now()));
       agent.emitEvent({ type: 'agent_end', messages: [] });
       return { content: 'ok' };
     },

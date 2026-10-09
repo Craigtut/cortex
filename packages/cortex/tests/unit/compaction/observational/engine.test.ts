@@ -17,13 +17,14 @@ import {
   makeToolResultMsg,
   assertNoOrphans,
 } from '../helpers.js';
+import { restoredMessage, textAssistant } from '../../../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
-const assistantMsg = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 0 });
+const assistantMsg = (content: string): AgentMessage => textAssistant(content, 0);
 
 const OBSERVER_OUTPUT =
   '<observations>\nDate: Apr 10, 2026\n\n* \u{1F7E1} (14:30) Test observation\n</observations>\n\n' +
@@ -545,11 +546,11 @@ describe('ObservationalMemoryEngine', () => {
     // unobserved callB and leaving resultB orphaned at the head.
     const U0 = makeUserMsg('x'.repeat(50_000)); // large: exceeds buffer interval
     const U1 = makeUserMsg('second setup message');
-    const STUB: AgentMessage = {
+    const STUB = restoredMessage({
       role: 'assistant',
       content: [],
       timestamp: 0,
-    };
+    });
     const callB = makeToolCallMsg([{ id: 'call_B', name: 'Bash', arguments: { command: 'ls' } }]);
     // Large result keeps post-chunk utilization below the activation
     // threshold so the Step 2 sync observer does not fire and the surviving

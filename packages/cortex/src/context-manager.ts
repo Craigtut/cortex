@@ -19,38 +19,25 @@
  * Reference: context-manager.md
  */
 
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { emptySystemHead, isSystemMessage } from './system-transcript.js';
 import type { ContextManagerConfig } from './types.js';
 
 // ---------------------------------------------------------------------------
-// Minimal pi-agent-core type contracts (no runtime dependency)
+// pi-agent-core's transcript types
 // ---------------------------------------------------------------------------
 
 /**
- * Minimal interface for pi-agent-core's Agent.state.messages entries.
- * The actual type is Message from @earendil-works/pi-ai, but we define
- * only what we need to avoid a hard dependency.
+ * One entry of pi's transcript (`Agent.state.messages`): pi's own message
+ * union. Messages restored from a consumer's persisted history are not
+ * guaranteed to match it; the readers in pi-message.ts check what they read.
  */
-export interface AgentMessage {
-  role: 'user' | 'assistant' | 'toolResult' | 'system';
-  content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
-  toolCallId?: string;
-  toolName?: string;
-  details?: unknown;
-  isError?: boolean;
-  /** System messages only: named prompt sections (see system-transcript.ts). */
-  sections?: Record<string, string | null>;
-  /** System messages only: tool declarations that become available here. */
-  toolsAdded?: unknown[];
-  /** System messages only: tools that stop being available here. */
-  toolsRemoved?: unknown[];
-  /** Epoch milliseconds when this message was created. Stamped by Cortex at turn boundaries. */
-  timestamp: number;
-}
+export type { AgentMessage } from '@earendil-works/pi-agent-core';
 
 /**
- * Minimal interface for pi-agent-core's Agent to access state.messages.
- * We only need to read and write the messages array.
+ * The part of pi-agent-core's agent state the loop reads and writes. A
+ * port rather than pi's `AgentState` so a scripted test agent can supply
+ * it; pi's own state satisfies it (checked in agent-loop/pi-agent.ts).
  */
 export interface AgentStateAccessor {
   state: {
@@ -66,8 +53,9 @@ export interface AgentStateAccessor {
 }
 
 /**
- * The context object passed to transformContext hooks.
- * Mirrors pi-agent-core's AgentContext shape.
+ * What a transformContext hook sees of one request: pi's transcript for it
+ * (`messages`) plus the agent state that shapes it. Cortex's own type; pi's
+ * `AgentContext` carries only messages and tools.
  */
 export interface AgentContext {
   systemPrompt: string;

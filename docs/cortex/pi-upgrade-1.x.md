@@ -454,6 +454,17 @@ instead of passing silently, as it did for this one. `AgentMessage`, `PiEvent`,
 `PiAgent` and `PiModel` are public exports (`index.ts:126-166`), so changing them
 is a consumer-visible decision.
 
+As built: Phase 2 typed the public API and the pi boundary with pi's types;
+the internals moved after the observational memory work landed.
+`context-manager.ts` re-exports pi-agent-core's `AgentMessage`, the system
+transcript uses pi-ai's `SystemMessage`, and `pi-agent.ts` checks pi's
+`AgentState` and `transformContext` against the loop's ports at compile time.
+Compaction reads and rewrites content through shape-preserving readers in
+`pi-message.ts` (`contentPartsOf`, `stringField`, `withContent`), because
+restored history can still hold string assistant content and legacy
+`tool_result` parts that pi's types do not admit. Tests that build such
+shapes go through `tests/helpers/messages.ts`.
+
 ## New pi packages
 
 | Package | Recommendation | Reasons |

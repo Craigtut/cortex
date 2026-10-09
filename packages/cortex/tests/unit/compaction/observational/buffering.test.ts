@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BufferingCoordinator } from '../../../../src/compaction/observational/buffering.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
-const assistantMsg = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 0 });
+const assistantMsg = (content: string): AgentMessage => textAssistant(content, 0);
 
 const VALID_OBSERVER_OUTPUT =
   '<observations>\nDate: Apr 10, 2026\n\n* \u{1F7E1} (14:30) Test observation\n</observations>\n\n' +

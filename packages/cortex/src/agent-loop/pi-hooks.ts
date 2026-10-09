@@ -168,11 +168,11 @@ export function wirePiTransformContext(
   piAgent: PiAgent,
   hook: (context: AgentContext) => Promise<AgentContext>,
 ): void {
-  piAgent.transformContext = async (messages: unknown[]) => {
+  piAgent.transformContext = async (messages: AgentMessage[]) => {
     const result = await hook({
       systemPrompt: piAgent.state.systemPrompt ?? '',
       model: piAgent.state.model ?? null,
-      messages: messages as AgentMessage[],
+      messages,
       tools: (piAgent.state.tools ?? []) as unknown[],
       thinkingLevel: typeof piAgent.state.thinkingLevel === 'string'
         ? piAgent.state.thinkingLevel

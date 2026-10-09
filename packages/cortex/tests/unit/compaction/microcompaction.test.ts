@@ -22,6 +22,7 @@ import {
   makeToolCallMsg,
   makeToolResultMsg,
 } from './helpers.js';
+import { readParts, restoredMessage } from '../../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -405,32 +406,32 @@ describe('applyTrimAction', () => {
       content: [
         { type: 'text', text: 'runtime output' },
       ],
+      isError: false,
       timestamp: 0,
     };
     const result = applyTrimAction(msg, { kind: 'clear' });
 
     expect(result.role).toBe('toolResult');
-    expect(result.toolCallId).toBe('call_123');
-    expect(result.toolName).toBe('Bash');
+    expect(result).toMatchObject({ toolCallId: 'call_123', toolName: 'Bash' });
     expect(Array.isArray(result.content)).toBe(true);
-    const parts = result.content as Array<Record<string, unknown>>;
+    const parts = readParts(result);
     expect(parts[0]!.type).toBe('text');
     expect(parts[0]!.text).toBe('[Tool result cleared]');
   });
 
   describe('legacy tool_result content parts', () => {
     it('preserves structure with tool_use_id for clear action', () => {
-      const msg: AgentMessage = {
+      const msg = restoredMessage({
         role: 'user',
         content: [
           { type: 'tool_result', tool_use_id: 'toolu_abc123', text: 'file contents here', name: 'Read' },
         ],
         timestamp: 0,
-      };
+      });
       const result = applyTrimAction(msg, { kind: 'clear' });
 
       expect(Array.isArray(result.content)).toBe(true);
-      const parts = result.content as Array<Record<string, unknown>>;
+      const parts = readParts(result);
       expect(parts.length).toBe(1);
       expect(parts[0]!.type).toBe('tool_result');
       expect(parts[0]!.tool_use_id).toBe('toolu_abc123');
@@ -438,13 +439,13 @@ describe('applyTrimAction', () => {
     });
 
     it('preserves structure with tool_use_id for placeholder action', () => {
-      const msg: AgentMessage = {
+      const msg = restoredMessage({
         role: 'user',
         content: [
           { type: 'tool_result', tool_use_id: 'toolu_xyz789', text: 'original content', name: 'Grep' },
         ],
         timestamp: 0,
-      };
+      });
       const result = applyTrimAction(msg, {
         kind: 'placeholder',
         toolName: 'Grep',
@@ -452,7 +453,7 @@ describe('applyTrimAction', () => {
       });
 
       expect(Array.isArray(result.content)).toBe(true);
-      const parts = result.content as Array<Record<string, unknown>>;
+      const parts = readParts(result);
       expect(parts[0]!.type).toBe('tool_result');
       expect(parts[0]!.tool_use_id).toBe('toolu_xyz789');
       expect(parts[0]!.text as string).toContain('Tool result trimmed');
@@ -460,13 +461,13 @@ describe('applyTrimAction', () => {
 
     it('preserves structure with tool_use_id for bookend action', () => {
       const longContent = 'A'.repeat(500);
-      const msg: AgentMessage = {
+      const msg = restoredMessage({
         role: 'user',
         content: [
           { type: 'tool_result', tool_use_id: 'toolu_def456', text: longContent, name: 'Read' },
         ],
         timestamp: 0,
-      };
+      });
       const result = applyTrimAction(msg, {
         kind: 'bookend',
         headChars: 50,
@@ -475,25 +476,25 @@ describe('applyTrimAction', () => {
       });
 
       expect(Array.isArray(result.content)).toBe(true);
-      const parts = result.content as Array<Record<string, unknown>>;
+      const parts = readParts(result);
       expect(parts[0]!.type).toBe('tool_result');
       expect(parts[0]!.tool_use_id).toBe('toolu_def456');
       expect(parts[0]!.text as string).toContain('tokens trimmed');
     });
 
     it('handles multiple tool_result parts in a single message', () => {
-      const msg: AgentMessage = {
+      const msg = restoredMessage({
         role: 'user',
         content: [
           { type: 'tool_result', tool_use_id: 'toolu_1', text: 'result one', name: 'Read' },
           { type: 'tool_result', tool_use_id: 'toolu_2', text: 'result two', name: 'Glob' },
         ],
         timestamp: 0,
-      };
+      });
       const result = applyTrimAction(msg, { kind: 'clear' });
 
       expect(Array.isArray(result.content)).toBe(true);
-      const parts = result.content as Array<Record<string, unknown>>;
+      const parts = readParts(result);
       expect(parts.length).toBe(2);
       expect(parts[0]!.text).toBe('[Tool result cleared]');
       expect(parts[1]!.text).toBe('[Tool result cleared]');

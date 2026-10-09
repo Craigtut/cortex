@@ -11,6 +11,7 @@ import { wrapModel } from '../../../../src/model-wrapper.js';
 import type { AgentLoopConfig } from '../../../../src/types.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
+import { textAssistant } from '../../../helpers/messages.js';
 
 type Ctor = new (
   agent: PiAgent,
@@ -64,15 +65,15 @@ describe('context size after a swap', () => {
     loop.getCompactionManager().memory.setCompleteFn(complete);
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
-      { role: 'assistant', content: 'done '.repeat(3000), timestamp: 2 },
+      textAssistant('done '.repeat(3000), 2),
       { role: 'user', content: 'more '.repeat(3000), timestamp: 3 },
-      { role: 'assistant', content: 'again '.repeat(3000), timestamp: 4 },
+      textAssistant('again '.repeat(3000), 4),
     );
     // Buffer a chunk below the threshold, then add a fresh exchange.
     await loop.digestIdle();
     piAgent.state.messages.push(
       { role: 'user', content: 'latest question', timestamp: 3 },
-      { role: 'assistant', content: 'latest answer', timestamp: 4 },
+      textAssistant('latest answer', 4),
     );
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);
     const swap = await loop.digestIdle();
@@ -99,7 +100,7 @@ describe('context size after a swap', () => {
     piAgent.state.messages.push(
       { role: 'user', content: 'work '.repeat(3000), timestamp: 1 },
       // About 3,700 tokens: inside the 4,000-token tail with the question.
-      { role: 'assistant', content: 'done '.repeat(2600), timestamp: 2 },
+      textAssistant('done '.repeat(2600), 2),
       { role: 'user', content: 'latest question', timestamp: 3 },
     );
     loop.getCompactionManager().updateCurrentContextTokenCount(19_500);

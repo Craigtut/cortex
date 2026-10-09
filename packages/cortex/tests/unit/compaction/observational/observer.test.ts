@@ -12,24 +12,25 @@ import { MemoryReplyError } from '../../../../src/compaction/observational/reply
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
 import type { AgentMessage } from '../../../../src/context-manager.js';
 import { estimateTokens } from '../../../../src/token-estimator.js';
+import { restoredMessage, textAssistant } from '../../../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
-const assistantMsg = (content: string): AgentMessage => ({ role: 'assistant', content, timestamp: 0 });
+const assistantMsg = (content: string): AgentMessage => textAssistant(content, 0);
 
 // Real pi-ai shapes: assistant 'toolCall' blocks with `arguments`, and tool
 // results as separate role 'toolResult' messages with toolCallId/toolName.
 function makeToolCallMsg(name: string): AgentMessage {
-  return {
+  return restoredMessage({
     role: 'assistant',
     content: [
       { type: 'toolCall', id: 'call_123', name, arguments: { path: '/tmp/test.txt' } },
     ],
     timestamp: 0,
-  } as AgentMessage;
+  });
 }
 
 function makeToolResultMsg(text: string, toolName = 'Read'): AgentMessage {
@@ -81,13 +82,13 @@ describe('formatMessagesForObserver', () => {
   });
 
   it('formats legacy tool_result content parts', () => {
-    const legacy: AgentMessage = {
+    const legacy = restoredMessage({
       role: 'user',
       content: [
         { type: 'tool_result', tool_use_id: 'toolu_123', text: 'legacy output' },
       ],
       timestamp: 0,
-    } as AgentMessage;
+    });
     const result = formatMessagesForObserver([legacy]);
 
     expect(result).toContain('[Tool Result');
@@ -118,7 +119,7 @@ describe('formatMessagesForObserver', () => {
     const ts = new Date('2026-04-11T14:30:00Z').getTime();
     const messages: AgentMessage[] = [
       { role: 'user', content: 'Hello', timestamp: ts },
-      { role: 'assistant', content: 'Hi there', timestamp: ts + 60_000 },
+      textAssistant('Hi there', ts + 60_000),
     ];
     const result = formatMessagesForObserver(messages);
 

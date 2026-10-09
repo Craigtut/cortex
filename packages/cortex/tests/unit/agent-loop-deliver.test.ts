@@ -21,6 +21,7 @@ import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
 import { partsOf } from './agent-loop/parts.js';
 import type { LoosePiEvent } from '../helpers/pi-events.js';
+import { textAssistant } from '../helpers/messages.js';
 
 // ---------------------------------------------------------------------------
 // Mock PiAgent with steering/follow-up queues and a run that can hold at
@@ -773,7 +774,7 @@ describe('AgentLoop.deliver consumer-prompt splice failure recovery', () => {
         failuresLeft -= 1;
         throw new Error('provider exploded before any output');
       }
-      piAgent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      piAgent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     };
 
@@ -834,7 +835,7 @@ describe('AgentLoop.deliver consumer-prompt splice failure recovery', () => {
     const loop = createLoop(piAgent);
     loop.restoreConversationHistory([
       { role: 'user', content: 'old question', timestamp: 1 } as AgentMessage,
-      { role: 'assistant', content: 'old answer', timestamp: 2 } as AgentMessage,
+      textAssistant('old answer', 2),
       { role: 'user', content: 'old follow-up', timestamp: 3 } as AgentMessage,
     ]);
 
@@ -865,7 +866,7 @@ describe('AgentLoop.deliver consumer-prompt splice failure recovery', () => {
         );
         throw new Error('provider exploded after activation trim');
       }
-      piAgent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      piAgent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     };
 
@@ -1100,7 +1101,7 @@ describe('AgentLoop.deliver and abort', () => {
           rejectRun = reject;
         });
       }
-      piAgent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      piAgent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     };
     piAgent.abort = (): void => {
@@ -1168,7 +1169,7 @@ describe('AgentLoop.deliver and abort', () => {
           rejectRun = reject;
         });
       }
-      piAgent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      piAgent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     };
     piAgent.abort = (): void => {
@@ -1519,7 +1520,7 @@ describe('AgentLoop abort-cancelled wake deliveries are dead-lettered', () => {
           rejectRun = reject;
         });
       }
-      piAgent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      piAgent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     };
     piAgent.abort = (): void => {
@@ -1579,7 +1580,7 @@ describe('AgentLoop abort-cancelled wake deliveries are dead-lettered', () => {
           rejectRun = reject;
         });
       }
-      piAgent.state.messages.push({ role: 'assistant', content: 'ok', timestamp: Date.now() });
+      piAgent.state.messages.push(textAssistant('ok', Date.now()));
       return { content: 'ok' };
     };
     piAgent.abort = (): void => {
@@ -1629,7 +1630,7 @@ describe('AgentLoop.deliver atTurnBoundary fallback to the next run', () => {
       async prompt(input: string | AgentMessage[]) {
         runs.push({ input, tags: loop.activeRunCauseTags });
         if (runs.length === 1) await new Promise<void>((resolve) => { release = resolve; });
-        pi.state.messages.push({ role: 'assistant', content: 'ok', timestamp: 0 } as AgentMessage);
+        pi.state.messages.push(textAssistant('ok', 0));
         return {};
       },
       abort() {},

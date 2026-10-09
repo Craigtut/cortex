@@ -14,6 +14,7 @@ import type { AgentLoopConfig } from '../../src/types.js';
 import type { AgentMessage } from '../../src/context-manager.js';
 import { wrapModel } from '../../src/model-wrapper.js';
 import type { CortexModel } from '../../src/model-wrapper.js';
+import { textAssistant } from '../helpers/messages.js';
 
 interface HoldableMockPiAgent extends PiAgent {
   emitEvent: (event: PiEvent) => void;
@@ -67,11 +68,7 @@ function createMockPiAgent(): HoldableMockPiAgent {
         }
 
         agent.emitEvent({ type: 'turn_end', text: 'ok' });
-        agent.state.messages.push({
-          role: 'assistant',
-          content: 'ok',
-          timestamp: Date.now(),
-        });
+        agent.state.messages.push(textAssistant('ok', Date.now()));
         agent.emitEvent({ type: 'agent_end', messages: [] });
         return { content: 'ok' };
       } finally {

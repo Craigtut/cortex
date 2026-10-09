@@ -14,7 +14,8 @@ import {
   replayContent,
   replaySections,
 } from '../system-transcript.js';
-import type { PromptSection, SystemTranscriptMessage } from '../system-transcript.js';
+import type { SystemMessage } from '@earendil-works/pi-ai';
+import type { PromptSection } from '../system-transcript.js';
 import { TOOL_NAMES } from '../tools/tool-names.js';
 
 // ---------------------------------------------------------------------------
@@ -390,7 +391,7 @@ export class SystemPromptState {
     // declaring a tool twice is outside what native tool-change transports
     // accept.
     let changed = false;
-    const head = transcript[0] as SystemTranscriptMessage;
+    const head = transcript[0] as SystemMessage;
     if (contentText(head) !== '' || (this.desired.length > 0 && head.sections === undefined)) {
       transcript[0] = this.headMessage(head);
       changed = true;
@@ -413,7 +414,7 @@ export class SystemPromptState {
 
   /** Fold every system message into a head that declares exactly the desired sections. */
   private rebuildHead(transcript: AgentMessage[]): boolean {
-    const head = transcript[0] as SystemTranscriptMessage;
+    const head = transcript[0] as SystemMessage;
     const laterSystemMessages = transcript.some((message, index) => index > 0 && isSystemMessage(message));
     if (!laterSystemMessages && contentText(head) === '' && sameSections(head.sections, this.desired)) {
       return false;
@@ -427,7 +428,7 @@ export class SystemPromptState {
   }
 
   /** A head declaring the desired sections and the tools `source` declares. */
-  private headMessage(source: SystemTranscriptMessage): AgentMessage {
+  private headMessage(source: SystemMessage): AgentMessage {
     return {
       role: 'system',
       content: '',
@@ -440,7 +441,7 @@ export class SystemPromptState {
   }
 }
 
-function contentText(message: SystemTranscriptMessage): string {
+function contentText(message: SystemMessage): string {
   return replayContent([message]);
 }
 
