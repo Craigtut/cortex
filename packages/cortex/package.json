@@ -71,14 +71,6 @@
     "@anthropic-ai/sandbox-runtime": "0.0.79",
     "zod": "^4.0.0"
   },
-  "peerDependencies": {
-    "@microsoft/mxc-sdk": "^1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@microsoft/mxc-sdk": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/turndown": "^5.0.5",

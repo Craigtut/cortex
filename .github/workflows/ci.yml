@@ -49,6 +49,13 @@ jobs:
         env:
           CORTEX_TEST_TARGET: dist
 
+      # Stage the release tarballs (the main package with its Windows variant
+      # alias, and the package.json-only variant), publish them to a throwaway
+      # local registry, and install: on Linux neither the variant nor the MXC
+      # SDK may be installed. See tools/release/verify-cortex-install.mjs.
+      - name: Packaging
+        run: node tools/release/verify-cortex-install.mjs
+
       - name: Lint
         run: npm run lint
 
@@ -71,6 +78,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      # A real Windows install of the staged packages: npm installs the
+      # Windows variant and the MXC SDK, and the installed Cortex resolves it.
+      - name: Packaging
+        run: node tools/release/verify-cortex-install.mjs
+
       # Exercise real PowerShell 7 and 5.1 processes. Browser launching uses a
       # mocked OS handler because hosted runners have no interactive desktop.
       # The MXC tests run the launcher entry point and proxy on win32 against a
@@ -81,6 +93,7 @@ jobs:
           packages/cortex/tests/unit/tools/bash-shell.test.ts
           packages/cortex/tests/unit/tools/bash-windows.integration.test.ts
           packages/cortex/tests/unit/sandbox/mxc-request.test.ts
+          packages/cortex/tests/unit/sandbox/mxc-host.test.ts
           packages/cortex/tests/unit/sandbox/mxc-launcher.test.ts
           packages/cortex/tests/unit/sandbox/mxc.test.ts
           packages/cortex/tests/unit/sandbox/factory.test.ts

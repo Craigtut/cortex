@@ -57,10 +57,12 @@ jobs:
             exit 1
           fi
 
-          if npm view "${PACKAGE_NAME}@${version}" version >/dev/null 2>&1; then
-            echo "${PACKAGE_NAME}@${version} is already published."
-            exit 1
-          fi
+          for published in "${version}" "${version}-win32"; do
+            if npm view "${PACKAGE_NAME}@${published}" version >/dev/null 2>&1; then
+              echo "${PACKAGE_NAME}@${published} is already published."
+              exit 1
+            fi
+          done
 
       - name: Typecheck
         run: npm run typecheck -w packages/cortex
@@ -71,10 +73,17 @@ jobs:
       - name: Test
         run: npm run test:run -w packages/cortex
 
-      - name: Pack package
-        run: |
-          mkdir -p release-artifacts
-          npm pack -w packages/cortex --pack-destination release-artifacts
+      # Two tarballs: the Windows variant (package.json only, depends on the
+      # pinned MXC SDK, os win32) and the main package, identical to npm pack
+      # except for the optional dependency alias that names the variant. See
+      # tools/release/cortex-packages.mjs.
+      - name: Stage packages
+        run: node tools/release/stage-cortex.mjs --out release-artifacts
+
+      # Publish both to a throwaway local registry the way the stage job does,
+      # install, and check that Linux gets neither the variant nor the SDK.
+      - name: Verify the staged install on Linux
+        run: node tools/release/verify-cortex-install.mjs --tarballs release-artifacts
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
@@ -84,10 +93,43 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  stage:
-    name: Stage package on npm
-    runs-on: ubuntu-latest
+  # The same check on a real Windows install, against the exact tarballs the
+  # stage job publishes: npm installs the variant and the SDK, and the
+  # installed Cortex resolves it, hoisted and in npm's nested layout. Needs only
+  # the release tools from the checkout, not the project's dependencies.
+  verify-windows:
+    name: Verify the staged install on Windows
+    runs-on: windows-latest
     needs: verify
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install npm CLI
+        shell: bash
+        run: npm install -g npm@${NPM_VERSION} --ignore-scripts
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cortex-package
+          path: release-artifacts
+
+      - name: Verify the staged install on Windows
+        run: node tools/release/verify-cortex-install.mjs --tarballs release-artifacts
+
+  stage:
+    name: Stage packages on npm
+    runs-on: ubuntu-latest
+    needs: [verify, verify-windows]
     environment: npm-publish
     permissions:
       contents: read
@@ -109,13 +151,33 @@ jobs:
           name: cortex-package
           path: release-artifacts
 
-      - name: Stage package
+      # The Windows variant goes first, under its own dist-tag. The main
+      # package names it as an optional dependency, and npm silently installs
+      # without an optional dependency it cannot resolve, so a main package
+      # live before its variant leaves Windows installs without the SDK. npm
+      # refuses a prerelease without --tag, and the tag keeps `latest` on the
+      # main package. Staging records the tag; approval publishes with it.
+      - name: Stage packages
         run: |
+          set -o pipefail
+          version="${GITHUB_REF_NAME#"${TAG_PREFIX}"}"
+          variant="release-artifacts/animus-labs-cortex-${version}-win32.tgz"
+          main="release-artifacts/animus-labs-cortex-${version}.tgz"
           tarball_count="$(find release-artifacts -name '*.tgz' | wc -l | tr -d ' ')"
-          if [ "${tarball_count}" != "1" ]; then
-            echo "Expected exactly one package artifact, found ${tarball_count}."
+          if [ "${tarball_count}" != "2" ] || [ ! -f "${variant}" ] || [ ! -f "${main}" ]; then
+            echo "Expected exactly ${variant} and ${main}, found:"
+            ls release-artifacts
             exit 1
           fi
 
-          tarball="$(find release-artifacts -name '*.tgz' -print -quit)"
-          npm stage publish "${tarball}" --access public
+          npm stage publish "${variant}" --access public --tag win32 | tee variant-stage.txt
+          npm stage publish "${main}" --access public | tee main-stage.txt
+
+          {
+            echo "## Staged ${PACKAGE_NAME} ${version}"
+            echo
+            echo "Approve in this order. Approving the main package first leaves Windows installs without the MXC SDK until the variant is live."
+            echo
+            echo "1. \`${version}-win32\` (dist-tag \`win32\`): $(grep -o 'staged with id [0-9a-f-]*' variant-stage.txt || echo 'stage id in the log')"
+            echo "2. \`${version}\` (dist-tag \`latest\`): $(grep -o 'staged with id [0-9a-f-]*' main-stage.txt || echo 'stage id in the log')"
+          } >> "${GITHUB_STEP_SUMMARY}"
