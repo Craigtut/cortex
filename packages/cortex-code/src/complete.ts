@@ -6,11 +6,12 @@ import {
   structuredCompletionRequest,
   parseSchemaCompletion,
   type CortexModel,
+  type ModelAuth,
 } from '@animus-labs/cortex';
 
 import { loadConfig } from './config/config.js';
 import { CredentialStore } from './config/credentials.js';
-import { resolveStoredOAuthApiKey } from './utils/oauth-credentials.js';
+import { ApiKeyResolver } from './providers/api-key-resolver.js';
 import { defaultModelFor, resolveConfiguredModel } from './providers/model-resolution.js';
 
 interface CompleteArgs {
@@ -49,8 +50,8 @@ export async function runComplete(argv: string[], options: { version: string }):
     : null;
   const systemPrompt = await readSystemPrompt(args);
 
-  const providerManager = new ProviderManager();
   const credentialStore = new CredentialStore();
+  const providerManager = new ProviderManager({ credentials: credentialStore });
   const resolved = await resolveCompletionModel({
     providerManager,
     credentialStore,
@@ -59,16 +60,15 @@ export async function runComplete(argv: string[], options: { version: string }):
     usePrimary: args.usePrimary,
     cwd: process.cwd(),
   });
-  const apiKey = await resolveApiKey(
-    providerManager,
-    credentialStore,
-    resolved.model.provider,
-    resolved.provider,
-  );
+  // The interactive session's resolver: the same credential attribution, and
+  // OAuth refreshed under the store's lock (another `cortex -p` run or an
+  // interactive session may be refreshing the same token).
+  const auth = await new ApiKeyResolver(credentialStore, providerManager, () => resolved.provider)
+    .getAuth(resolved.model.provider);
 
   const result = await completeWithModel({
     model: resolved.model,
-    apiKey,
+    auth,
     systemPrompt,
     prompt,
     schema,
@@ -210,46 +210,9 @@ async function resolveCompletionModel(input: {
   return { provider, modelId: utilityModelId, model };
 }
 
-async function resolveApiKey(
-  providerManager: ProviderManager,
-  credentialStore: CredentialStore,
-  modelProvider: string,
-  configuredProvider: string,
-): Promise<string> {
-  let credentialProvider = modelProvider;
-  let entry = await credentialStore.getProvider(modelProvider);
-  if (!entry && modelProvider !== configuredProvider) {
-    credentialProvider = configuredProvider;
-    entry = await credentialStore.getProvider(configuredProvider);
-  }
-  if (!entry) {
-    if (modelProvider === 'custom' || configuredProvider === 'ollama') {
-      return 'sk-no-key-required';
-    }
-    throw new Error(`No credentials for provider "${modelProvider}". Run cortex to connect.`);
-  }
-
-  if (entry.method === 'api_key' && entry.apiKey) {
-    return entry.apiKey;
-  }
-
-  if (entry.method === 'oauth' && entry.oauthCredentials) {
-    // Shared with the interactive path: refreshes, persists rotation, and
-    // recovers from a cross-process refresh race (another `cortex -p` run or
-    // interactive session rotating the same token concurrently).
-    return resolveStoredOAuthApiKey(providerManager, credentialStore, credentialProvider, entry);
-  }
-
-  if (entry.method === 'custom') {
-    return entry.apiKey || 'sk-no-key-required';
-  }
-
-  throw new Error(`Unable to resolve API key for provider "${modelProvider}"`);
-}
-
 async function completeWithModel(input: {
   model: CortexModel;
-  apiKey: string;
+  auth: ModelAuth;
   systemPrompt: string;
   prompt: string;
   schema: unknown | null;
@@ -259,7 +222,7 @@ async function completeWithModel(input: {
     systemPrompt: input.systemPrompt,
     messages: [{ role: 'user', content: input.prompt, timestamp: Date.now() }],
   };
-  const completeOptions: Record<string, unknown> = { apiKey: input.apiKey };
+  const completeOptions: Record<string, unknown> = { auth: input.auth };
   if (input.schema) {
     const request = structuredCompletionRequest(input.model, input.schema, {
       name: toolName, description: 'Produce structured output', parameters: input.schema,

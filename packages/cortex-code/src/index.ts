@@ -63,11 +63,10 @@ async function main(): Promise<void> {
   const updateCheckEnabled = args.updateCheck && config.updateCheck !== false;
   const updateInfo = await resolveUpdateInfo({ currentVersion: PKG_VERSION, enabled: updateCheckEnabled });
 
-  // Initialize ProviderManager (once)
-  const providerManager = new ProviderManager();
-
-  // Load credentials
+  // Load credentials. ProviderManager reads and refreshes provider
+  // credentials through this store, under its cross-process file lock.
   const credentialStore = new CredentialStore();
+  const providerManager = new ProviderManager({ credentials: credentialStore });
   const hasProviders = await credentialStore.hasProviders();
 
   let provider: string;

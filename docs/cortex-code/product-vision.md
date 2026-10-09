@@ -43,7 +43,7 @@ Cortex's ProviderManager needs API keys and OAuth tokens but does not store them
 
 - Persists credentials across sessions
 - Supports multiple providers (Anthropic, OpenAI, Google, etc.)
-- Integrates with Cortex via the `getApiKey` callback
+- Integrates with Cortex via the `getAuth` callback
 - Uses a plaintext file with strict permissions (0600) as the primary store, with opportunistic macOS Keychain integration
 - Zero native dependencies (no compilation toolchain required)
 

@@ -1,5 +1,5 @@
 /**
- * Which stored credential answers a getApiKey(provider) call.
+ * Which stored credential answers a getAuth(provider) call.
  *
  * pi-agent-core asks for the *model's* provider field, which is the synthetic
  * id "custom" for anything built by createCustomModel (Ollama, a local
@@ -17,7 +17,7 @@
  * registered as "custom".
  *
  * The callback under test is the one the facade is actually handed
- * (buildAgentConfig().getApiKey), not a private method reached directly, so
+ * (buildAgentConfig().getAuth), not a private method reached directly, so
  * the wiring is covered along with the resolution.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -44,17 +44,12 @@ const LOCAL_ENTRY: CredentialEntry = {
 };
 
 /**
- * Stands in for pi-ai's OAuth registry, which is where the failure actually
- * surfaced: getOAuthProvider(id) returns nothing for an unregistered id and
- * the caller throws. Resolving under the wrong id therefore fails here the
- * same way it fails in production.
+ * Stands in for ProviderManager.getAuth over the session's store: only the
+ * provider the credential is filed under resolves.
  */
 function fakeProviderManager() {
   return {
-    resolveOAuthApiKey: vi.fn(async (id: string) => {
-      if (id !== 'anthropic') throw new Error(`Unknown OAuth provider: ${id}`);
-      return { apiKey: 'sk-oauth-live', credentials: OAUTH_ENTRY.oauthCredentials!, meta: {}, changed: false };
-    }),
+    getAuth: vi.fn(async (id: string) => (id === 'anthropic' ? { apiKey: 'sk-oauth-live' } : undefined)),
   };
 }
 
@@ -75,24 +70,24 @@ afterEach(() => {
   fs.rmSync(cwd, { recursive: true, force: true });
 });
 
-function getApiKeyFor(
+function getAuthFor(
   sessionProvider: string,
   entries: Record<string, CredentialEntry>,
-): { call: (provider: string) => Promise<string>; providerManager: ReturnType<typeof fakeProviderManager> } {
+): { call: (provider: string) => Promise<string | undefined>; providerManager: ReturnType<typeof fakeProviderManager> } {
   const providerManager = fakeProviderManager();
   const { internals } = makeSession(cwd, {
     provider: sessionProvider,
     credentialStore: fakeCredentialStore(entries),
     providerManager,
   });
-  const getApiKey = internals.buildAgentConfig().getApiKey;
-  if (!getApiKey) throw new Error('session did not wire a getApiKey callback');
-  return { call: (provider: string) => getApiKey(provider), providerManager };
+  const getAuth = internals.buildAgentConfig().getAuth;
+  if (!getAuth) throw new Error('session did not wire a getAuth callback');
+  return { call: async (provider: string) => (await getAuth(provider))?.apiKey, providerManager };
 }
 
-describe('getApiKey credential attribution', () => {
+describe('getAuth credential attribution', () => {
   it('does not lend a cloud OAuth credential to a custom-endpoint model', async () => {
-    const { call, providerManager } = getApiKeyFor('anthropic', { anthropic: OAUTH_ENTRY });
+    const { call, providerManager } = getAuthFor('anthropic', { anthropic: OAUTH_ENTRY });
 
     // The precondition that makes the negative assertion mean something: this
     // same store does answer an anthropic request, so a placeholder for
@@ -100,13 +95,13 @@ describe('getApiKey credential attribution', () => {
     await expect(call('anthropic')).resolves.toBe('sk-oauth-live');
 
     await expect(call('custom')).resolves.toBe('sk-no-key-required');
-    expect(providerManager.resolveOAuthApiKey).not.toHaveBeenCalledWith('custom', expect.anything());
+    expect(providerManager.getAuth).not.toHaveBeenCalledWith('custom');
   });
 
   it('still lends a local endpoint credential filed under the connection name', async () => {
     // Regression guard, not a new behaviour: this is the case the fallback was
     // written for, and the guard above must not close it.
-    const { call } = getApiKeyFor('ollama', { ollama: LOCAL_ENTRY });
+    const { call } = getAuthFor('ollama', { ollama: LOCAL_ENTRY });
 
     await expect(call('custom')).resolves.toBe('sk-local');
   });
@@ -116,9 +111,9 @@ describe('getApiKey credential attribution', () => {
     // where the startup provider is a cloud one rather than Ollama. Handing it
     // the new provider's token would send that token somewhere it was never
     // issued for; "run /login" is both true and actionable.
-    const { call, providerManager } = getApiKeyFor('anthropic', { anthropic: OAUTH_ENTRY });
+    const { call, providerManager } = getAuthFor('anthropic', { anthropic: OAUTH_ENTRY });
 
     await expect(call('openai')).rejects.toThrow(/No credentials for provider "openai"/);
-    expect(providerManager.resolveOAuthApiKey).not.toHaveBeenCalled();
+    expect(providerManager.getAuth).not.toHaveBeenCalled();
   });
 });

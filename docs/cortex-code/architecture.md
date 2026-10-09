@@ -120,7 +120,7 @@ The composition root for one interactive session (`src/session.ts`). It creates 
 |---------|-------|
 | Agent config handed to `CortexAgent.create()` | `session/agent-config.ts` |
 | Model, provider, utility model, thinking effort | `session/model-selection.ts` |
-| `getApiKey` credentials and single-flight OAuth refresh | `providers/api-key-resolver.ts` |
+| `getAuth` credentials over the pi-ai credential store | `providers/api-key-resolver.ts` |
 | Tool and network permission prompts, one prompt at a time | `permissions/prompt-broker.ts` |
 | Sandbox rung and status | `session/sandbox-state.ts` |
 | Trust gates for project MCP servers, hooks and skills | `session/trust-gates.ts` |
@@ -373,45 +373,15 @@ interface CredentialStore {
 }
 ```
 
-**`getApiKey` callback flow:**
+**`getAuth` callback flow:**
 
-The session controller provides a `getApiKey` callback to AgentLoop that bridges the credential store and ProviderManager:
+The credential store is also pi-ai's `CredentialStore` (`read`, `list`, `modify`, `delete`), and Cortex's `ProviderManager` is built over it (`new ProviderManager({ credentials: credentialStore })`). The session hands the agent a `getAuth` callback (`providers/api-key-resolver.ts`):
 
-```typescript
-const getApiKey = async (provider: string): Promise<string> => {
-  // 1. Load stored credentials
-  const entry = await credentialStore.getProvider(provider);
-  if (!entry) throw new Error(`No credentials for provider "${provider}". Run /login to connect.`);
+- A custom endpoint (provider id `custom`, or an entry with `method: 'custom'`) answers with its stored key, or a placeholder for keyless servers such as Ollama. A `custom` request falls back to the session's provider entry, but never borrows an OAuth credential.
+- Every other provider resolves through `providerManager.getAuth(provider)`: an API key straight from the file or the Keychain, or an OAuth token pi refreshes inside the store's `modify`. `modify` holds the credentials file's lock (stale after 30 seconds, waited for up to 30 seconds), and pi checks again under it whether the token still needs refreshing, so concurrent requests in one session and other `cortex` processes refresh a rotating token once. This replaced an in-process single-flight and a re-read-and-retry loop for refresh races between processes.
+- No stored credential is an error ("Run /login to connect"). Provider environment variables are never read: Cortex ignores them unless a consumer opts in.
 
-  // 2. API key: return directly
-  if (entry.method === 'api_key' && entry.apiKey) {
-    return entry.apiKey;
-  }
-
-  // 4. OAuth: resolve via ProviderManager (handles token refresh)
-  if (entry.method === 'oauth' && entry.oauthCredentials) {
-    const result = await providerManager.resolveOAuthApiKey(
-      provider, entry.oauthCredentials
-    );
-    // Persist refreshed credentials if they changed
-    if (result.changed) {
-      await credentialStore.setProvider(provider, {
-        ...entry,
-        oauthCredentials: result.credentials,
-        oauthMeta: result.meta,
-      });
-    }
-    return result.apiKey;
-  }
-
-  // 5. Custom: return stored API key (may be empty for keyless endpoints)
-  if (entry.method === 'custom') {
-    return entry.apiKey ?? '';
-  }
-
-  throw new Error(`Unable to resolve API key for provider "${provider}"`);
-};
-```
+`cortex -p` uses the same resolver.
 
 **File locking**: credential and session files are protected with `proper-lockfile` to prevent corruption from concurrent Cortex Code instances. The library uses atomic `mkdir`-based locks with stale-lock detection and automatic cleanup on crash. Locks are acquired for writes only; reads do not lock. The dependency cost is minimal (~30KB, 3 transitive deps).
 
@@ -522,7 +492,7 @@ The double-Ctrl+C pattern is standard for CLI tools (npm, vitest, etc.). The 2-s
 Multiple Cortex Code instances can run concurrently in the same project directory. Each instance operates independently:
 
 - **Sessions**: Each instance creates its own session ID. No session sharing. Two instances in the same CWD produce two separate sessions in `~/.cortex/sessions/`.
-- **Credentials**: Read at startup and on `getApiKey` calls. Writes (from `/login`, `/logout`, OAuth refresh) acquire a file lock via `proper-lockfile`. Concurrent reads are lock-free. If two instances refresh an OAuth token simultaneously, the second write wins (last-write-wins, both tokens are valid).
+- **Credentials**: Read at startup and on `getAuth` calls. Writes (from `/login`, `/logout`, OAuth refresh) acquire a file lock via `proper-lockfile`. Concurrent reads are lock-free. An OAuth refresh runs inside the lock, after checking again that the token still needs it, so two instances never refresh the same token.
 - **Config files**: Read at startup. Not watched for changes during the session. Changes made by one instance are not visible to another until restart.
 - **MCP servers**: Each instance spawns its own MCP server subprocesses. There is no sharing. This means a plugin MCP server may run multiple times concurrently, which is fine for stateless servers but could cause issues for servers that hold exclusive resources (e.g., a database lock). This is a known limitation documented for users.
 - **Permission rules**: Project-level rules are loaded from user-owned workspace settings at startup. Session-scoped rules are in-memory and per-instance. If two instances both write persistent rules, last-write-wins applies.

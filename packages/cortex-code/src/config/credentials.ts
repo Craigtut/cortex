@@ -4,6 +4,12 @@ import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import lockfile from 'proper-lockfile';
+import type {
+  AuthOperationOptions,
+  Credential,
+  CredentialInfo,
+  CredentialStore as PiCredentialStore,
+} from '@animus-labs/cortex';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +42,15 @@ export interface CredentialFile {
 const CREDENTIALS_PATH = join(homedir(), '.cortex', 'credentials.json');
 const KEYCHAIN_SERVICE = 'cortex-code';
 
+/**
+ * How long a lock holder may go without touching the lock before another
+ * process may take it. pi refreshes an OAuth token inside `modify` for up to
+ * 15 seconds; proper-lockfile keeps a held lock fresh while its process lives.
+ */
+const LOCK_STALE_MS = 30_000;
+/** How long a writer waits for the lock before giving up. */
+const LOCK_WAIT_MS = 30_000;
+
 function emptyCredentialFile(): CredentialFile {
   return {
     version: 1,
@@ -51,9 +66,9 @@ async function ensureDir(filePath: string): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
 }
 
-async function readCredentialFile(): Promise<CredentialFile> {
+async function readCredentialFile(path: string): Promise<CredentialFile> {
   try {
-    const content = await readFile(CREDENTIALS_PATH, 'utf-8');
+    const content = await readFile(path, 'utf-8');
     const file = JSON.parse(content) as Partial<CredentialFile>;
     return {
       version: 1,
@@ -68,12 +83,44 @@ async function readCredentialFile(): Promise<CredentialFile> {
   }
 }
 
-async function writeCredentialFile(data: CredentialFile): Promise<void> {
-  await ensureDir(CREDENTIALS_PATH);
-  await writeFile(CREDENTIALS_PATH, JSON.stringify(data, null, 2), {
+async function writeCredentialFile(path: string, data: CredentialFile): Promise<void> {
+  await ensureDir(path);
+  await writeFile(path, JSON.stringify(data, null, 2), {
     mode: 0o600,
   });
-  await chmod(CREDENTIALS_PATH, 0o600);
+  await chmod(path, 0o600);
+}
+
+/**
+ * Run `fn` holding the credentials file's lock, which other cortex-code
+ * processes honor too. A busy lock is retried with backoff until
+ * {@link LOCK_WAIT_MS}: another process may be refreshing a token under it.
+ */
+async function withFileLock<T>(path: string, fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  await ensureDir(path);
+  try {
+    await readFile(path);
+  } catch {
+    await writeCredentialFile(path, emptyCredentialFile());
+  }
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let release: (() => Promise<void>) | undefined;
+  for (let attempt = 0; !release; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      release = await lockfile.lock(path, { stale: LOCK_STALE_MS, retries: 0, realpath: false });
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code !== 'ELOCKED' || Date.now() >= deadline) throw error;
+      const delay = Math.min(Math.round(10 * 2 ** attempt * (1 + Math.random())), 500);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await release();
+  }
 }
 
 // Opportunistic macOS Keychain integration via `security` CLI.
@@ -132,86 +179,56 @@ async function keychainDelete(account: string): Promise<void> {
   }
 }
 
-export class CredentialStore {
+/**
+ * Provider credentials in `~/.cortex/credentials.json`, with API keys in the
+ * macOS Keychain where available. It is also pi-ai's `CredentialStore`
+ * (`read`, `list`, `modify`, `delete`), so Cortex's ProviderManager reads
+ * and refreshes OAuth tokens through it, under the file's cross-process
+ * lock: concurrent requests and other cortex-code processes refresh a
+ * rotating token once.
+ */
+export class CredentialStore implements PiCredentialStore {
+  constructor(private readonly path: string = CREDENTIALS_PATH) {}
+
   /** Load all credentials from disk. */
   async load(): Promise<CredentialFile> {
-    return readCredentialFile();
+    return readCredentialFile(this.path);
   }
 
   /** Get a specific provider's credentials. */
   async getProvider(providerId: string): Promise<CredentialEntry | null> {
-    const file = await readCredentialFile();
-    const entry = file.providers[providerId];
-    if (!entry) return null;
-
-    // Try Keychain for API key on macOS
-    if (entry.method === 'api_key' && !entry.apiKey) {
-      const keychainKey = await keychainGet(providerId);
-      if (keychainKey) {
-        return { ...entry, apiKey: keychainKey };
-      }
-    }
-
-    return entry;
+    const file = await readCredentialFile(this.path);
+    return withKeychainKey(providerId, file.providers[providerId]);
   }
 
   /** Save or update a provider's credentials. Acquires file lock. */
   async setProvider(providerId: string, entry: CredentialEntry): Promise<void> {
-    await ensureDir(CREDENTIALS_PATH);
-    let release: (() => Promise<void>) | undefined;
-    try {
-      // Ensure the file exists before locking
-      try {
-        await readFile(CREDENTIALS_PATH);
-      } catch {
-        await writeCredentialFile(emptyCredentialFile());
-      }
-      release = await lockfile.lock(CREDENTIALS_PATH, { retries: 3 });
-      const file = await readCredentialFile();
-
-      // Opportunistically store API key in Keychain
-      const entryToStore: CredentialEntry = { ...entry };
-      if (entry.method === 'api_key' && entry.apiKey) {
-        const stored = await keychainSet(providerId, entry.apiKey);
-        if (stored) {
-          // Key is in Keychain, don't store in plaintext file
-          delete entryToStore.apiKey;
-        }
-      }
-
-      file.providers[providerId] = entryToStore;
-      await writeCredentialFile(file);
-    } finally {
-      if (release) await release();
-    }
+    await withFileLock(this.path, async () => {
+      const file = await readCredentialFile(this.path);
+      file.providers[providerId] = await storeKeyInKeychain(providerId, entry);
+      await writeCredentialFile(this.path, file);
+    });
   }
 
   /** Remove a provider's credentials. */
   async removeProvider(providerId: string): Promise<void> {
-    await ensureDir(CREDENTIALS_PATH);
-    let release: (() => Promise<void>) | undefined;
     try {
-      try {
-        await readFile(CREDENTIALS_PATH);
-      } catch {
-        return; // No file, nothing to remove
-      }
-      release = await lockfile.lock(CREDENTIALS_PATH, { retries: 3 });
-      const file = await readCredentialFile();
+      await readFile(this.path);
+    } catch {
+      return; // No file, nothing to remove
+    }
+    await withFileLock(this.path, async () => {
+      const file = await readCredentialFile(this.path);
       delete file.providers[providerId];
-
       // Also remove from Keychain
       await keychainDelete(providerId);
-
-      await writeCredentialFile(file);
-    } finally {
-      if (release) await release();
-    }
+      await writeCredentialFile(this.path, file);
+    });
   }
 
   /** Get default provider and model. */
   async getDefaults(): Promise<{ provider: string | null; model: string | null }> {
-    const file = await readCredentialFile();
+    const file = await readCredentialFile(this.path);
     return {
       provider: file.defaultProvider,
       model: file.defaultModel,
@@ -220,82 +237,159 @@ export class CredentialStore {
 
   /** Set default provider and model. */
   async setDefaults(provider: string, model: string): Promise<void> {
-    await ensureDir(CREDENTIALS_PATH);
-    let release: (() => Promise<void>) | undefined;
-    try {
-      try {
-        await readFile(CREDENTIALS_PATH);
-      } catch {
-        await writeCredentialFile(emptyCredentialFile());
-      }
-      release = await lockfile.lock(CREDENTIALS_PATH, { retries: 3 });
-      const file = await readCredentialFile();
+    await this.update((file) => {
       file.defaultProvider = provider;
       file.defaultModel = model;
-      await writeCredentialFile(file);
-    } finally {
-      if (release) await release();
-    }
+    });
   }
 
   /** Get the persisted default utility model for a provider. */
   async getDefaultUtilityModel(provider: string): Promise<string | null> {
-    const file = await readCredentialFile();
+    const file = await readCredentialFile(this.path);
     return file.defaultUtilityModels[provider] ?? null;
   }
 
   /** Persist or clear the default utility model for a provider. */
   async setDefaultUtilityModel(provider: string, model: string | null): Promise<void> {
-    await ensureDir(CREDENTIALS_PATH);
-    let release: (() => Promise<void>) | undefined;
-    try {
-      try {
-        await readFile(CREDENTIALS_PATH);
-      } catch {
-        await writeCredentialFile(emptyCredentialFile());
-      }
-      release = await lockfile.lock(CREDENTIALS_PATH, { retries: 3 });
-      const file = await readCredentialFile();
+    await this.update((file) => {
       file.defaultUtilityModels ??= {};
       if (model) {
         file.defaultUtilityModels[provider] = model;
       } else {
         delete file.defaultUtilityModels[provider];
       }
-      await writeCredentialFile(file);
-    } finally {
-      if (release) await release();
-    }
+    });
   }
 
   /** Get the persisted default effort level. */
   async getDefaultEffort(): Promise<string | null> {
-    const file = await readCredentialFile();
+    const file = await readCredentialFile(this.path);
     return file.defaultEffort ?? null;
   }
 
   /** Persist the default effort level. */
   async setDefaultEffort(effort: string): Promise<void> {
-    await ensureDir(CREDENTIALS_PATH);
-    let release: (() => Promise<void>) | undefined;
-    try {
-      try {
-        await readFile(CREDENTIALS_PATH);
-      } catch {
-        await writeCredentialFile(emptyCredentialFile());
-      }
-      release = await lockfile.lock(CREDENTIALS_PATH, { retries: 3 });
-      const file = await readCredentialFile();
+    await this.update((file) => {
       file.defaultEffort = effort;
-      await writeCredentialFile(file);
-    } finally {
-      if (release) await release();
-    }
+    });
   }
 
   /** Check if any providers are configured. */
   async hasProviders(): Promise<boolean> {
-    const file = await readCredentialFile();
+    const file = await readCredentialFile(this.path);
     return Object.keys(file.providers).length > 0;
   }
+
+  // -------------------------------------------------------------------------
+  // pi-ai's CredentialStore
+  // -------------------------------------------------------------------------
+
+  /** A provider's stored credential in pi's shape. Custom endpoints have none. */
+  async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+    options?.signal?.throwIfAborted();
+    return toCredential(await this.getProvider(providerId));
+  }
+
+  /** Providers with a stored pi credential, without exposing any secret. */
+  async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
+    options?.signal?.throwIfAborted();
+    const file = await readCredentialFile(this.path);
+    return Object.entries(file.providers).flatMap(([providerId, entry]): CredentialInfo[] => {
+      if (entry.method === 'oauth') return [{ providerId, type: 'oauth' }];
+      if (entry.method === 'api_key') return [{ providerId, type: 'api_key' }];
+      return [];
+    });
+  }
+
+  /**
+   * The only write path pi uses: read, transform, and write one provider's
+   * credential under the file lock. pi refreshes an OAuth token inside `fn`
+   * after checking again that it still needs one, so a refresh another
+   * process just finished is reused instead of repeated.
+   */
+  async modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> {
+    return withFileLock(this.path, async () => {
+      const file = await readCredentialFile(this.path);
+      const existing = await withKeychainKey(providerId, file.providers[providerId]);
+      const current = toCredential(existing);
+      const next = await fn(current);
+      if (next === undefined) return current;
+      file.providers[providerId] = await storeKeyInKeychain(providerId, fromCredential(providerId, next, existing));
+      await writeCredentialFile(this.path, file);
+      return next;
+    }, options?.signal);
+  }
+
+  /** Remove a provider's credential (pi's logout). */
+  async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+    options?.signal?.throwIfAborted();
+    await this.removeProvider(providerId);
+  }
+
+  private async update(change: (file: CredentialFile) => void): Promise<void> {
+    await withFileLock(this.path, async () => {
+      const file = await readCredentialFile(this.path);
+      change(file);
+      await writeCredentialFile(this.path, file);
+    });
+  }
+}
+
+/** The entry with its API key filled in from the Keychain when the file has none. */
+async function withKeychainKey(providerId: string, entry: CredentialEntry | undefined): Promise<CredentialEntry | null> {
+  if (!entry) return null;
+  if (entry.method === 'api_key' && !entry.apiKey) {
+    const keychainKey = await keychainGet(providerId);
+    if (keychainKey) return { ...entry, apiKey: keychainKey };
+  }
+  return entry;
+}
+
+/** The entry as written to the file: an API key moves to the Keychain when it can. */
+async function storeKeyInKeychain(providerId: string, entry: CredentialEntry): Promise<CredentialEntry> {
+  const stored: CredentialEntry = { ...entry };
+  if (entry.method === 'api_key' && entry.apiKey && await keychainSet(providerId, entry.apiKey)) {
+    // Key is in Keychain, don't store in plaintext file
+    delete stored.apiKey;
+  }
+  return stored;
+}
+
+/** A stored entry as pi's credential. */
+function toCredential(entry: CredentialEntry | null): Credential | undefined {
+  if (!entry) return undefined;
+  if (entry.method === 'oauth' && entry.oauthCredentials) {
+    try {
+      const parsed = JSON.parse(entry.oauthCredentials) as Record<string, unknown>;
+      return { ...parsed, type: 'oauth' } as Credential;
+    } catch {
+      return undefined;
+    }
+  }
+  if (entry.method === 'api_key' && entry.apiKey) return { type: 'api_key', key: entry.apiKey };
+  return undefined;
+}
+
+/** pi's credential as a stored entry, keeping the existing entry's own fields. */
+function fromCredential(providerId: string, credential: Credential, existing: CredentialEntry | null): CredentialEntry {
+  const base: CredentialEntry = existing ?? { provider: providerId, method: credential.type, addedAt: Date.now() };
+  if (credential.type === 'oauth') {
+    const { apiKey: _apiKey, ...rest } = base;
+    return {
+      ...rest,
+      method: 'oauth',
+      oauthCredentials: JSON.stringify(credential),
+      oauthMeta: {
+        ...base.oauthMeta,
+        expiresAt: credential.expires,
+        refreshable: Boolean(credential.refresh),
+      },
+    };
+  }
+  const { oauthCredentials: _oauth, oauthMeta: _meta, ...rest } = base;
+  return { ...rest, method: 'api_key', ...(credential.key ? { apiKey: credential.key } : {}) };
 }

@@ -34,7 +34,7 @@ export interface AgentConfigInput {
    */
   resolveNetworkAccess: NonNullable<CortexAgentConfig['resolveNetworkAccess']>;
   isAutoApprove: NonNullable<CortexAgentConfig['isAutoApprove']>;
-  getApiKey: NonNullable<CortexAgentConfig['getApiKey']>;
+  getAuth: NonNullable<CortexAgentConfig['getAuth']>;
 }
 
 export function buildAgentConfig(input: AgentConfigInput): CortexAgentConfig {
@@ -59,7 +59,7 @@ export function buildAgentConfig(input: AgentConfigInput): CortexAgentConfig {
     resolveNetworkAccess: input.resolveNetworkAccess,
     isAutoApprove: input.isAutoApprove,
     ...(input.sandbox ? { sandbox: input.sandbox } : {}),
-    getApiKey: input.getApiKey,
+    getAuth: input.getAuth,
     contextWindowLimit: input.config.contextWindowLimit ?? null,
     compaction: { strategy: input.compactionStrategy },
     persistResult: createToolResultPersistor(input.sessionId),

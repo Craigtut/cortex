@@ -4,7 +4,7 @@
  * Builds the CortexAgent and the TUI, and wires the collaborators that each
  * own one part of a session:
  * - model, provider and effort selection (session/model-selection)
- * - the agent's getApiKey credentials (providers/api-key-resolver)
+ * - the agent's getAuth credentials (providers/api-key-resolver)
  * - tool and network permission prompts (permissions/prompt-broker)
  * - the sandbox rung and status (session/sandbox-state)
  * - trust gates for project MCP servers, hooks and skills (session/trust-gates)
@@ -636,7 +636,7 @@ export class Session {
         this.permissions.resolvePermission(toolName, toolArgs, context),
       resolveNetworkAccess: (req) => this.permissions.resolveNetworkAccess(req),
       isAutoApprove: () => this.yoloMode,
-      getApiKey: (provider) => this.apiKeys.getApiKey(provider),
+      getAuth: (provider) => this.apiKeys.getAuth(provider),
     });
   }
 
