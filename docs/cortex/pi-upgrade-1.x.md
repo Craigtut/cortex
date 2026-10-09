@@ -317,8 +317,8 @@ pi's own `AuthStorage` approach: `stale: 30_000`, `retries: 0`, and an outer
 backoff loop up to a deadline (`packages/coding-agent/src/core/auth-storage.ts:120-145`).
 
 Once that's in place, `ApiKeyResolver`'s single-flight and
-`resolveStoredOAuthApiKey`'s rotation retries are deleted. Pass an env-blind
-`AuthContext` to keep the no-env-var policy.
+`resolveStoredOAuthApiKey`'s rotation retries are deleted. Cortex Code needs no
+extra env handling, since Cortex is env-blind by default (decision 3).
 
 ## Error classification onto pi-ai
 
@@ -516,9 +516,11 @@ against the pre-change source: revert only the source with
     `provider-manager/pi-ai.ts:100`, `providers/ollama/model.ts:1`, Cortex Code
     `src/complete.ts:258`, `tools/benchmark-ollama.mjs:6` and
     `tests/eval/helpers/provider.ts:52`.
-  - Keep today's semantics: an explicit key goes through `provider.streamSimple`,
-    and no key goes through `Models` auth, which includes ambient env vars as
-    compat did.
+  - An explicit key goes through `provider.streamSimple`. With no key, Cortex
+    resolves auth through `Models` with an env-blind `AuthContext` by default,
+    so provider env vars and Anthropic federation are ignored unless the
+    consumer opts in (decision 3). This is a behavior change from compat, which
+    read env vars silently; it needs a test that fails on today's code.
 - Tests:
   - A grep gate: no `pi-ai/compat` import in `src`, `tests` or `tools`.
   - Contract tests stop mocking `/compat` and run on pi's faux provider. They
@@ -614,11 +616,11 @@ for changes. Where pi lacks something, keep our own code.
 1. **Version pins:** exact `1.1.0` pins.
 2. **`getAuth` and `getApiKey`:** add `getAuth`, keep `getApiKey` as the simple
    path.
-3. **Ambient env credentials in Cortex:** pending. Today Cortex silently falls
-   back to provider env vars (for example `ANTHROPIC_API_KEY`) when the
-   consumer's `getApiKey` returns nothing, because pi-ai's `/compat` layer reads
-   them (`pi-ai/dist/compat.js:146-153`). Recommendation: Cortex stops doing that
-   by default and a consumer opts in explicitly.
+3. **Ambient env credentials in Cortex:** Cortex ignores them by default and a
+   consumer opts in explicitly. Today Cortex silently falls back to provider env
+   vars (for example `ANTHROPIC_API_KEY`) when the consumer's `getApiKey` returns
+   nothing, because pi-ai's `/compat` layer reads them
+   (`pi-ai/dist/compat.js:146-153`). That fallback goes away.
 4. **Branded OAuth page:** keep our patch, matched by path. No upstream request.
 5. **Talker model:** fix utility-model inference so Anthropic duplex talkers
    resolve to `claude-haiku-5-5`.
