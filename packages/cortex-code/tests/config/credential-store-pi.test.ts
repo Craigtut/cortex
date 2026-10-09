@@ -21,6 +21,7 @@ import { CredentialFileError, CredentialStore } from '../../src/config/credentia
 import type { CredentialFile } from '../../src/config/credentials.js';
 
 const HOUR = 60 * 60 * 1000;
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
 let dir: string;
 let file: string;
@@ -42,6 +43,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Object.defineProperty(process, 'platform', platform);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -67,6 +69,8 @@ describe('CredentialStore as pi-ai CredentialStore', () => {
   });
 
   it('reads an API key the Keychain holds', async () => {
+    // The Keychain is macOS only; the store skips it on other platforms.
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     execFile.mockImplementation((_cmd: string, args: string[], callback: (err: Error | null, out?: { stdout: string }) => void) =>
       (args[0] === 'find-generic-password' ? callback(null, { stdout: 'sk-from-keychain\n' }) : callback(new Error('no'))));
     writeFixture({ providers: { openai: { provider: 'openai', method: 'api_key', addedAt: 1 } } });
