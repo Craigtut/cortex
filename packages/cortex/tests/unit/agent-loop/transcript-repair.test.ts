@@ -53,27 +53,28 @@ describe('unwinding around system messages', () => {
 
   it('requeues a delivery pi declared a tool change ahead of, keeping the declaration', () => {
     const messages = [user('old'), declaration(), user('delivery'), stub()];
-    expect(unwindFailedDelivery(messages, 1).outcome).toBe('requeue');
+    expect(unwindFailedDelivery(messages, 1)).toMatchObject({ outcome: 'requeue', removed: [2, 3] });
     expect(messages.map((m) => m.role)).toEqual(['user', 'system']);
   });
 
   it('requeues a delivery a prompt patch followed', () => {
     const messages = [user('old'), user('delivery'), patch(), stub()];
-    expect(unwindFailedDelivery(messages, 1).outcome).toBe('requeue');
+    // The delivery leaves from before the patch, which stays.
+    expect(unwindFailedDelivery(messages, 1)).toMatchObject({ outcome: 'requeue', removed: [1, 3] });
     expect(messages.map((m) => m.role)).toEqual(['user', 'system']);
   });
 
   it('never hands the delivery itself back as injected text', () => {
     const messages = [user('old'), declaration(), user('delivery'), user('steered'), toolCallTurn(), stub()];
     const result = unwindFailedDelivery(messages, 1);
-    expect(result).toMatchObject({ outcome: 'requeue', injectedUserTexts: ['steered'] });
+    expect(result).toEqual({ outcome: 'requeue', injectedUserTexts: ['steered'], removed: [2, 3, 4, 5] });
     expect(messages.map((m) => m.role)).toEqual(['user', 'system']);
   });
 
   it('reparks a spliced batch pi declared a tool change ahead of', () => {
     const messages = [user('old'), declaration(), user('wake'), user('prompt'), stub()];
     expect(unwindSplicedBatch(messages, [{ content: 'wake' }], 1, 0))
-      .toEqual({ outcome: 'repark', trimmed: true });
+      .toEqual({ outcome: 'repark', removed: [2] });
     expect(messages.map((m) => (m.role === 'user' ? m.content : m.role))).toEqual(['old', 'system', 'prompt', 'assistant']);
   });
 
@@ -86,7 +87,7 @@ describe('unwinding around system messages', () => {
 describe('unwindFailedDelivery', () => {
   it('removes the delivery message and its stub when the run made no progress', () => {
     const messages = [user('old'), user('delivery'), stub()];
-    expect(unwindFailedDelivery(messages, 1)).toEqual({ outcome: 'requeue', injectedUserTexts: [], trimmed: true });
+    expect(unwindFailedDelivery(messages, 1)).toEqual({ outcome: 'requeue', injectedUserTexts: [], removed: [1, 2] });
     expect(messages).toEqual([user('old')]);
   });
 
@@ -94,14 +95,15 @@ describe('unwindFailedDelivery', () => {
     expect(unwindFailedDelivery([user('old')], 1).outcome).toBe('requeue');
     const toolResult = { role: 'toolResult', content: [{ type: 'text', text: 'ok' }] } as unknown as AgentMessage;
     const progressed = [user('old'), user('delivery'), toolCallTurn(), toolResult, stub()];
-    expect(unwindFailedDelivery(progressed, 1).outcome).toBe('durable');
+    // Only the stub leaves.
+    expect(unwindFailedDelivery(progressed, 1)).toMatchObject({ outcome: 'durable', removed: [4] });
     expect(progressed).toHaveLength(4);
   });
 
   it('unwinds an unpaired tool call and hands back injected user text', () => {
     const messages = [user('old'), user('delivery'), toolCallTurn(), user('steered'), toolCallTurn(), stub()];
     const unwind = unwindFailedDelivery(messages, 1);
-    expect(unwind).toEqual({ outcome: 'requeue', injectedUserTexts: ['steered'], trimmed: true });
+    expect(unwind).toEqual({ outcome: 'requeue', injectedUserTexts: ['steered'], removed: [1, 2, 3, 4, 5] });
     expect(messages).toEqual([user('old')]);
   });
 });
@@ -111,13 +113,13 @@ describe('unwindSplicedBatch', () => {
 
   it('splices the wake messages back out when nothing answered them', () => {
     const messages = [user('old'), user('w1'), user('w2'), user('silent'), user('prompt'), stub()];
-    expect(unwindSplicedBatch(messages, batch, 1, 1)).toEqual({ outcome: 'repark', trimmed: true });
+    expect(unwindSplicedBatch(messages, batch, 1, 1)).toEqual({ outcome: 'repark', removed: [1, 2] });
     expect(messages).toEqual([user('old'), user('silent'), user('prompt'), stub()]);
   });
 
   it('reparks without touching history when the batch never landed', () => {
     const messages = [user('old')];
-    expect(unwindSplicedBatch(messages, batch, 1, 0)).toEqual({ outcome: 'repark', trimmed: false });
+    expect(unwindSplicedBatch(messages, batch, 1, 0)).toEqual({ outcome: 'repark', removed: [] });
   });
 
   it('leaves durable and rewritten transcripts alone', () => {

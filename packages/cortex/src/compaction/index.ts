@@ -417,15 +417,26 @@ export class CompactionManager {
 
   /**
    * Reconcile the observational buffer after the tail of the post-slot
-   * source history was trimmed (an aborted or failed run's stub, or a
-   * failed background delivery being unwound). Clamps the buffer watermark
-   * and any in-flight observer end index to the surviving source length so
-   * the next activation cannot slice away unobserved messages.
+   * source history was trimmed (an aborted or failed run's stub). Clamps
+   * the buffer watermark and any in-flight observer end index to the
+   * surviving source length so the next activation cannot slice away
+   * unobserved messages.
    *
    * @param postSlotLength - post-slot source history length after the trim
    */
   onSourceHistoryTailTrimmed(postSlotLength: number): void {
     this.observationalEngine.onSourceHistoryTailTrimmed(postSlotLength);
+  }
+
+  /**
+   * Reconcile the observational buffer after messages left the post-slot
+   * source history from anywhere in it (a failed delivery being unwound).
+   *
+   * @param postSlotIndices - removed post-slot indices, ascending, as the
+   *   history was before the removal
+   */
+  onSourceHistoryRemoved(postSlotIndices: readonly number[]): void {
+    this.observationalEngine.onSourceHistoryRemoved(postSlotIndices);
   }
 
   /**

@@ -83,6 +83,36 @@ describe('ObservationLedger', () => {
     });
   });
 
+  describe('removals from inside the source', () => {
+    it('moves every index down past the removed messages before it', () => {
+      const ledger = ledgerWithChunks(3, 7);
+      ledger.removePrefix(3, 1);
+      // Observed-and-kept [0, 1), chunk to 5.
+      expect(ledger.onRemoved([0, 2, 4, 6])).toBe(false);
+      expect(ledger.observedPrefix).toBe(0);
+      expect(ledger.completedChunks().map((c) => c.endIndex)).toEqual([2]);
+      expect(ledger.watermark).toBe(2);
+    });
+
+    it('moves a pending call that held none of them', () => {
+      const ledger = ledgerWithChunks(4);
+      const token = ledger.begin(8);
+      expect(ledger.onRemoved([1, 9])).toBe(false);
+      expect(ledger.pendingRange()).toEqual({ start: 3, end: 7 });
+      expect(ledger.land(token, chunk('late'))).toBe(true);
+      expect(ledger.watermark).toBe(7);
+    });
+
+    it('invalidates a pending call that held one, which then lands nothing', () => {
+      const ledger = ledgerWithChunks(4);
+      const token = ledger.begin(8);
+      expect(ledger.onRemoved([1, 6])).toBe(true);
+      expect(ledger.pendingRange()).toBeNull();
+      expect(ledger.land(token, chunk('late'))).toBe(false);
+      expect(ledger.watermark).toBe(3);
+    });
+  });
+
   describe('restore', () => {
     it('drops chunks saved without a watermark', () => {
       const ledger = new ObservationLedger();

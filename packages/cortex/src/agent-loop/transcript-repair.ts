@@ -5,8 +5,8 @@
  * remove so the transcript can be resumed (continue() rejects a trailing
  * assistant turn) or the undelivered content re-delivered exactly once.
  *
- * Pure over the live message array (mutated in place); callers tell the
- * compaction manager when the tail was trimmed.
+ * Pure over the live message array (mutated in place); callers report what
+ * was removed to the compaction manager.
  */
 
 import type { AgentMessage } from '../context-manager.js';
@@ -92,31 +92,38 @@ export function trimTrailingFailures(messages: AgentMessage[]): boolean {
  *   at `runStart` is not it, compaction removed or moved it mid-run: the run
  *   progressed, so the delivery is durable, and nothing after `runStart` may
  *   be mistaken for it.
+ * @returns `removed`: the indices of every message removed, ascending, as
+ *   the array was before the call. Not only the tail: system messages among
+ *   the unwound turns stay.
  */
 export function unwindFailedDelivery(
   messages: AgentMessage[],
   runStart: number,
   deliveryContent?: string,
-): { outcome: 'requeue' | 'durable'; injectedUserTexts: string[]; trimmed: boolean } {
+): { outcome: 'requeue' | 'durable'; injectedUserTexts: string[]; removed: number[] } {
   const injectedUserTexts: string[] = [];
   // Only this run's stubs; an earlier turn's stub stays.
   const stubs = trailingFailureCount(messages, runStart);
-  let trimmed = stubs > 0;
-  if (trimmed) messages.splice(messages.length - stubs, stubs);
+  const stubIndices = Array.from({ length: stubs }, (_, i) => messages.length - stubs + i);
+  messages.splice(messages.length - stubs, stubs);
+  // Every turn sits before the stubs, so its index is the same either side
+  // of their removal.
+  const result = (outcome: 'requeue' | 'durable', removedTurns: number[] = []) =>
+    ({ outcome, injectedUserTexts, removed: [...removedTurns, ...stubIndices] });
 
   // A mid-run compaction keeps the recent tail, so the delivery is durable.
-  if (messages.length < runStart) return { outcome: 'durable', injectedUserTexts, trimmed };
+  if (messages.length < runStart) return result('durable');
   // Turns only: pi declares tool changes ahead of the delivery and Cortex
   // patches the prompt mid-run. Those system messages stay where they are
   // (they declare what is still true); only turns are unwound.
   const turns = turnIndicesFrom(messages, runStart);
-  if (turns.length === 0) return { outcome: 'requeue', injectedUserTexts, trimmed };
+  if (turns.length === 0) return result('requeue');
   if (deliveryContent !== undefined && !isDeliveryMessage(messages[turns[0]!], deliveryContent)) {
-    return { outcome: 'durable', injectedUserTexts, trimmed };
+    return result('durable');
   }
   if (turns.length === 1 && raw(messages[turns[0]!])['role'] === 'user') {
-    messages.splice(turns[0]!, 1);
-    return { outcome: 'requeue', injectedUserTexts, trimmed: true };
+    removeIndices(messages, turns);
+    return result('requeue', turns);
   }
   if (raw(messages[turns[turns.length - 1]!])['role'] === 'assistant') {
     for (const index of turns.slice(1)) {
@@ -126,10 +133,9 @@ export function unwindFailedDelivery(
       if (text.trim().length > 0) injectedUserTexts.push(text);
     }
     removeIndices(messages, turns);
-    trimmed = true;
-    return { outcome: 'requeue', injectedUserTexts, trimmed };
+    return result('requeue', turns);
   }
-  return { outcome: 'durable', injectedUserTexts, trimmed };
+  return result('durable');
 }
 
 /** Whether `message` is the user turn carrying `content`. */
@@ -168,13 +174,16 @@ function removeIndices(messages: AgentMessage[], indices: readonly number[]): vo
  * @param boundary - Index where pi pushed the batch.
  * @param trailingBatchCount - Messages the batch carried after the wake
  *   portion (flushed silent deliveries); the prompt input follows those.
+ * @returns `removed`: the indices of the wake messages spliced out,
+ *   ascending, as the array was before the call. The prompt input and any
+ *   failure stub after them stay.
  */
 export function unwindSplicedBatch(
   messages: AgentMessage[],
   wakeBatch: ReadonlyArray<{ content: string }>,
   boundary: number,
   trailingBatchCount: number,
-): { outcome: 'repark' | 'durable' | 'rewritten'; trimmed: boolean } {
+): { outcome: 'repark' | 'durable' | 'rewritten'; removed: number[] } {
   // pi puts a tool-change declaration ahead of the batch, and Cortex may
   // patch the prompt mid-run: match and count turns, not system messages.
   const end = messages.length - trailingFailureCount(messages, boundary);
@@ -186,13 +195,14 @@ export function unwindSplicedBatch(
     landed += 1;
   }
 
-  if (landed === 0) return { outcome: 'repark', trimmed: false };
-  if (landed < wakeBatch.length) return { outcome: 'rewritten', trimmed: false };
+  if (landed === 0) return { outcome: 'repark', removed: [] };
+  if (landed < wakeBatch.length) return { outcome: 'rewritten', removed: [] };
 
   // Any surviving turn beyond the pushed batch, stubs aside, means progress.
   if (turns.length > wakeBatch.length + trailingBatchCount + 1) {
-    return { outcome: 'durable', trimmed: false };
+    return { outcome: 'durable', removed: [] };
   }
-  removeIndices(messages, turns.slice(0, landed));
-  return { outcome: 'repark', trimmed: true };
+  const removed = turns.slice(0, landed);
+  removeIndices(messages, removed);
+  return { outcome: 'repark', removed };
 }

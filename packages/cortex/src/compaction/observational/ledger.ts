@@ -11,11 +11,13 @@
  *   [watermark, ...)           not observed; at most one observer call is
  *                               pending over [watermark, pending.end)
  *
- * Every rewrite of the source reports here, and the ledger moves every index
- * with the messages it points at, so a pending observer survives a swap and
- * lands at its shifted range instead of being thrown away. A pending call is
- * invalidated (by token) only when its range can no longer be mapped: a
- * restore, a reset, or messages in its range dropped unobserved.
+ * Every rewrite of the source reports here (a swap's prefix removal, a
+ * failed run's trimmed stubs, an unwound delivery's removals from anywhere
+ * in the history), and the ledger moves every index with the messages it
+ * points at, so a pending observer survives a swap and lands at its shifted
+ * range instead of being thrown away. A pending call is invalidated (by
+ * token) only when its range can no longer be mapped: a restore, a reset,
+ * or messages in its range removed unobserved.
  */
 
 import type { ObservationChunk } from './types.js';
@@ -157,8 +159,8 @@ export class ObservationLedger {
 
   /**
    * The source was trimmed from the tail to `length` (a failed run's stub).
-   * Every index past it is clamped; chunk text about a trimmed stub is
-   * harmless.
+   * Every index past it is clamped, and a pending call stays: its text
+   * about a trimmed stub is harmless.
    */
   onTailTrimmed(length: number): void {
     const max = Math.max(0, length);
@@ -167,6 +169,30 @@ export class ObservationLedger {
     if (this.pending) {
       this.pending = { ...this.pending, start: Math.min(this.pending.start, max), end: Math.min(this.pending.end, max) };
     }
+  }
+
+  /**
+   * The messages at `indices` (ascending, as the source was before) left it
+   * from anywhere, not only the tail: a failed delivery was unwound. Every
+   * index moves down past the removed messages before it. A buffered chunk
+   * that covered one keeps its text, since an observation cannot be split;
+   * a pending call whose range held one is invalidated, since its result
+   * would record content that is being delivered again.
+   *
+   * @returns whether a pending call was invalidated
+   */
+  onRemoved(indices: readonly number[]): boolean {
+    const shifted = (index: number): number => index - indices.filter((removed) => removed < index).length;
+    this.prefix = shifted(this.prefix);
+    this.chunks = this.chunks.map((chunk) => ({ ...chunk, endIndex: shifted(chunk.endIndex) }));
+    if (!this.pending) return false;
+    const { start, end } = this.pending;
+    if (indices.some((removed) => removed >= start && removed < end)) {
+      this.pending = null;
+      return true;
+    }
+    this.pending = { ...this.pending, start: shifted(start), end: shifted(end) };
+    return false;
   }
 
   // -------------------------------------------------------------------------

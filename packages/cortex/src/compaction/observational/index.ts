@@ -772,7 +772,7 @@ export class ObservationalMemoryEngine {
 
   /**
    * Reconcile buffer state after the tail of the post-slot source history
-   * was trimmed (aborted/failed run stubs, unwound background deliveries).
+   * was trimmed (aborted/failed run stubs).
    *
    * pi emits turn_end for those messages before Cortex trims them, so an
    * observer counting them may be in flight (or already completed) with an
@@ -783,6 +783,19 @@ export class ObservationalMemoryEngine {
    */
   onSourceHistoryTailTrimmed(postSlotLength: number): void {
     this.buffering.onSourceTailTrimmed(postSlotLength);
+  }
+
+  /**
+   * Reconcile buffer state after messages left the post-slot source history
+   * from anywhere in it (a failed delivery being unwound): every index
+   * shifts with the messages it points at, and an observer over removed
+   * content lands nothing.
+   *
+   * @param postSlotIndices - removed post-slot indices, ascending, as the
+   *   history was before the removal
+   */
+  onSourceHistoryRemoved(postSlotIndices: readonly number[]): void {
+    this.buffering.onSourceRemoved(postSlotIndices);
   }
 
   /**

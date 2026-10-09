@@ -2578,26 +2578,25 @@ You have 12 emotions.`;
       expect(historyOccurrences(agent, 'sixty-thousand-token payload')).toBe(1);
     });
 
-    it('tells the compaction manager the post-slot length after unwinding a failed delivery', async () => {
+    it('tells the compaction manager which messages unwinding a failed delivery removed', async () => {
       // pi emits turn_end for the delivery message and failure stub before
-      // the unwind removes them, so an observational buffer watermark may
-      // already count them. The unwind must notify the compaction manager
-      // with the surviving post-slot length (here: back to the empty
-      // pre-delivery transcript) so the watermark is clamped.
+      // the unwind removes them, so the observational ledger may already
+      // count them. The unwind reports their post-slot indices (here: the
+      // delivery and its stub, back to the empty pre-delivery transcript)
+      // so every index the ledger holds moves with the messages.
       const agent = createTestAgentLoop(piAgent, config);
       const internal = partsOf(agent);
       const spy = vi.spyOn(
         partsOf(agent).compactionManager,
-        'onSourceHistoryTailTrimmed',
+        'onSourceHistoryRemoved',
       );
       seedCompletedTask(agent, 'task_wm', 'watermark payload');
       installFailingPrompt(1);
 
       await internal.background.enqueue({ kind: 'bash', taskId: 'task_wm' });
 
-      expect(spy).toHaveBeenCalled();
-      const lastCall = spy.mock.calls[spy.mock.calls.length - 1]!;
-      expect(lastCall[0]).toBe(0);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith([0, 1]);
       // The retry then delivered normally.
       expect(historyRoles(agent)).toEqual(['user', 'assistant']);
     });

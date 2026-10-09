@@ -160,6 +160,14 @@ export function assembleLoop(params: {
     const postSlotLength = Math.max(0, agent.state.messages.length - contextManager.historyStart);
     compactionManager.onSourceHistoryTailTrimmed(postSlotLength);
   };
+  const notifyRemoved = (indices: readonly number[]): void => {
+    // An unwound delivery leaves from inside the history: the observational
+    // ledger shifts every index past it, as it does for a swap.
+    const historyStart = contextManager.historyStart;
+    compactionManager.onSourceHistoryRemoved(
+      indices.filter((index) => index >= historyStart).map((index) => index - historyStart),
+    );
+  };
 
   const queues: DeliveryQueues = new DeliveryQueues({
     gate,
@@ -178,7 +186,7 @@ export function assembleLoop(params: {
     transcript: {
       messages: transcript,
       boundary: () => runner.boundary,
-      notifyTailTrimmed,
+      notifyRemoved,
     },
     piQueues: agent,
     deadLetters,

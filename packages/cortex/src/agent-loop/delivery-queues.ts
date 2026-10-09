@@ -65,7 +65,8 @@ export interface DeliveryQueuePorts {
     messages(): AgentMessage[];
     /** Where this run's leading batch starts (live: compaction moves it). */
     boundary(): number;
-    notifyTailTrimmed(): void;
+    /** Messages at `indices` (ascending, as the transcript was) were removed. */
+    notifyRemoved(indices: readonly number[]): void;
   };
   piQueues: Pick<
     PiAgent,
@@ -334,7 +335,7 @@ export class DeliveryQueues {
     const boundary = this.ports.transcript.boundary();
 
     const unwind = unwindSplicedBatch(messages, wakeBatch, boundary, trailingBatchCount);
-    if (unwind.trimmed) this.ports.transcript.notifyTailTrimmed();
+    if (unwind.removed.length > 0) this.ports.transcript.notifyRemoved(unwind.removed);
     if (unwind.outcome !== 'repark') return;
 
     if (aborted || error === null) {
@@ -377,7 +378,7 @@ export class DeliveryQueues {
       this.ports.transcript.boundary(),
       deliveryContent,
     );
-    if (unwind.trimmed) this.ports.transcript.notifyTailTrimmed();
+    if (unwind.removed.length > 0) this.ports.transcript.notifyRemoved(unwind.removed);
     if (unwind.injectedUserTexts.length > 0) {
       // Content pi injected inside the failed run opens the next run.
       for (const content of unwind.injectedUserTexts) {

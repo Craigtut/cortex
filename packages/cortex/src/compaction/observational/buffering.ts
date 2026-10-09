@@ -472,8 +472,7 @@ export class BufferingCoordinator {
 
   /**
    * Reconcile buffer state after the source conversation history was
-   * trimmed from the tail (an aborted or failed run's stub, or a failed
-   * background delivery being unwound).
+   * trimmed from the tail (an aborted or failed run's stub).
    *
    * pi emits turn_end for those messages before Cortex trims them, so an
    * observer may have launched with a range that counts them, or already
@@ -486,6 +485,19 @@ export class BufferingCoordinator {
    */
   onSourceTailTrimmed(postSlotLength: number): void {
     this.ledger.onTailTrimmed(postSlotLength);
+  }
+
+  /**
+   * Reconcile buffer state after messages left the source conversation
+   * history from anywhere in it (a failed delivery being unwound). Indices
+   * past them shift down; an in-flight observer over any of them is
+   * forgotten, and its result lands nothing.
+   *
+   * @param postSlotIndices - the removed messages' post-slot indices,
+   *   ascending, as the history was before the removal
+   */
+  onSourceRemoved(postSlotIndices: readonly number[]): void {
+    if (this.ledger.onRemoved(postSlotIndices)) this.inFlightObserver = null;
   }
 }
 
