@@ -21,7 +21,7 @@ import { charsForTokens, estimateTokens } from '../../token-estimator.js';
 import { isSystemMessage } from '../../system-transcript.js';
 import { MemoryReplyError, readObservationsBlock } from './reply.js';
 import { applyBookend } from '../microcompaction.js';
-import { historyTokens } from '../message-tokens.js';
+import { observableHistoryTokens } from '../message-tokens.js';
 import { callWithPolicy, SINGLE_ATTEMPT } from './calls.js';
 import type { CallPolicy } from './calls.js';
 
@@ -261,7 +261,7 @@ function truncateValue(value: string, maxLen: number): string {
  * Messages are copied, never mutated. Under budget, returns them unchanged.
  */
 export function fitMessagesToObserverBudget(messages: AgentMessage[], maxInputTokens: number): AgentMessage[] {
-  const total = historyTokens(messages);
+  const total = observableHistoryTokens(messages);
   if (total <= maxInputTokens) return messages;
   const resultCount = messages.reduce((count, msg) => count + toolResultTexts(msg), 0);
   if (resultCount === 0) return messages;

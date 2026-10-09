@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
-import { messageTokens } from '../message-tokens.js';
+import { observableTokens } from '../message-tokens.js';
 import { findToolCallGroups } from '../tool-call-groups.js';
 
 /** A unit's range in history, [start, end). */
@@ -50,7 +50,8 @@ export function unitCeil(history: AgentMessage[], index: number): number {
 
 /**
  * Where the next observation piece starting at `from` should end: as many
- * whole units as fit `capTokens`, and at least one.
+ * whole units as fit `capTokens` of what the observer reads, and at least
+ * one.
  */
 export function pieceEnd(history: AgentMessage[], from: number, capTokens: number): number {
   let end = from;
@@ -60,7 +61,7 @@ export function pieceEnd(history: AgentMessage[], from: number, capTokens: numbe
     // A `from` inside a unit (only legacy state can put it there) takes the
     // unit's remainder first.
     let unitTokens = 0;
-    for (let i = Math.max(unit.start, from); i < unit.end; i++) unitTokens += messageTokens(history[i]!);
+    for (let i = Math.max(unit.start, from); i < unit.end; i++) unitTokens += observableTokens(history[i]!);
     if (end > from && tokens + unitTokens > capTokens) break;
     tokens += unitTokens;
     end = unit.end;

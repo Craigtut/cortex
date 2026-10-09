@@ -628,7 +628,7 @@ If the consumer uses a utility model with a very small context window, both obse
 ### Token estimation
 
 Uses the existing dual-tracking approach:
-- Heuristic: `estimateTokens(text)` = `Math.ceil(text.length / 3.5)`, pi-ai's `estimateTextTokens`, so Cortex and pi agree on what a text costs. A message weighs the heuristic over its text as the observer reads it (tool calls rendered with their arguments; images and thinking not counted). Every layer measures history on that one basis (`compaction/message-tokens.ts`): turn-end buffering and idle digestion's floor, observer pieces, the verbatim tail, a chunk's observed size, Layer 1's hot zone, the context estimate and the view cut
+- Heuristic: `estimateTokens(text)` = `Math.ceil(text.length / 3.5)`, pi-ai's `estimateTextTokens`, so Cortex and pi agree on what a text costs. `compaction/message-tokens.ts` owns what history costs, two ways. In context, a message weighs pi-ai's `estimateMessageTokens`: images, a system message's sections and tool declarations, and tool calls count; thinking does not, since providers mostly drop it from earlier turns. The verbatim tail, the swap's accounting, Layer 1's hot zone, the context estimate and the view cut use it; the context estimate counts the prompt and tools where the transcript's system messages declare them. To the observer, a message weighs the heuristic over the text the observer reads (system messages and image bytes not counted): observer pieces, turn-end buffering, idle digestion's floor and a chunk's observed size use it, so a tool declaration never wakes the observer for nothing. Restored history in shapes pi's estimate was not written for (string assistant content, legacy `tool_result` parts, missing content) is measured by its text
 - Post-hoc: the measured input of the last parent call
 - Working value: `Math.max(heuristic, postHoc)` to avoid underestimating
 
@@ -812,7 +812,7 @@ packages/cortex/src/compaction/
   index.ts            CompactionManager: observational memory, then L1, then L3; `memory` is the ObservationalMemory view
   microcompaction.ts  Layer 1, and the insertion-time cap
   tool-messages.ts    reading tool calls and results out of messages
-  message-tokens.ts   what a message costs: the one token basis for history
+  message-tokens.ts   what history costs, in context and to the observer
   failsafe.ts         Layer 3 settings, overflow detection
   observational/
     index.ts          ObservationalMemoryEngine: activation, compactNow, observeNow, state

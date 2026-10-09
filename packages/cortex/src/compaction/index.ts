@@ -24,6 +24,7 @@ import { NOOP_LOGGER } from '../noop-logger.js';
 import { estimateTokens } from '../token-estimator.js';
 import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS } from './microcompaction.js';
 import { historyTokens } from './message-tokens.js';
+import { isSystemMessage } from '../system-transcript.js';
 import { FAILSAFE_DEFAULTS } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
 import type { CompactNowOptions, CompactNowResult, ObservationalMemory, ObserveNowResult } from './observational/types.js';
@@ -666,9 +667,13 @@ export class CompactionManager {
   }
 
   /**
-   * Estimate total context tokens from an AgentContext object.
+   * Estimate total context tokens from an AgentContext object. The prompt
+   * and tools are counted where the transcript declares them, in its system
+   * messages; `systemPrompt` replays those, so it counts only for a
+   * transcript that declares nothing.
    */
   private estimateContextTokens(context: AgentContext): number {
-    return estimateTokens(context.systemPrompt) + historyTokens(context.messages);
+    const declared = context.messages.some(isSystemMessage);
+    return (declared ? 0 : estimateTokens(context.systemPrompt)) + historyTokens(context.messages);
   }
 }

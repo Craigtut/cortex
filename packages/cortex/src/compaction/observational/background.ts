@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
-import { historyTokens } from '../message-tokens.js';
+import { observableHistoryTokens } from '../message-tokens.js';
 import type { BufferingCoordinator } from './buffering.js';
 import { deadlineSignal } from './calls.js';
 import type { MemoryCallTrigger } from './health.js';
@@ -69,7 +69,7 @@ export class BackgroundObservation {
       });
 
     const watermark = buffering.getWatermark();
-    if (buffering.shouldBuffer(historyTokens(history.slice(watermark)), bufferInterval)) {
+    if (buffering.shouldBuffer(observableHistoryTokens(history.slice(watermark)), bufferInterval)) {
       this.launchPiece(history, watermark, 'buffer');
     }
   }
@@ -140,7 +140,7 @@ export class BackgroundObservation {
       // given up, launch nothing behind a hung observer.
       if (!(await buffering.observerSettledUnless(stop))) return timedOut('the in-flight observer');
 
-      const unobservedTokens = historyTokens(getHistory().slice(buffering.getWatermark()));
+      const unobservedTokens = observableHistoryTokens(getHistory().slice(buffering.getWatermark()));
       // Same floor onTurnEnd's buffering uses: observing a trivial tail
       // thrashes the utility model for nothing.
       if (unobservedTokens === 0 || unobservedTokens < this.ports.config().bufferMinTokens) return false;

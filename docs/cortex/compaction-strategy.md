@@ -256,7 +256,7 @@ Compaction is autonomous: every part of it runs inside `transformContext`, befor
 Cortex tracks context size two ways and uses the larger:
 
 - **Measured**: after every parent LLM call, the input tokens from `AssistantMessage.usage` (input plus cache reads and writes). This is authoritative for the context that was sent. The event bridge records it on `turn_end`; no consumer wiring is needed. It is an assignment, not a sum: each call's input is the whole context.
-- **Estimated**: the heuristic `estimateTokens` (characters / 3.5, pi-ai's `estimateTextTokens`) over the context this call would send, slots and view injections included. This catches content the last measurement never saw.
+- **Estimated**: pi-ai's per-message estimate (characters / 3.5; an image about 1,370 tokens; a system message's sections and tool declarations; thinking excluded) over the context this call would send, slots, view injections and the transcript's prompt and tool declarations included. This catches content the last measurement never saw.
 
 Compaction decisions compare that size with the **effective** window: the model's window, or the consumer's `contextWindowLimit` when it is smaller. After a swap, an overflow drop, or `observeNow`, the measured count describes a context that no longer exists, so it is invalidated and estimates stand alone until the next call measures again.
 

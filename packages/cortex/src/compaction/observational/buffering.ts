@@ -24,7 +24,7 @@ import { ObservationLedger } from './ledger.js';
 import type { LedgerState, RangedChunk } from './ledger.js';
 import { runObserver } from './observer.js';
 import { runReflector } from './reflector.js';
-import { historyTokens } from '../message-tokens.js';
+import { observableHistoryTokens } from '../message-tokens.js';
 import { MemoryCallError, SINGLE_ATTEMPT } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import type { MemoryCallOutcomes, MemoryCallTrigger } from './health.js';
@@ -505,7 +505,7 @@ export class BufferingCoordinator {
 export function chunkFromOutput(output: ObserverOutput, messages: AgentMessage[]): ObservationChunk {
   const chunk: ObservationChunk = {
     observations: output.observations,
-    messageTokensObserved: historyTokens(messages),
+    messageTokensObserved: observableHistoryTokens(messages),
     createdAt: new Date(),
   };
   if (output.currentTask) chunk.currentTask = output.currentTask;
