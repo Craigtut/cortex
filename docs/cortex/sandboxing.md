@@ -67,6 +67,66 @@ Native Windows uses Cortex's restricted-token helper. Tier 1 confines writes and
 
 `SandboxStatus` reports actual enforcement. Managed setup requires all requested dimensions by default and refuses unavailable or partial enforcement. `requireEnforcement: false` explicitly permits degraded operation. Cortex Code chooses that fallback explicitly to retain its existing behavior and displays the result; this is a consumer preference, not a framework default.
 
+## Windows backend: MXC BaseContainer (design)
+
+Native Windows moves to Microsoft eXecution Containers (MXC 1.0.0, `@microsoft/mxc-sdk`), following the approach of Codex's `codex-rs/mxc-sandbox`. Only the BaseContainer tier is used. It is enforced by the OS through the process security environment (PSEC, `CreateProcessSecurityEnvironment`), needs no elevation, and makes no host ACL changes. The AppContainer tiers (`appcontainer-bfs`, `appcontainer-dacl`) are never accepted. They are weaker and the DACL tier edits host ACLs. The restricted-token helper is removed rather than kept as a fallback.
+
+**Provider shape.** Three modules under `sandbox/backends/`:
+
+| Module | Responsibility |
+| --- | --- |
+| `mxc.ts` | `MxcSandboxProvider`: probe, host-side proxy, per-command request, status, lifecycle. Runs in the agent process and never loads the SDK. |
+| `mxc-request.ts` | Pure mapping from `SandboxPolicy` to an MXC `ContainerRequest`, Windows command-line quoting, and the launcher's env transport. |
+| `mxc-launcher.ts` | Per-command launcher process. It is the only code that imports the SDK. Self-contained: Node builtins and the SDK only. |
+
+**Contract fit: a launcher process, not a contract change.** MXC's SDK owns the spawn. `spawn(request)` creates the contained process in-process through `mxc_ffi.dll` and returns an `MxcProcess` with Node streams. `wrapSpawn` and `wrapExec` return `{file, args, env}`, and four call sites depend on that shape: Bash, Grep, skill shell markers, and stdio MCP. The MCP SDK's stdio transport spawns from a command and argument list itself and cannot adopt a process someone else started. Changing the contract would touch all four and need a custom MCP transport. So the provider returns `{ file: process.execPath, args: [launcher, '--run'], env }` instead. As in Codex, the request travels in launcher-only environment chunks so the command keeps Windows' command-line budget. The launcher strips those chunks, re-runs the tier gate, calls `spawn`, pipes stdin, stdout, and stderr both ways, and exits with the workload's exit code. If the gate or spawn fails, it prints `cortex-mxc-launcher:` and a reason, exits 125, and never runs the command uncontained.
+
+The cost is one extra Node process per command (startup plus SDK load). In return the contract stays the same, and koffi plus the native payload never load into the agent process. Kill semantics also carry over: killing the launcher closes MXC's kill-on-close job, which takes down the container's process tree. Calling `bin/<arch>/wxc-exec.exe --config-base64` directly would skip the Node hop and could set `fallback.allowDaclMutation: false`. It was rejected because `wxc-exec` is not part of the SDK's versioned API.
+
+**Policy mapping.** MXC allowlists reads, while Cortex's policy reads everything except secrets. The mapping follows Codex:
+
+- `readwritePaths`: the policy's writable roots (workspace roots and the session temp).
+- `readonlyPaths`, the read set:
+  - every logical volume root, plus a snapshot of each root's immediate children (volume-root grants do not recurse);
+  - the Windows directory, Program Files, Program Files (x86), and ProgramData.
+
+  The snapshot is taken at initialize. An entry created directly under a volume root afterwards is not readable until the next policy change.
+- Read-only carve-outs inside writable roots: `denyWrite` entries (`.git/hooks`, `.git/config`, consumer config) and the host-side code the launcher runs (the launcher, the SDK and its dependencies, `node.exe`). The second group matters when a workspace contains Cortex itself. Missing carve-outs stay in the request so creating them should also be refused (unverified on PSEC; see the checklist).
+- `deniedPaths`: the `denyRead` entries that exist when the command is wrapped. PSEC enforces these natively (`PSE_SUPPORT_FS_DENY`). `allowRead` entries become `readonlyPaths`.
+- Environment: credential variables are scrubbed, `TEMP`/`TMP` point at the session temp, and the environment is passed verbatim. MXC requires `SystemRoot` and `LOCALAPPDATA` in it.
+- UI: `ui.disable: false`, no clipboard, no input injection, and BaseProcess UI isolation `desktop`. Codex found PowerShell needs Win32k and desktop handles at startup.
+
+**Network.** This follows Codex's shape rather than MXC's `runtimeConfig.networkProxy` mode:
+
+- Allowlist and full modes:
+  - egress defaults to deny, with one allow rule for `127.0.0.0/8` and `::1/128` on all ports;
+  - ingress defaults to deny, and `hostLoopback` is `allow`.
+
+  A host-side HTTP proxy applies the same domain policy and resolver as macOS and Linux. It is the pinned sandbox-runtime's proxy server, deep-imported. `HTTP(S)_PROXY` and friends point at it. A client that ignores proxy variables cannot connect, so it fails rather than bypassing the policy.
+- Deny mode: egress is denied. Loopback follows `allowLocalBinding`.
+- The `hostLoopback` tradeoff: PSEC host loopback is bidirectional and covers every loopback port. A contained command can reach any service listening on host loopback, such as dev servers, local databases, or a Docker TCP socket, which matches `allowLocalBinding` on macOS and Linux. Narrowing this to the proxy alone needs MXC's identity-scoped `allowedProxyPeer`, which needs a packaged proxy identity. MXC's `networkProxy` mode with an unpackaged proxy also needs `hostLoopback: allow`, so it gains nothing here.
+- `allowLocalBinding: false` combined with allowlist or full egress cannot reach the proxy, so all egress is denied. That is stricter than requested and reported as a degradation.
+- The host-side proxy has no SOCKS listener. It also lacks the resolved-address guard that the runtime applies inside its own manager.
+
+**Probe and status.** `initialize()` runs the launcher in `--probe` mode against the real request shape. Each of these must hold:
+
+- Node is 24.21 or later in the 24 line, or 26.8 or later (MXC's native stdio transfer).
+- The SDK imports.
+- `getAvailableBackends()` lists `processcontainer` at tier `base-container`, with `filesystemDeniedPaths` when deny paths exist and `ingressHostLoopbackAllow` when loopback is allowed.
+- `probe(request)` selects `base-container` without DACL augmentation.
+
+`getPlatformSupport()` is not used. It is always true on win32, and it runs `dism` and `wxc-exec --probe`, which can restore leftover DACLs. The launcher repeats the backend and `probe(request)` gate before every spawn. The requests Cortex builds for networked rungs (explicit egress rules, `hostLoopback: allow`) cannot fall back to an AppContainer tier anyway; MXC rejects them with a typed error. If the probe passes, status is filesystem and network `enforced` with backend `mxc-base-container`. Any failure reports `none` with the reason (for example a missing SDK, an OS build without PSEC, or a missing capability). There is no fallback to another backend and no partial mode.
+
+**Factory selection.** On win32, `createSandboxProvider` returns the MXC provider. If its probe passes, commands are contained. Otherwise status is `none` with the reason, and strict managed setup refuses. MXC needs Windows 11 24H2 or 25H2 at build `.9278` or later (KB5120998), or 26H1/26H2. The build number is never compared: KB5120998 rolls MXC out gradually and Windows Server has a different revision line, so only the runtime probe decides.
+
+**Dependency strategy.** `@microsoft/mxc-sdk` is about 105 MB unpacked and declares no `os` or `cpu`. It depends on koffi and node-pty (another 64 MB, with a node-gyp fallback) and imports koffi at module load. As an `optionalDependency` it would install on macOS and Linux too, so it is an optional peer dependency instead. Only the launcher loads it, through a dynamic import. Windows consumers install it next to Cortex. Its Windows binaries carry Microsoft Authenticode signatures, and Cortex ships no native binary of its own.
+
+**Child-process lifetime.** MXC kills remaining descendants when the foreground process exits. Cortex's background Bash tasks keep the launcher alive, so they keep working. A detached server started inside a foreground command (`Start-Process`, `start`) dies when that command returns. This differs from macOS and Linux. Cortex pipes stdio and does not use MXC's PTY mode.
+
+**Cortex Code default.** Windows stays opt-in (`off`) until the validation checklist in the [Windows runbook](./windows-sandbox-build.md) passes on a real Windows 11 host. The old reason for opt-in, an unsigned helper that antivirus flags, no longer applies. After validation the proposed default is `workspace` whenever the MXC probe passes.
+
+**CI.** GitHub's `windows-latest` is Windows Server 2025. MXC documents Windows 11 only, and MXC's own hosted-runner jobs skip real sandbox tests. Real containment needs a self-hosted Windows 11 runner. The `windows-11-arm` hosted image (build 26200.9457) is a candidate, but whether PSEC is enabled there is unverified.
+
 ## Network flow
 
 Cortex checks explicit denied domains first. Restricted policy denies every host. Workspace policy permits seeded registries and configured domains; unknown hosts reach the optional `resolveNetworkAccess` callback and otherwise are denied. Session grants cover shell traffic and WebFetch. Trusted policy allows network traffic subject to explicit deny rules.
