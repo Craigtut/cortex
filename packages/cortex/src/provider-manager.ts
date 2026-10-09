@@ -30,7 +30,7 @@ import { OAUTH_CALLBACK_ROUTES } from './provider-manager/oauth-callback-page.js
 import type { OAuthCallbackRoute } from './provider-manager/oauth-callback-page.js';
 import { OAuthFlows } from './provider-manager/oauth-flows.js';
 import type { CredentialStore, ModelAuth } from '@earendil-works/pi-ai';
-import { authContextFor, ModelRuntime } from './model-runtime.js';
+import { ModelRuntime } from './model-runtime.js';
 import { listProviderModels } from './provider-manager/model-catalog.js';
 import { validateProviderApiKey } from './provider-manager/api-key-validation.js';
 import type { ApiKeyValidationResult } from './provider-manager/api-key-validation.js';
@@ -147,7 +147,7 @@ export class ProviderManager implements IProviderManager {
    * use: it registers every built-in provider.
    */
   private runtime(): ModelRuntime {
-    this.modelRuntime ??= new ModelRuntime(authContextFor(this.ambientCredentials), this.credentials);
+    this.modelRuntime ??= new ModelRuntime(this.ambientCredentials, this.credentials);
     return this.modelRuntime;
   }
 

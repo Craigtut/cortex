@@ -5,13 +5,20 @@
  * pi-ai is retiring.
  *
  * Auth has two paths. When the caller resolved credentials (a consumer's
- * `getApiKey`), the request goes straight to the model's provider with
- * them. Otherwise pi's `Models` resolves auth for the provider, and Cortex
- * hands it an auth context that sees no environment variables and no
- * credential files: provider env vars (`ANTHROPIC_API_KEY`), Anthropic
- * workload identity federation, AWS profiles and gcloud ADC are ignored
- * unless the consumer opts in with `ambientCredentials`. Providers that need
- * no credentials (Ollama) resolve either way.
+ * `getApiKey` or `getAuth`), the request goes straight to the model's
+ * provider with them. Otherwise pi's `Models` resolves auth for the
+ * provider, and Cortex hands it an auth context that sees no environment
+ * variables and no credential files: provider env vars (`ANTHROPIC_API_KEY`),
+ * Anthropic workload identity federation, AWS profiles and gcloud ADC are
+ * ignored unless the consumer opts in with `ambientCredentials`. Providers
+ * that need no credentials (Ollama) resolve either way.
+ *
+ * Caller credentials must authorize the request on their own: pi's API
+ * implementations fall back to ambient sources when a request carries no
+ * key (Anthropic's federation, Vertex ADC, the AWS credential chain), and
+ * read them from `process.env` directly. Without `ambientCredentials`, caller
+ * auth that is headers only, none of them an auth header the model's API
+ * accepts in place of a key, takes pi's (env-blind) resolution instead.
  */
 
 import type {
@@ -142,6 +149,26 @@ function customProvider(): Provider {
   });
 }
 
+/**
+ * The headers each pi API accepts in place of a key (pi's own checks in
+ * `anthropic-messages` and `openai-completions`/`openai-responses`). With any
+ * other API, or none of these, a request without a key falls back to ambient
+ * credentials or fails.
+ */
+const KEYLESS_AUTH_HEADERS: Partial<Record<Api, readonly string[]>> = {
+  'anthropic-messages': ['authorization', 'x-api-key', 'cf-aig-authorization'],
+  'openai-completions': ['authorization', 'cf-aig-authorization'],
+  'openai-responses': ['authorization', 'cf-aig-authorization'],
+};
+
+/** Whether `headers` authorize a request to `api` without a key. */
+function headersAuthorize(api: Api, headers: Record<string, string | null>): boolean {
+  const accepted = KEYLESS_AUTH_HEADERS[api] ?? [];
+  return Object.entries(headers).some(
+    ([name, value]) => typeof value === 'string' && value.length > 0 && accepted.includes(name.toLowerCase()),
+  );
+}
+
 /** An auth context that sees no environment variables and no files. */
 const ENV_BLIND_AUTH_CONTEXT: AuthContext = {
   env: async () => undefined,
@@ -166,11 +193,17 @@ export class ModelRuntime {
   private readonly cortexProviderIds: ReadonlySet<string>;
 
   /**
-   * @param authContext - What pi may read for ambient credentials ({@link authContextFor}).
+   * @param ambientCredentials - Whether pi may read ambient credentials ({@link authContextFor}).
    * @param credentials - Where pi reads and refreshes stored credentials; in memory by default.
    */
-  constructor(authContext: AuthContext, credentials?: CredentialStore) {
-    this.models = createModels({ authContext, ...(credentials ? { credentials } : {}) });
+  constructor(
+    private readonly ambientCredentials: boolean,
+    credentials?: CredentialStore,
+  ) {
+    this.models = createModels({
+      authContext: authContextFor(ambientCredentials),
+      ...(credentials ? { credentials } : {}),
+    });
     for (const provider of builtinProviders()) this.models.setProvider(provider);
     const own = [ollamaProvider(), customProvider()];
     for (const provider of own) this.models.setProvider(provider);
@@ -206,7 +239,7 @@ export class ModelRuntime {
     context: Context,
     options: StreamOptions & { auth?: ModelAuth | undefined } = {},
   ): AssistantMessageEventStream {
-    const caller = withCallerAuth(model, options);
+    const caller = this.callerRequest(model, options);
     if (caller) {
       return this.providerFor(caller.model).stream(
         caller.model,
@@ -223,13 +256,35 @@ export class ModelRuntime {
     context: Context,
     options: SimpleStreamOptions & { auth?: ModelAuth | undefined } = {},
   ): AssistantMessageEventStream {
-    const caller = withCallerAuth(model, options);
+    const caller = this.callerRequest(model, options);
     if (caller) {
       return this.providerFor(caller.model).streamSimple(caller.model, normalizeContext(context), caller.options);
     }
     return this.models.streamSimple(model, context, withoutCallerAuth(options));
   }
+
+  /**
+   * The request as the caller's credentials shape it, or null when they do
+   * not authorize it on their own and pi resolves auth instead. Cortex's own
+   * providers take any caller auth.
+   */
+  private callerRequest<T extends StreamOptions & { auth?: ModelAuth | undefined }>(
+    model: Model<Api>,
+    options: T,
+  ): { model: Model<Api>; options: Omit<T, 'auth'> } | null {
+    const caller = withCallerAuth(model, options);
+    if (!caller || this.ambientCredentials || this.cortexProviderIds.has(model.provider)) return caller;
+    const key = (caller.options as StreamOptions).apiKey;
+    if (key !== undefined && !PLACEHOLDER_KEY.test(key)) return caller;
+    return headersAuthorize(model.api, (caller.options as StreamOptions).headers ?? {}) ? caller : null;
+  }
 }
+
+/**
+ * A key that stands for ambient credentials rather than being one (pi's
+ * `<authenticated>` marker for Vertex ADC and the AWS chain).
+ */
+const PLACEHOLDER_KEY = /^<[^>]+>$/;
 
 /**
  * The request as the caller's credentials shape it, or null when the caller
@@ -295,10 +350,10 @@ let ambientRuntime: ModelRuntime | null = null;
  */
 export function getModelRuntime(ambientCredentials = false): ModelRuntime {
   if (ambientCredentials) {
-    ambientRuntime ??= new ModelRuntime(authContextFor(true));
+    ambientRuntime ??= new ModelRuntime(true);
     return ambientRuntime;
   }
-  envBlindRuntime ??= new ModelRuntime(authContextFor(false));
+  envBlindRuntime ??= new ModelRuntime(false);
   return envBlindRuntime;
 }
 
