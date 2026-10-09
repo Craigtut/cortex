@@ -47,6 +47,15 @@ export const OBSERVATIONAL_MEMORY_DEFAULTS: Required<
 
   /** 2k tokens of previous observations sent to the Observer for context. */
   previousObserverTokens: 2_000,
+
+  /** Each observer or reflector attempt answers within a minute. */
+  callTimeoutMs: 60_000,
+
+  /** One attempt and two quick retries. */
+  maxAttempts: 3,
+
+  /** An in-band pass blocks a request on memory calls for at most a minute. */
+  blockingBudgetMs: 60_000,
 };
 
 // ---------------------------------------------------------------------------

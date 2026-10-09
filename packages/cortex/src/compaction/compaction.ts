@@ -191,14 +191,16 @@ export function formatTurnsForSummarization(turns: AgentMessage[]): string {
  *
  * The optional second argument names the purpose of the call ('observer',
  * 'reflector'), which the wiring in AgentLoop maps to a usage-accounting
- * category. Implementations that ignore it lose nothing but attribution.
+ * category, and carries the signal that cancels it (the call's timeout or
+ * the run's abort). An implementation that ignores the signal is abandoned
+ * when it fires rather than awaited.
  */
 export type CompleteFn = (
   context: {
     systemPrompt: string;
     messages: unknown[];
   },
-  options?: { purpose?: string },
+  options?: { purpose?: string; signal?: AbortSignal },
 ) => Promise<string>;
 
 /**

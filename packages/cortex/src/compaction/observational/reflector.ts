@@ -19,6 +19,8 @@ import {
 } from './constants.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { MemoryReplyError, readObservationsBlock } from './reply.js';
+import { callWithPolicy, SINGLE_ATTEMPT } from './calls.js';
+import type { CallPolicy } from './calls.js';
 
 // ---------------------------------------------------------------------------
 // Prompt Building
@@ -205,8 +207,11 @@ const MAX_COMPRESSION_LEVEL = 4;
  *   optional reflectorInstruction.
  * @returns The reflector output with consolidated observations and the
  *   compression level that was applied.
- * @throws MemoryReplyError when a reply is unusable or the final reflection
- *   is no smaller than its input
+ * @param call - Retry and timeout policy for each level's call (default:
+ *   one attempt, no timeout) and the signal that cancels the whole run
+ * @throws MemoryCallError when a level's call produced no usable reply
+ * @throws MemoryReplyError when the final reflection is no smaller than its
+ *   input
  */
 export async function runReflector(
   complete: CompleteFn,
@@ -215,6 +220,7 @@ export async function runReflector(
     reflectionThreshold: number;
     reflectorInstruction?: string;
   },
+  call: { policy?: CallPolicy; signal?: AbortSignal } = {},
 ): Promise<ReflectorOutput> {
   let level = 0;
   let retries = 0;
@@ -223,9 +229,15 @@ export async function runReflector(
   while (true) {
     const systemPrompt = buildReflectorPrompt(level, config.reflectorInstruction);
     const messages = buildReflectorMessages(observations);
-    const raw = await complete({ systemPrompt, messages }, { purpose: 'reflector' });
-
-    parsedOutput = parseReflectorOutput(raw);
+    // A failed attempt retries this level; a usable but oversized reply
+    // escalates to the next one below.
+    parsedOutput = await callWithPolicy(
+      async (signal) => parseReflectorOutput(
+        await complete({ systemPrompt, messages }, { purpose: 'reflector', signal }),
+      ),
+      call.policy ?? SINGLE_ATTEMPT,
+      call.signal,
+    );
 
     if (validateCompression(parsedOutput, config.reflectionThreshold)) {
       return { observations: parsedOutput, compressionLevel: level };

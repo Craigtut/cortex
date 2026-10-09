@@ -21,6 +21,9 @@ import type { ObservationChunk, ObserverOutput, ReflectorOutput } from './types.
 import { runObserver } from './observer.js';
 import { runReflector } from './reflector.js';
 import { estimateTokens } from '../../token-estimator.js';
+import { MemoryCallError, SINGLE_ATTEMPT } from './calls.js';
+import type { CallPolicy } from './calls.js';
+import type { MemoryCallOutcomes, MemoryCallTrigger } from './health.js';
 
 // ---------------------------------------------------------------------------
 // BufferingCoordinator
@@ -49,6 +52,10 @@ export class BufferingCoordinator {
   private inFlightReflector: Promise<ReflectorOutput> | null = null;
   private bufferedReflection: { observations: string; compressionLevel: number; input: string } | null = null;
   private aborted: boolean = false;
+  /** Fires on abort(): background calls stop retrying when the loop is destroyed. */
+  private readonly lifetime = new AbortController();
+  private readonly policy: () => CallPolicy;
+  private readonly outcomes: MemoryCallOutcomes | null;
 
   /**
    * Activation epoch. Incremented each time activation consumes chunks or
@@ -58,6 +65,16 @@ export class BufferingCoordinator {
    * activation has already processed those messages.
    */
   private activationEpoch: number = 0;
+
+  /**
+   * @param options.policy - Retry and timeout policy for each background
+   *   call (default: one attempt, no timeout)
+   * @param options.outcomes - Told how each background call ended
+   */
+  constructor(options: { policy?: () => CallPolicy; outcomes?: MemoryCallOutcomes } = {}) {
+    this.policy = options.policy ?? ((): CallPolicy => SINGLE_ATTEMPT);
+    this.outcomes = options.outcomes ?? null;
+  }
 
   // -------------------------------------------------------------------------
   // Buffer Interval Calculation
@@ -135,6 +152,7 @@ export class BufferingCoordinator {
    * @param previousObservations - current observation text for context
    * @param config - observer config
    * @param logger - optional logger for error reporting
+   * @param trigger - what started the call, for failure reports
    */
   launchObserver(
     complete: CompleteFn,
@@ -143,6 +161,7 @@ export class BufferingCoordinator {
     previousObservations: string | null,
     config: { previousObserverTokens: number; observerInstruction?: string },
     logger?: { warn: (msg: string) => void },
+    trigger: MemoryCallTrigger = 'buffer',
   ): void {
     if (this.aborted) return;
 
@@ -163,7 +182,10 @@ export class BufferingCoordinator {
       return sum;
     }, 0);
 
-    const promise = runObserver(complete, messages, previousObservations, config);
+    const promise = runObserver(complete, messages, previousObservations, config, {
+      policy: this.policy(),
+      signal: this.lifetime.signal,
+    });
     this.inFlightObserver = promise;
     this.inFlightObserverEndIndex = endIndex;
 
@@ -175,6 +197,7 @@ export class BufferingCoordinator {
     promise
       .then((output: ObserverOutput) => {
         if (this.aborted) return;
+        this.outcomes?.succeeded('observe');
         // Invalidated (a restore or reset replaced the buffer): this call
         // no longer owns the in-flight slot, which may hold a newer call.
         if (this.inFlightObserver !== promise) return;
@@ -209,6 +232,7 @@ export class BufferingCoordinator {
         if (logger) {
           logger.warn(`Observer buffer call failed: ${message}`);
         }
+        this.reportFailure('observe', trigger, err);
         if (this.inFlightObserver !== promise) return;
         this.inFlightObserver = null;
         this.inFlightObserverEndIndex = null;
@@ -298,21 +322,27 @@ export class BufferingCoordinator {
    * @param observations - the current observation text to consolidate
    * @param config - reflector config
    * @param logger - optional logger for error reporting
+   * @param trigger - what started the call, for failure reports
    */
   launchReflector(
     complete: CompleteFn,
     observations: string,
     config: { reflectionThreshold: number; reflectorInstruction?: string },
     logger?: { warn: (msg: string) => void },
+    trigger: MemoryCallTrigger = 'buffer',
   ): void {
     if (this.aborted) return;
 
-    const promise = runReflector(complete, observations, config);
+    const promise = runReflector(complete, observations, config, {
+      policy: this.policy(),
+      signal: this.lifetime.signal,
+    });
     this.inFlightReflector = promise;
 
     promise
       .then((output: ReflectorOutput) => {
         if (this.aborted) return;
+        this.outcomes?.succeeded('reflect');
         // Invalidated by a restore or reset: the log it condensed is gone.
         if (this.inFlightReflector !== promise) return;
 
@@ -328,6 +358,7 @@ export class BufferingCoordinator {
         if (logger) {
           logger.warn(`Reflector buffer call failed: ${message}`);
         }
+        this.reportFailure('reflect', trigger, err);
         if (this.inFlightReflector !== promise) return;
         this.inFlightReflector = null;
       });
@@ -387,6 +418,22 @@ export class BufferingCoordinator {
     this.bufferWatermark = state.watermark;
   }
 
+  /**
+   * Report a background call that produced no result. A call stopped by
+   * the coordinator's own abort is not the memory model's failure.
+   */
+  private reportFailure(operation: 'observe' | 'reflect', trigger: MemoryCallTrigger, err: unknown): void {
+    if (this.aborted) return;
+    if (err instanceof MemoryCallError) {
+      if (err.aborted) return;
+      this.outcomes?.failed({ operation, trigger, error: err.lastError, attempts: err.attempts });
+      return;
+    }
+    // A reflection no smaller than its input, thrown outside the call policy.
+    const error = err instanceof Error ? err : new Error(String(err));
+    this.outcomes?.failed({ operation, trigger, error, attempts: 1 });
+  }
+
   /** Forget the work in flight and any buffered reflection. */
   private invalidateInFlight(): void {
     this.activationEpoch++;
@@ -404,6 +451,7 @@ export class BufferingCoordinator {
    */
   abort(): void {
     this.aborted = true;
+    this.lifetime.abort();
     this.inFlightObserver = null;
     this.inFlightObserverEndIndex = null;
     this.inFlightReflector = null;

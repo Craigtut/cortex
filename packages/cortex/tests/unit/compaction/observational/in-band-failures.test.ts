@@ -41,7 +41,7 @@ async function activate(
 
 describe('in-band observer failure after chunk activation', () => {
   it('keeps the chunk text and removes only the messages the chunk covered', async () => {
-    const engine = new ObservationalMemoryEngine({}, 0);
+    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
     engine.setContextWindow(20_000);
     engine.setUtilityModelContextWindow(200_000);
     const covered = userMsg('covered by the chunk');
@@ -70,7 +70,7 @@ describe('in-band observer failure after chunk activation', () => {
 
 describe('in-band reflector failure', () => {
   it('keeps the current observations', async () => {
-    const engine = new ObservationalMemoryEngine({}, 0);
+    const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
     engine.setContextWindow(20_000); // reflection threshold: 4,000 tokens
     engine.setUtilityModelContextWindow(200_000);
     const log = '* (10:00) a fact worth keeping\n'.repeat(700);
@@ -155,6 +155,7 @@ describe('transformContext never throws', () => {
         initialBasePrompt: 'Test prompt',
         slots: [],
         contextWindowLimit: 20_000,
+        compaction: { observational: { maxAttempts: 1 } },
       },
       [],
       { enableSubAgentTool: false, enableLoadSkillTool: false },

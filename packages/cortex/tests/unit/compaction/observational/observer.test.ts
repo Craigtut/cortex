@@ -334,7 +334,7 @@ describe('runObserver', () => {
     expect(result.suggestedResponse).toContain('Continue');
   });
 
-  it('retries on degenerate repetition', async () => {
+  it('fails an attempt on degenerate repetition, which the policy retries', async () => {
     const degenerateOutput =
       '<observations>\nrepeated\nrepeated\nrepeated\nrepeated\nrepeated\n</observations>';
     const goodOutput =
@@ -349,6 +349,7 @@ describe('runObserver', () => {
       [userMsg('Hello')],
       null,
       { previousObserverTokens: 2000 },
+      { policy: { timeoutMs: Infinity, maxAttempts: 2, backoffMs: [0] } },
     );
 
     expect(mockComplete).toHaveBeenCalledTimes(2);

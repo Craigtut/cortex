@@ -38,6 +38,10 @@ import { runObserver } from './observer.js';
 import { runReflector, computeEffectiveReflectionThreshold, applyReflection } from './reflector.js';
 import { BufferingCoordinator } from './buffering.js';
 import { estimateTokens } from '../../token-estimator.js';
+import { MemoryCallError, RETRY_BACKOFF_MS, deadlineSignal } from './calls.js';
+import type { CallPolicy } from './calls.js';
+import { MemoryHealth } from './health.js';
+import type { MemoryCallTrigger } from './health.js';
 
 // ---------------------------------------------------------------------------
 // Re-exports
@@ -113,6 +117,7 @@ export class ObservationalMemoryEngine {
   private utilityModelContextWindow: number = 0;
   private slotIndex: number;
   private logger: { warn: (msg: string) => void; info: (msg: string) => void } | null = null;
+  private readonly health = new MemoryHealth();
 
   // Event handler arrays (method-level registration, multiple handlers)
   private observationHandlers: Array<(event: ObservationEvent) => void> = [];
@@ -120,7 +125,10 @@ export class ObservationalMemoryEngine {
 
   constructor(config: Partial<ObservationalMemoryConfig>, slotIndex: number) {
     this.slotIndex = slotIndex;
-    this.buffering = new BufferingCoordinator();
+    this.buffering = new BufferingCoordinator({
+      policy: () => this.callPolicy(),
+      outcomes: this.health,
+    });
 
     // Merge with defaults. Optional fields (observerInstruction,
     // reflectorInstruction, recall) are only included when provided.
@@ -207,6 +215,8 @@ export class ObservationalMemoryEngine {
    *   are suppressed, since its history rewrite is discarded by the
    *   owner's setSourceHistory guard and reporting it would tell a
    *   consumer about work that never landed.
+   *   signal is the run's abort: aborting ends the pass's memory calls at
+   *   once and the pass applies nothing.
    * @returns Modified context with updated observations and trimmed history
    */
   async applyInTransformContext(
@@ -217,13 +227,39 @@ export class ObservationalMemoryEngine {
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory: () => AgentMessage[],
     setSourceHistory: (history: AgentMessage[]) => boolean | void,
-    options?: { allowSync?: boolean; isStale?: () => boolean },
+    options?: { allowSync?: boolean; isStale?: () => boolean; signal?: AbortSignal },
   ): Promise<AgentContext> {
     if (utilization < this.config.activationThreshold) {
       return context;
     }
-    const allowSync = options?.allowSync ?? true;
+    // A degraded memory model gets no in-band calls: the pass blocks a
+    // request once per failure episode, not on every LLM call.
+    const allowSync = (options?.allowSync ?? true) && !this.health.isDegraded;
     const isStale = options?.isStale;
+    const runSignal = options?.signal;
+    // Every in-band memory call of this pass shares one deadline.
+    const deadline = deadlineSignal(this.config.blockingBudgetMs);
+    const passSignal = runSignal ? AbortSignal.any([deadline.signal, runSignal]) : deadline.signal;
+    try {
+      return await this.activate(
+        context, utilization, historyStart, setHistory, getSourceHistory, setSourceHistory,
+        { allowSync, passSignal, ...(isStale ? { isStale } : {}), ...(runSignal ? { runSignal } : {}) },
+      );
+    } finally {
+      deadline.clear();
+    }
+  }
+
+  private async activate(
+    context: AgentContext,
+    utilization: number,
+    historyStart: number,
+    setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
+    getSourceHistory: () => AgentMessage[],
+    setSourceHistory: (history: AgentMessage[]) => boolean | void,
+    pass: { allowSync: boolean; passSignal: AbortSignal; isStale?: () => boolean; runSignal?: AbortSignal },
+  ): Promise<AgentContext> {
+    const { allowSync, passSignal, isStale, runSignal } = pass;
 
     // --- Activation ---
     // Planned from a snapshot: every await settles before anything changes,
@@ -259,22 +295,13 @@ export class ObservationalMemoryEngine {
       // These messages are about to be observed here; an in-flight observer
       // covering them must not land a second chunk for them.
       this.buffering.advanceEpoch();
-      try {
-        syncOutput = await runObserver(
-          this.completeFn,
-          unbufferedMessages,
-          this.observations || null,
-          this.buildObserverConfig(),
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger?.warn(`In-band observer failed; swapping in buffered chunks only: ${message}`);
-      }
+      syncOutput = await this.observeInBand(unbufferedMessages, 'activation', passSignal);
     }
 
-    // An abandoned pass applies nothing: its rewrite would be discarded by
-    // the owner, and the chunks it did not consume stay buffered.
-    if (isStale?.()) return context;
+    // An abandoned or aborted pass applies nothing: its rewrite would be
+    // discarded by the owner (or its request never sent), and the chunks it
+    // did not consume stay buffered.
+    if (isStale?.() || runSignal?.aborted) return context;
 
     // Step 3: Apply, synchronously.
     let compactedMessages: AgentMessage[] = [];
@@ -326,7 +353,7 @@ export class ObservationalMemoryEngine {
     }
 
     // Step 4: Handle reflection (may replace this.observations with condensed version)
-    await this.handleReflection(allowSync, isStale);
+    await this.handleReflection(allowSync, isStale, passSignal);
 
     // Step 5: Build slot content AFTER reflection so it contains post-reflection
     // observations. Previously this was captured before reflection, requiring
@@ -488,6 +515,7 @@ export class ObservationalMemoryEngine {
       this.observations || null,
       this.buildObserverConfig(),
       this.logger ?? undefined,
+      'idle',
     );
     if (!this.buffering.isObserverInFlight()) {
       // launchObserver declined (the coordinator was aborted): no observer
@@ -572,12 +600,20 @@ export class ObservationalMemoryEngine {
     const history = messages.slice(historyStart);
     if (!this.completeFn || history.length === 0) return;
 
-    const output = await runObserver(
-      this.completeFn,
-      history,
-      this.observations || null,
-      this.buildObserverConfig(),
-    );
+    let output: ObserverOutput;
+    try {
+      output = await runObserver(
+        this.completeFn,
+        history,
+        this.observations || null,
+        this.buildObserverConfig(),
+        { policy: this.callPolicy() },
+      );
+      this.health.succeeded();
+    } catch (err) {
+      this.recordInBandFailure('observe', 'observe-now', err);
+      throw err instanceof MemoryCallError ? err.lastError : err;
+    }
 
     // Merge observations
     if (this.observations) {
@@ -798,6 +834,7 @@ export class ObservationalMemoryEngine {
   private async handleReflection(
     allowSync = true,
     isStale?: () => boolean,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (!this.completeFn) return;
 
@@ -867,10 +904,11 @@ export class ObservationalMemoryEngine {
           this.completeFn,
           input,
           this.buildReflectorConfig(effectiveThreshold),
+          { policy: this.callPolicy(), ...(signal ? { signal } : {}) },
         );
+        this.health.succeeded();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger?.warn(`In-band reflector failed; keeping the current observations: ${message}`);
+        this.recordInBandFailure('reflect', 'activation', err);
         return;
       }
       const reflected = applyReflection(this.observations, input, output.observations);
@@ -907,6 +945,63 @@ export class ObservationalMemoryEngine {
         this.logger ?? undefined,
       );
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: In-band calls
+  // -------------------------------------------------------------------------
+
+  /** The retry and timeout policy every observer and reflector call runs under. */
+  private callPolicy(): CallPolicy {
+    return {
+      timeoutMs: this.config.callTimeoutMs,
+      maxAttempts: this.config.maxAttempts,
+      backoffMs: RETRY_BACKOFF_MS,
+    };
+  }
+
+  /**
+   * Observe `messages` while a caller waits. Null when the call produced
+   * nothing usable; the failure is recorded, and nothing it would have
+   * covered may leave the source.
+   */
+  private async observeInBand(
+    messages: AgentMessage[],
+    trigger: MemoryCallTrigger,
+    signal: AbortSignal,
+  ): Promise<ObserverOutput | null> {
+    if (!this.completeFn) return null;
+    try {
+      const output = await runObserver(
+        this.completeFn,
+        messages,
+        this.observations || null,
+        this.buildObserverConfig(),
+        { policy: this.callPolicy(), signal },
+      );
+      this.health.succeeded();
+      return output;
+    } catch (err) {
+      this.recordInBandFailure('observe', trigger, err);
+      return null;
+    }
+  }
+
+  /**
+   * Record a waited-on call that produced no result. Nothing it would have
+   * recorded changes: the log stays, and unobserved messages stay in the
+   * source. An abort is the caller's choice, not the memory model's failure.
+   */
+  private recordInBandFailure(operation: 'observe' | 'reflect', trigger: MemoryCallTrigger, err: unknown): void {
+    const error = err instanceof MemoryCallError ? err.lastError : err instanceof Error ? err : new Error(String(err));
+    this.logger?.warn(`${operation === 'observe' ? 'Observer' : 'Reflector'} call failed (${trigger}): ${error.message}`);
+    if (err instanceof MemoryCallError && err.aborted) return;
+    this.health.failed({
+      operation,
+      trigger,
+      error,
+      attempts: err instanceof MemoryCallError ? err.attempts : 1,
+    });
   }
 
   // -------------------------------------------------------------------------

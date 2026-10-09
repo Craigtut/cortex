@@ -25,7 +25,7 @@ function context(messages: AgentMessage[]): AgentContext {
 const LOG = '* (10:00) a fact worth keeping\n'.repeat(700); // ~5,250 tokens
 
 function engineOverReflectionThreshold(complete: CompleteFn): ObservationalMemoryEngine {
-  const engine = new ObservationalMemoryEngine({}, 0);
+  const engine = new ObservationalMemoryEngine({ maxAttempts: 1 }, 0);
   engine.setContextWindow(20_000); // reflection threshold: 4,000 tokens
   engine.setUtilityModelContextWindow(200_000);
   engine.restoreState({

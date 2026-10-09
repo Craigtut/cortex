@@ -9,7 +9,7 @@
  * with nothing.
  */
 
-export type MemoryReplyProblem = 'empty' | 'unparseable' | 'truncated' | 'not-smaller';
+export type MemoryReplyProblem = 'empty' | 'unparseable' | 'truncated' | 'repetitive' | 'not-smaller';
 
 /** A memory model reply that cannot be used. The call counts as failed. */
 export class MemoryReplyError extends Error {

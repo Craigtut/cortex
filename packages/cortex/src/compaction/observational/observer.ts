@@ -17,7 +17,9 @@ import type { ObserverOutput } from './types.js';
 import { OBSERVER_SYSTEM_PROMPT } from './constants.js';
 import { estimateTokens } from '../../token-estimator.js';
 import { isSystemMessage } from '../../system-transcript.js';
-import { readObservationsBlock } from './reply.js';
+import { MemoryReplyError, readObservationsBlock } from './reply.js';
+import { callWithPolicy, SINGLE_ATTEMPT } from './calls.js';
+import type { CallPolicy } from './calls.js';
 
 // ---------------------------------------------------------------------------
 // Message Formatting
@@ -477,15 +479,18 @@ export function detectDegenerateRepetition(text: string): boolean {
  * Orchestrates the full observer pipeline:
  * 1. Builds the system prompt (with optional custom instructions)
  * 2. Builds the message array (with previous observations context)
- * 3. Calls the LLM via `complete`
- * 4. Parses the structured output
- * 5. Detects and retries on degenerate repetition (once)
+ * 3. Calls the LLM via `complete`, under `call.policy`
+ * 4. Parses the structured output; an unusable reply or degenerate
+ *    repetition fails the attempt, which the policy may retry
  *
  * @param complete - The LLM completion function
  * @param messages - The conversation messages to observe
  * @param previousObservations - Previous observations for deduplication
  * @param config - Observer configuration
+ * @param call - Retry and timeout policy (default: one attempt, no
+ *   timeout) and the signal that cancels the whole call
  * @returns Parsed observer output with observations, current task, and suggested response
+ * @throws MemoryCallError when no attempt produced a usable reply
  */
 export async function runObserver(
   complete: CompleteFn,
@@ -495,6 +500,7 @@ export async function runObserver(
     previousObserverTokens: number;
     observerInstruction?: string;
   },
+  call: { policy?: CallPolicy; signal?: AbortSignal } = {},
 ): Promise<ObserverOutput> {
   const systemPrompt = buildObserverPrompt(
     previousObservations,
@@ -508,14 +514,12 @@ export async function runObserver(
     config.previousObserverTokens,
   );
 
-  const raw = await complete({ systemPrompt, messages: observerMessages }, { purpose: 'observer' });
-  const output = parseObserverOutput(raw);
-
-  // Detect degenerate repetition and retry once
-  if (detectDegenerateRepetition(output.observations)) {
-    const retryRaw = await complete({ systemPrompt, messages: observerMessages }, { purpose: 'observer' });
-    return parseObserverOutput(retryRaw);
-  }
-
-  return output;
+  return callWithPolicy(async (signal) => {
+    const raw = await complete({ systemPrompt, messages: observerMessages }, { purpose: 'observer', signal });
+    const output = parseObserverOutput(raw);
+    if (detectDegenerateRepetition(output.observations)) {
+      throw new MemoryReplyError('repetitive', 'The observer reply repeats one line over and over');
+    }
+    return output;
+  }, call.policy ?? SINGLE_ATTEMPT, call.signal);
 }

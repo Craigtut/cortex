@@ -872,6 +872,7 @@ export class CompactionManager {
    *   is discarded by the owner's setSourceHistory guard, and this hook
    *   suppresses the matching event dispatch, so a consumer never sees a
    *   compaction or observation reported for a rewrite that never landed.
+   *   signal is the run's abort, which ends the pass's memory calls.
    * @returns Modified context with compacted history
    */
   async applyInTransformContext(
@@ -880,7 +881,7 @@ export class CompactionManager {
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory?: () => AgentMessage[],
     setSourceHistory?: (history: AgentMessage[]) => boolean | void,
-    options?: { allowBlocking?: boolean; isStale?: () => boolean },
+    options?: { allowBlocking?: boolean; isStale?: () => boolean; signal?: AbortSignal },
   ): Promise<AgentContext> {
     // pi requires transformContext never to throw. Every layer keeps its
     // state coherent on its own, so a failure here sends the request as it
@@ -901,7 +902,7 @@ export class CompactionManager {
     setHistory: (ctx: AgentContext, history: AgentMessage[]) => AgentContext,
     getSourceHistory?: () => AgentMessage[],
     setSourceHistory?: (history: AgentMessage[]) => boolean | void,
-    options?: { allowBlocking?: boolean; isStale?: () => boolean },
+    options?: { allowBlocking?: boolean; isStale?: () => boolean; signal?: AbortSignal },
   ): Promise<AgentContext> {
     if (this._contextWindow <= 0) {
       // contextWindow not set, skip compaction
@@ -958,7 +959,11 @@ export class CompactionManager {
       };
       context = await this.observationalEngine.applyInTransformContext(
         context, utilization, this.historyStart, getHistory, setHistory, getSourceHistory, writeSource,
-        { allowSync: allowBlocking, ...(isStale ? { isStale } : {}) },
+        {
+          allowSync: allowBlocking,
+          ...(isStale ? { isStale } : {}),
+          ...(options?.signal ? { signal: options.signal } : {}),
+        },
       );
       history = getHistory(context);
 

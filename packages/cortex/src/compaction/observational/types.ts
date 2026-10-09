@@ -89,6 +89,28 @@ export interface ObservationalMemoryConfig {
   previousObserverTokens: number;
 
   /**
+   * Wall-clock bound on each attempt of an observer or reflector call.
+   * @default 60_000
+   */
+  callTimeoutMs: number;
+
+  /**
+   * Attempts per observer or reflector call, the first included. Retries are
+   * quick (1 s, then 2 s) and skip failures that would repeat
+   * (authentication, an input too large for the utility model).
+   * @default 3
+   */
+  maxAttempts: number;
+
+  /**
+   * Upper bound on how long one in-band activation pass may block a request
+   * on memory calls (observing and reflecting together). When it runs out,
+   * the pass swaps in what is already observed and the request goes out.
+   * @default 60_000
+   */
+  blockingBudgetMs: number;
+
+  /**
    * Custom instructions appended to the Observer's system prompt.
    * Use for domain-specific observation behavior. Cannot replace the core
    * prompt, only extend it.

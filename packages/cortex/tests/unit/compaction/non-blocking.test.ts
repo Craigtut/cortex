@@ -212,7 +212,7 @@ describe('ObservationalMemoryEngine allowSync', () => {
     // Seed observations well past the reflection threshold via a manual
     // trigger (the explicit digestion path, which stays synchronous).
     const bigObservations =
-      '<observations>\n' + '* line\n'.repeat(30_000) + '</observations>';
+      '<observations>\n' + Array.from({ length: 30_000 }, (_, i) => `* line ${i}`).join('\n') + '\n</observations>';
     const seedComplete = vi.fn().mockResolvedValue(bigObservations);
     engine.setCompleteFn(seedComplete as unknown as CompleteFn);
     await engine.triggerObservation([makeUserMsg('seed')], 0);
