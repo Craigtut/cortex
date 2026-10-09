@@ -10,7 +10,7 @@ import { AgentLoop } from '../../../../src/agent-loop.js';
 import type { PiAgent, PiModel } from '../../../../src/agent-loop.js';
 import { wrapModel } from '../../../../src/model-wrapper.js';
 import type { AgentLoopConfig } from '../../../../src/types.js';
-import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
+import type { CompleteFn, MemoryErrorInfo } from '../../../../src/compaction/observational/types.js';
 import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
@@ -176,3 +176,39 @@ describe('transformContext never throws', () => {
     expect(result.messages.length).toBeGreaterThan(0);
   });
 });
+
+describe('a hung background observer and in-band passes', () => {
+  it('blocks one pass, then degrades instead of waiting again', async () => {
+    // Each pass may wait 150ms; the background call would only fail after
+    // three 400ms attempts and two backoffs, about 4.2s.
+    const engine = new ObservationalMemoryEngine({ blockingBudgetMs: 150, callTimeoutMs: 400, maxAttempts: 3, bufferMinTokens: 10 });
+    engine.setContextWindow(20_000);
+    engine.setUtilityModelContextWindow(200_000);
+    const complete = vi.fn<CompleteFn>(() => new Promise<string>(() => {}));
+    engine.setCompleteFn(complete);
+    const errors: MemoryErrorInfo[] = [];
+    engine.onMemoryError((info) => errors.push(info));
+    const source = [userMsg('a'.repeat(40_000)), assistantMsg('b'.repeat(40_000)), userMsg('latest')];
+    engine.onTurnEnd(15_000, 20_000, source, 0);
+    // Precondition: a background observer over the history is in flight.
+    expect(engine.isObserverInFlight()).toBe(true);
+
+    const waits: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const started = Date.now();
+      await activate(engine, source, 0.95);
+      waits.push(Date.now() - started);
+    }
+
+    // The first pass waited its budget out and degraded memory.
+    expect(waits[0]).toBeGreaterThanOrEqual(140);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ operation: 'observe', trigger: 'activation', consecutiveFailures: 1 });
+    // The rest sent their requests without waiting.
+    expect(waits[1]).toBeLessThan(50);
+    expect(waits[2]).toBeLessThan(50);
+    // Nothing called the model beside the one background call.
+    expect(complete).toHaveBeenCalledTimes(1);
+  }, 10_000);
+});
+

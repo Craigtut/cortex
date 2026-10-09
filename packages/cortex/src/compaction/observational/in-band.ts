@@ -15,7 +15,7 @@ import type { CompleteFn } from './types.js';
 import type { AgentMessage } from '../../context-manager.js';
 import { chunkFromOutput } from './buffering.js';
 import type { BufferingCoordinator } from './buffering.js';
-import { MemoryCallError, reasonOf } from './calls.js';
+import { MemoryCallError, MemoryCallTimeoutError, reasonOf } from './calls.js';
 import type { CallPolicy } from './calls.js';
 import type { MemoryCallTrigger, MemoryHealth } from './health.js';
 import { runObserver } from './observer.js';
@@ -61,7 +61,13 @@ export class InBandObserver {
     let observed = false;
     const stop = (error: Error): CatchUpResult => ({ observed, error });
     if (!(await buffering.observerSettledUnless(signal))) {
-      return stop(reasonOf(signal));
+      // The pass's deadline ran out on the observer already running: the
+      // memory model did not answer in time, so count it as a failure and
+      // the next pass, degraded, does not wait again. An abort is the
+      // caller's choice.
+      const reason = reasonOf(signal);
+      if (reason instanceof MemoryCallTimeoutError) this.recordFailure(trigger, reason);
+      return stop(reason);
     }
     while (buffering.getWatermark() < end) {
       if (signal.aborted) return stop(reasonOf(signal));
