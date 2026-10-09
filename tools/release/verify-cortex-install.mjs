@@ -101,7 +101,12 @@ async function startRegistry(work) {
   let output = '';
   child.stdout.on('data', (chunk) => { output += chunk; });
   child.stderr.on('data', (chunk) => { output += chunk; });
-  const stop = () => { if (child.exitCode === null) child.kill(); };
+  const exited = new Promise((resolveExit) => child.once('exit', resolveExit));
+  /** Stop the registry and wait for it to exit, so its storage can be removed (Windows locks open files). */
+  const stop = async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await exited;
+  };
   try {
     const deadline = Date.now() + 60_000;
     for (;;) {
@@ -124,7 +129,7 @@ async function startRegistry(work) {
     if (!token) throw new Error(`could not register a user with the local registry (${response.status})`);
     return { url, token, stop };
   } catch (error) {
-    stop();
+    await stop();
     throw error;
   }
 }
@@ -298,9 +303,15 @@ async function main() {
     throw error;
   } finally {
     writeSummary(`Cortex install from the staged packages (${target}${simulated ? ', simulated by npm --os' : ''})`, context);
-    registry?.stop();
+    await registry?.stop();
     if (args.keep) console.log(`Kept ${work}`);
-    else rmSync(work, { recursive: true, force: true, maxRetries: 3 });
+    else {
+      try {
+        rmSync(work, { recursive: true, force: true, maxRetries: 5 });
+      } catch (error) {
+        console.warn(`Could not remove ${work}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   const failed = results.filter((r) => !r.ok);
