@@ -172,25 +172,49 @@ describe('CredentialStore as pi-ai CredentialStore', () => {
     expect(Object.keys(readBack().providers).sort()).toEqual(['anthropic', 'openai']);
   });
 
-  it('waits for a lock another process holds through a slow refresh', async () => {
-    writeFixture({ providers: {} });
-    const holder = new CredentialStore(file);
-    const waiter = new CredentialStore(file);
-    let released = false;
+  it('waits out a holder that keeps the lock longer than a 15-second refresh', async () => {
+    // pi may hold the lock for a 15-second token refresh. proper-lockfile's
+    // own retries (the old `retries: 3`) give up after 1 + 2 + 4 seconds, so
+    // the clock runs on past that: fake timers for the waits, real I/O for
+    // the lock itself.
+    const realSetTimeout = globalThis.setTimeout;
+    const io = (): Promise<void> => new Promise((resolve) => realSetTimeout(resolve, 2));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      writeFixture({ providers: {} });
+      let releaseHolder!: () => void;
+      const holding = new Promise<void>((resolve) => { releaseHolder = resolve; });
+      let held = false;
+      const slow = new CredentialStore(file).modify('openai', async () => {
+        held = true;
+        await holding;
+        return { type: 'api_key', key: 'sk-first' };
+      });
+      while (!held) await io();
 
-    const slow = holder.modify('openai', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      released = true;
-      return { type: 'api_key', key: 'sk-first' };
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const second = waiter.modify('openai', async (current) => {
-      expect(released).toBe(true);
-      expect(current).toEqual({ type: 'api_key', key: 'sk-first' });
-      return { type: 'api_key', key: 'sk-second' };
-    });
+      let waited = false;
+      const second = new CredentialStore(file).modify('openai', async (current) => {
+        expect(current).toEqual({ type: 'api_key', key: 'sk-first' });
+        return { type: 'api_key', key: 'sk-second' };
+      }).finally(() => { waited = true; });
+      second.catch(() => {});
 
-    await Promise.all([slow, second]);
+      for (let elapsed = 0; elapsed < 16_000; elapsed += 250) {
+        await vi.advanceTimersByTimeAsync(250);
+        await io();
+      }
+      // Still waiting, sixteen seconds in: it did not give up.
+      expect(waited).toBe(false);
+
+      releaseHolder();
+      for (let i = 0; i < 200 && !waited; i++) {
+        await vi.advanceTimersByTimeAsync(250);
+        await io();
+      }
+      await Promise.all([slow, second]);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(await new CredentialStore(file).read('openai')).toEqual({ type: 'api_key', key: 'sk-second' });
   });
 });
