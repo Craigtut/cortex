@@ -12,6 +12,7 @@
  */
 
 import type { AgentMessage } from '../../context-manager.js';
+import type { ObservationalMemoryEngine } from './index.js';
 
 /**
  * The completion the observer and reflector call: the loop's utility model.
@@ -562,3 +563,38 @@ export interface BufferState {
   /** Promise for the currently in-flight async reflector call, or null. */
   inFlightReflector: Promise<ReflectorOutput | null> | null;
 }
+
+/**
+ * Observational memory as the loop and consumers reach it: configuration,
+ * events, persisted state, status, and the reconciliation hooks for source
+ * rewrites the loop makes itself. The passes that rewrite context
+ * (activation, compactNow, observeNow, the overflow drop, the view cut) are
+ * left out: they run through CompactionManager, which keeps the measured
+ * context size true around them.
+ */
+export type ObservationalMemory = Pick<
+  ObservationalMemoryEngine,
+  | 'setCompleteFn'
+  | 'setUtilityModelContextWindow'
+  | 'onObservation'
+  | 'onReflection'
+  | 'onMemoryError'
+  | 'onMemoryRecovered'
+  | 'onMemoryGap'
+  | 'getState'
+  | 'restoreState'
+  | 'reset'
+  | 'onTurnEnd'
+  | 'onSourceHistoryTailTrimmed'
+  | 'onSourceHistoryRemoved'
+  | 'digestPendingBuffers'
+  | 'getSlotContent'
+  | 'getObservations'
+  | 'hasObservations'
+  | 'getObservationTokenCount'
+  | 'isProcessing'
+  | 'isObserverInFlight'
+  | 'isReflectorInFlight'
+  | 'hasRecall'
+  | 'getRecallConfig'
+>;

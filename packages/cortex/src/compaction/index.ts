@@ -26,8 +26,7 @@ import { MicrocompactionEngine, MICROCOMPACTION_DEFAULTS } from './microcompacti
 import { extractTextContent } from './tool-messages.js';
 import { FAILSAFE_DEFAULTS } from './failsafe.js';
 import { ObservationalMemoryEngine } from './observational/index.js';
-import type { ObservationalMemory } from './observational/index.js';
-import type { CompactNowOptions, CompactNowResult, ObserveNowResult } from './observational/types.js';
+import type { CompactNowOptions, CompactNowResult, ObservationalMemory, ObserveNowResult } from './observational/types.js';
 import { resolvePromptCacheTtlMs } from '../provider-registry.js';
 import type { CacheRetention } from '../provider-registry.js';
 import type { ModelPromptCacheLifetimes } from '../model-wrapper.js';
@@ -41,7 +40,6 @@ export type { TrimAction, TrimState } from './microcompaction.js';
 export type { CompleteFn } from './observational/types.js';
 export { isContextOverflow } from './failsafe.js';
 export { ObservationalMemoryEngine } from './observational/index.js';
-export type { ObservationalMemory } from './observational/index.js';
 export type {
   ObservationalMemoryConfig,
   ObservationalMemoryState,
@@ -59,6 +57,7 @@ export type {
   CompactNowResult,
   ObserveNowResult,
   ReflectionOutcome,
+  ObservationalMemory,
 } from './observational/types.js';
 export { createRecallTool } from './observational/recall-tool.js';
 

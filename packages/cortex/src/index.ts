@@ -436,6 +436,7 @@ export type {
   CompactNowResult,
   ObserveNowResult,
   ReflectionOutcome,
+  ObservationalMemory,
 } from './compaction/index.js';
 
 // Model Wrapper (Phase 1D)
