@@ -3,12 +3,16 @@
  * budget, never split between a tool call and its result, and the latest
  * user message wherever it is. And across any sequence of buffering, swaps
  * and appends, no message leaves context unobserved, none is observed
- * twice, no tool call is orphaned, and the latest user message stays.
+ * twice, no tool call is orphaned, and the latest user message stays: in
+ * the engine alone, and through the whole transform pass (Layer 1's
+ * trimmed copies, the view cut, observers still in flight at a swap).
  */
 import { describe, it, expect, vi } from 'vitest';
+import { CompactionManager, buildCompactionConfig } from '../../../../src/compaction/index.js';
 import { ObservationalMemoryEngine } from '../../../../src/compaction/observational/index.js';
 import type { CompleteFn } from '../../../../src/compaction/observational/types.js';
-import type { AgentMessage } from '../../../../src/context-manager.js';
+import type { AgentContext, AgentMessage } from '../../../../src/context-manager.js';
+import type { CortexCompactionConfig } from '../../../../src/types.js';
 import { makeToolCallMsg, makeToolResultMsg, assertNoOrphans } from '../helpers.js';
 
 const userMsg = (content: string): AgentMessage => ({ role: 'user', content, timestamp: 0 });
@@ -191,5 +195,125 @@ describe('swap invariants over random sequences', () => {
     }
     // Precondition: the sequences actually swapped messages out.
     expect(totalRemoved).toBeGreaterThan(100);
+  });
+});
+
+describe('swap invariants through the transform pass', () => {
+  const SLOT = userMsg('slot');
+  const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('hold with Layer 1 trimming, the view cut, and observers in flight at a swap', async () => {
+    const seen = { inFlightSwaps: 0, trimmedCopies: 0, viewCuts: 0, removed: 0 };
+    for (let seed = 1; seed <= 40; seed++) {
+      const random = rng(seed);
+      let nextId = 0;
+      const tag = (): string => `<m${nextId++}>`;
+      const idsIn = (text: string): string[] => text.match(/<m\d+>/g) ?? [];
+      const observedCount = new Map<string, number>();
+      const removed = new Set<string>();
+
+      // Every memory call waits until the sequence releases it, so an
+      // observer launched at a turn end can still be in flight at a swap.
+      // While memory is down, calls fail at once and unobserved history
+      // piles up past the view cut's ceiling.
+      const pending: Array<() => void> = [];
+      let down = false;
+      const complete = vi.fn<CompleteFn>((context) => down ? Promise.reject(new Error('529 overloaded')) : new Promise<string>((resolve) => {
+        pending.push(() => {
+          for (const id of idsIn(JSON.stringify(context.messages.slice(-2)))) {
+            observedCount.set(id, (observedCount.get(id) ?? 0) + 1);
+          }
+          resolve(OBSERVED);
+        });
+      }));
+      const releaseOne = (): void => { pending.shift()?.(); };
+      const manager = new CompactionManager(buildCompactionConfig({
+        observational: { maxAttempts: 1, bufferMinTokens: 50, bufferTokenCap: 3_000 },
+        // A recent zone small enough that older tool results get trimmed.
+        microcompaction: { hotZoneMinTokens: 1_000 } as CortexCompactionConfig['microcompaction'],
+      }), 1);
+      manager.setContextWindow(20_000);
+      manager.setModelContextWindow(20_000);
+      manager.setUtilityModelContextWindow(200_000);
+      manager.setObservationalCompleteFn(complete);
+
+      let source: AgentMessage[] = [];
+      const size = (): number => Math.floor(random() * 10_000) + 10;
+      for (let step = 0; step < 50; step++) {
+        const roll = random();
+        if (roll < 0.4) {
+          const kind = random();
+          if (kind < 0.35) source.push(userMsg(tag() + 'u'.repeat(size())));
+          else if (kind < 0.7) {
+            const id = `t${nextId}`;
+            source.push(makeToolCallMsg([{ id, name: 'Read' }], tag()));
+            source.push(makeToolResultMsg(id, 'Read', tag() + 'r'.repeat(size() * 2)));
+          } else source.push(assistantMsg(tag() + 'a'.repeat(size())));
+        } else if (roll < 0.55) {
+          manager.onTurnEnd(Math.floor(random() * 20_000), 20_000, [SLOT, ...source], 1);
+        } else if (roll < 0.65) {
+          releaseOne();
+          await tick();
+        } else if (roll < 0.7) {
+          down = !down;
+        } else {
+          const before = new Set(source);
+          const latestUser = [...source].reverse().find((m) => m.role === 'user');
+          const inFlight = manager.isObserverInFlight();
+          let current = [...source];
+          const pass = manager.applyInTransformContext(
+            { systemPrompt: '', model: null, messages: [SLOT, ...source], tools: [], thinkingLevel: 'medium' } as AgentContext,
+            (ctx) => ctx.messages.slice(1),
+            (ctx, history) => ({ ...ctx, messages: [SLOT, ...history] }),
+            () => current,
+            (history) => { current = history; },
+            { allowBlocking: random() < 0.5 },
+          );
+          // A blocking pass waits on its memory calls: answer them as it asks.
+          let done = false;
+          void pass.then(() => { done = true; });
+          while (!done) {
+            releaseOne();
+            await tick();
+          }
+          const view = (await pass).messages.slice(1);
+
+          const after = new Set(current);
+          for (const message of before) {
+            if (after.has(message)) continue;
+            for (const id of idsIn(JSON.stringify(message.content))) removed.add(id);
+          }
+          if (inFlight && current.length < source.length) seen.inFlightSwaps += 1;
+          if (view.some((m) => m.role === 'toolResult' && !after.has(m))) seen.trimmedCopies += 1;
+          if (view.some((m) => typeof m.content === 'string' && m.content.includes('are not shown'))) seen.viewCuts += 1;
+
+          source = current;
+          if (latestUser) {
+            expect(source, `seed ${seed}: latest user message kept`).toContain(latestUser);
+            expect(view, `seed ${seed}: latest user message shown`).toContain(latestUser);
+          }
+          assertNoOrphans(view);
+        }
+        assertNoOrphans(source);
+      }
+
+      // Everything still pending lands, so no observation is missed.
+      while (pending.length > 0) {
+        releaseOne();
+        await tick();
+      }
+      seen.removed += removed.size;
+      for (const id of removed) {
+        expect(observedCount.get(id) ?? 0, `seed ${seed}: ${id} observed before it left`).toBeGreaterThan(0);
+      }
+      for (const [id, count] of observedCount) {
+        expect(count, `seed ${seed}: ${id} observed once`).toBe(1);
+      }
+    }
+    // Preconditions: each mechanism this covers actually ran.
+    expect(seen.removed).toBeGreaterThan(100);
+    expect(seen.inFlightSwaps).toBeGreaterThan(10);
+    expect(seen.trimmedCopies).toBeGreaterThan(10);
+    expect(seen.viewCuts).toBeGreaterThan(5);
   });
 });
