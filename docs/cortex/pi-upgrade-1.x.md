@@ -129,7 +129,7 @@ four lines, all for `onProviderStreamEvent`.
 | ai 0.99.0 | Browser sign-in callback servers unified (`auth/oauth/callback-server.ts`), which now honor the abort signal and reject on a provider error redirect. Page helpers moved to `utils/oauth-page` | Cortex: the branded-page shim still matches, because the page titles are unchanged (`utils/oauth-page.ts:94-104`). The `callbackFailure` race and the "pi ignores abort" workaround (`oauth-flows.ts:243-278`) are now redundant |
 | ai 0.99.0 | Claude Sonnet 5.5 added. `AssistantMessage.thinkingLevel` added | Cortex: catalog-driven, no change |
 | ai 0.99.2 | `@earendil-works/pi-ai/models`: a light entrypoint with `createModels` and `createProvider` that doesn't load TypeBox or the catalogs | An option for Phase 3 |
-| ai 0.99.2 | Anthropic workload identity federation from `ANTHROPIC_FEDERATION_*` env vars when no key or auth header is resolved | Cortex: one more ambient auth path (see [open questions](#open-questions-for-craig)) |
+| ai 0.99.2 | Anthropic workload identity federation from `ANTHROPIC_FEDERATION_*` env vars when no key or auth header is resolved | Cortex: one more ambient auth path (see [open questions](#decisions-craig-2026-10-08)) |
 | ai 0.99.2 | Z.AI CN overflow pattern, strict-schema fallback, Retry-After parsing fix | Cortex benefits only once overflow detection goes through pi (Phase 6) |
 | ai 1.0.0 | Anthropic login starts with a `select` prompt (browser or copy code) | Cortex: a consumer without `onSelect` gets a free-text prompt asking for an option id (`oauth-flows.ts:322-334`). Cortex Code passes `onSelect` (`setup-tui.ts:243`) |
 | ai 1.0.1 | Anthropic native tool changes moved to `inline-tools-2026-09-15`. Later tools are defined by value in `tool_addition` blocks, and a same-name redefinition keeps the prompt cache | Cortex: a cache win. `system-prompt.md:256` still describes `defer_loading`. The comment at `agent-loop/system-prompt.ts:388-391` ("declaring a tool twice is outside what native tool-change transports accept") is no longer true for Anthropic |
@@ -274,8 +274,8 @@ are unchanged. It does need these changes:
   a clear "port in use" error. The pre-check now blocks the first two fallbacks.
   Map ChatGPT's `EADDRINUSE` text to `callback_port_in_use` instead.
 
-Longer term, ask upstream for a page renderer in `LoginOptions` and delete the
-patch (see [open questions](#open-questions-for-craig)).
+The patch stays. We do not ask pi upstream for a renderer hook (see
+[decisions](#decisions-craig-2026-10-08)).
 
 ### Re-homing Ollama on `createProvider`
 
@@ -343,7 +343,7 @@ Once that's in place, `ApiKeyResolver`'s single-flight and
 | `isContextOverflow(message, contextWindow?)` | Takes an `AssistantMessage` (`utils/overflow.ts:137`) | Pattern matches plus silent overflow (`usage.input > contextWindow` with `stopReason: "stop"`) and length-stop overflow. Excludes Bedrock throttling and rate limits. Cortex's Error-only check misses the silent case |
 | `getOverflowPatterns()` | Returns `RegExp[]` | For thrown `Error`s that have no assistant message |
 | `isRetryableAssistantError(message)` | Takes an `AssistantMessage` (`utils/retry.ts:252`) | A broad transient list: `server_busy`, "model is at capacity", "stream ended before message_stop", "pending stream has been canceled", `ResourceExhausted`, "provider returned error", "terminated", "websocket closed", "retry delay" and more. Cortex calls several of these `unknown` today |
-| `estimateTextTokens()`, `estimateMessageTokens()` | 3.5 characters per token | See [open questions](#open-questions-for-craig) |
+| `estimateTextTokens()`, `estimateMessageTokens()` | 3.5 characters per token | See [open questions](#decisions-craig-2026-10-08) |
 
 pi also has a non-retryable "provider limit" list (`utils/retry.ts:7-28`). It is
 **too broad to adopt whole**. It matches the bare strings `billing` and
@@ -486,8 +486,6 @@ against the pre-change source: revert only the source with
   - `model-defaults.ts:68`: the same key change.
   - `provider-registry.test.ts` and `model-backend.test.ts`: compare only
     against providers that have chat models.
-  - Cortex Code: migrate stored `azure-openai-responses` credential and default
-    keys to `azure` on load.
   - Fix `system-prompt.md:256`.
   - Add changelog entries.
 - Tests:
@@ -497,7 +495,6 @@ against the pre-change source: revert only the source with
       error. This fails on 0.87.1.
     - `thinkingLevel` and `durationMs` survive a history round trip through
       `getConversationHistory()` and `restoreConversationHistory()`.
-  - New Cortex Code test: an old-id credentials file is migrated.
   - `pi-upstream-contract.test.ts` and `pi-system-transcript.test.ts` pass
     unchanged.
 - Manual: start Cortex Code in Ghostty, iTerm and Terminal.app (the OSC 7501
@@ -609,36 +606,32 @@ against the pre-change source: revert only the source with
    its OAuth API within days. The adoption recommendations above assume that
    pace continues.
 
-## Open questions for Craig
+## Decisions (Craig, 2026-10-08)
 
-1. **Version pins:** exact `1.1.0` (recommended, given the Azure rename in a
-   patch release), or keep the repo's caret convention?
-2. **`getAuth` and `getApiKey`:** add `getAuth` and keep `getApiKey` as sugar
-   (recommended)? Or replace `getApiKey` outright, in line with "DX over
-   backward compatibility"?
-3. **Ambient env credentials in Cortex:** keep pi's default, where env vars and
-   Anthropic federation are on and Cortex Code opts out with an env-blind
-   `AuthContext` (recommended, since policy belongs to the app)? Or make Cortex
-   env-blind by default?
-4. **Branded OAuth page:** keep the patch, matched by path, and ask pi upstream
-   for a `LoginOptions` page renderer (recommended)? Or drop the branding?
-5. **Talker model:** fix utility inference so Anthropic duplex talkers move to
-   `claude-haiku-5-5`? This changes cost, latency and behavior for every
-   Anthropic duplex session.
-6. **Token estimates:** move compaction to pi's 3.5 characters per token, or keep
-   4?
-7. **Billing errors:** confirm the three keys (`insufficient_quota`, "credit
-   balance is too low", 402 "insufficient credits"). Should pi's OpenCode limits
-   (`GoUsageLimitError`, `FreeUsageLimitError`, "Monthly usage limit reached")
-   count as `billing` or as usage windows? And confirm the proposed 6-hour
-   `maxRetryAfterMs` default.
-8. **Sign in with ChatGPT** (the `openai` OAuth) in Cortex Code? It needs a
-   stable installation UUID under `~/.cortex`.
-9. **Azure users in Cortex Code:** migrate their credentials automatically
-   (recommended), or require a new `/login`?
-10. **Public types:** should Cortex's exported `AgentMessage`, `PiAgent` and
-    `PiModel` become pi's types? That breaks consumers that build loosely shaped
-    messages.
+Guiding rule: rely on pi for anything it provides, and do not ask pi upstream
+for changes. Where pi lacks something, keep our own code.
+
+1. **Version pins:** exact `1.1.0` pins.
+2. **`getAuth` and `getApiKey`:** add `getAuth`, keep `getApiKey` as the simple
+   path.
+3. **Ambient env credentials in Cortex:** pending. Today Cortex silently falls
+   back to provider env vars (for example `ANTHROPIC_API_KEY`) when the
+   consumer's `getApiKey` returns nothing, because pi-ai's `/compat` layer reads
+   them (`pi-ai/dist/compat.js:146-153`). Recommendation: Cortex stops doing that
+   by default and a consumer opts in explicitly.
+4. **Branded OAuth page:** keep our patch, matched by path. No upstream request.
+5. **Talker model:** fix utility-model inference so Anthropic duplex talkers
+   resolve to `claude-haiku-5-5`.
+6. **Token estimates:** use pi's estimator.
+7. **Billing errors:** the three keys (`insufficient_quota`, "credit balance is
+   too low", 402 "insufficient credits") are `billing`. The OpenCode gateway
+   monthly limits pi reports (`GoUsageLimitError`, `FreeUsageLimitError`,
+   "Monthly usage limit reached") are also `billing`, since a monthly limit does
+   not reset on a useful timescale. Cap waiting for a stated reset at 6 hours.
+8. **Sign in with ChatGPT:** out of scope for this migration.
+9. **Azure:** no Cortex Code users, so no credential migration. Rename the
+   provider id in code only.
+10. **Public types:** export pi's own message and agent types.
 
 ## Sources
 
