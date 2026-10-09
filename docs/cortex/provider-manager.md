@@ -681,32 +681,44 @@ interface AgentLoopConfig {
   model: CortexModel;
 
   /**
-   * Dynamic API key resolver. Called before every LLM call.
-   * Enables OAuth token refresh without session teardown.
-   * If omitted, requests to providers that need credentials fail, unless
-   * `ambientCredentials` lets pi-ai read them from the environment.
+   * Request auth by provider, called before every LLM call: a key, auth
+   * headers, and a base URL (pi-ai's ModelAuth). Takes precedence over
+   * getApiKey. ProviderManager.getAuth has this shape and refreshes OAuth
+   * tokens under its credential store's lock.
+   */
+  getAuth?: (provider: string) => Promise<ModelAuth | undefined>;
+
+  /**
+   * The simple path: an API key by provider, called before every LLM call.
+   * It cannot carry Kimi Coding's OAuth header or GitHub Copilot's
+   * per-account base URL; use getAuth for those.
    */
   getApiKey?: (provider: string) => Promise<string>;
 
-  /** Let pi-ai resolve env var, federation, AWS profile, and ADC credentials. Default false. */
+  /**
+   * Let pi-ai resolve provider env vars, Anthropic workload identity
+   * federation, AWS profiles and the SDK credential chain, and gcloud ADC.
+   * Default false: with neither callback supplying credentials, requests to
+   * providers that need them fail as not configured.
+   */
   ambientCredentials?: boolean;
 
   // ... tools, contextManager, budgetGuards, etc.
 }
 ```
 
-Internally, AgentLoop unwraps the `CortexModel` once at the Cortex boundary, uses the raw pi-ai model for runtime calls, and passes `getApiKey` through to pi-agent-core:
+Internally, AgentLoop unwraps the `CortexModel` once at the Cortex boundary and uses the raw pi-ai model for runtime calls. It resolves `getAuth` itself before each request, or hands `getApiKey` to pi-agent-core:
 
 ```typescript
 const agent = await AgentLoop.create({
   model,
-  getApiKey: (provider) => credService.resolveApiKey(provider),
+  getAuth: (provider) => providers.getAuth(provider),
   initialBasePrompt: 'You are the application agent.',
 });
 
   /**
    * Switch to a different model at runtime.
-   * Conversation history is preserved. The getApiKey callback
+   * Conversation history is preserved. The getAuth callback
    * handles the new provider automatically.
    */
 agent.setModel(model);
@@ -735,17 +747,20 @@ packages/cortex/
 
 ### OAuth Providers
 
-These providers authenticate via browser-based OAuth flows. The user signs in with their existing subscription (Claude Pro/Max, ChatGPT Plus/Pro, GitHub Copilot). No API keys needed.
+These providers authenticate via OAuth flows (browser or device code). The user signs in with their existing subscription or account. No API keys needed. This is `OAUTH_PROVIDER_IDS`; `listOAuthCapableProviders()` is the subset the installed pi-ai has a login for. pi-ai's Sign in with ChatGPT (on `openai`) is not offered.
 
 | Provider | Pi-ai ID | Subscription Required |
 |----------|----------|----------------------|
 | Anthropic (Claude) | `anthropic` | Claude Pro or Max |
 | OpenAI Codex | `openai-codex` | ChatGPT Plus or Pro |
 | GitHub Copilot | `github-copilot` | Copilot subscription |
+| Kimi Coding | `kimi-coding` | Kimi Code subscription (device code; authorizes with a header) |
 | Meta | `meta` | Muse subscription |
+| OpenRouter | `openrouter` | OpenRouter account (the login yields a permanent API key) |
 | Radius | `radius` | Radius account |
+| xAI | `xai` | SuperGrok or X Premium |
 
-Google Gemini CLI and Google Antigravity OAuth providers were removed upstream in pi-ai 0.71. Cortex supports Google through the `google` API key provider. Google Vertex can be used by consumers that supply the required Google application credentials to pi-ai.
+Google Gemini CLI and Google Antigravity OAuth providers were removed upstream in pi-ai 0.71. Cortex supports Google through the `google` API key provider. Google Vertex takes a Vertex API key, or Google application default credentials when the consumer sets `ambientCredentials: true`.
 
 ### API Key Providers
 
@@ -778,7 +793,7 @@ These providers authenticate with a static API key obtained from the provider's 
 | Qwen Token Plan CN | `qwen-token-plan-cn` | `QWEN_TOKEN_PLAN_CN_API_KEY` |
 | Qwen Token Plan Individual | `qwen-token-plan-individual` | `QWEN_TOKEN_PLAN_API_KEY` |
 
-Note: Anthropic, Meta, and Radius support both OAuth and API key. They appear in both tables. Amazon Bedrock takes a Bedrock API key (bearer token); pi-ai reads the region from the model's inference profile and otherwise uses `us-east-1`. AWS profiles and the SDK credential chain are not offered, since Cortex never reads credentials from the environment.
+Note: Anthropic, Kimi Coding, Meta, OpenRouter, Radius and xAI support both OAuth and API key. They appear in both tables. Amazon Bedrock takes a Bedrock API key (bearer token); pi-ai reads the region from the model's inference profile and otherwise uses `us-east-1`. AWS profiles and the SDK credential chain are used only with `ambientCredentials: true`; by default Cortex reads no credentials from the environment.
 
 The registry lists every provider pi-ai ships; a test fails when a pi-ai upgrade adds one that is missing.
 
