@@ -47,8 +47,7 @@ export class BufferingCoordinator {
   private inFlightObserver: Promise<ObserverOutput> | null = null;
   private inFlightObserverEndIndex: number | null = null;
   private inFlightReflector: Promise<ReflectorOutput> | null = null;
-  private bufferedReflection: string | null = null;
-  private bufferedReflectionCompressionLevel: number = 0;
+  private bufferedReflection: { observations: string; compressionLevel: number; input: string } | null = null;
   private aborted: boolean = false;
 
   /**
@@ -311,8 +310,11 @@ export class BufferingCoordinator {
       .then((output: ReflectorOutput) => {
         if (this.aborted) return;
 
-        this.bufferedReflection = output.observations;
-        this.bufferedReflectionCompressionLevel = output.compressionLevel;
+        this.bufferedReflection = {
+          observations: output.observations,
+          compressionLevel: output.compressionLevel,
+          input: observations,
+        };
         this.inFlightReflector = null;
       })
       .catch((err: unknown) => {
@@ -334,23 +336,19 @@ export class BufferingCoordinator {
   /**
    * Get the buffered reflection and clear it.
    *
-   * Returns the consolidated observations and the compression level that
-   * was applied, or null if no buffered reflection is available.
+   * Returns the consolidated observations, the compression level that was
+   * applied, and the exact log the reflection condensed (`input`), or null
+   * if no buffered reflection is available. The log may have grown since
+   * the reflector launched; the caller applies the result only onto a log
+   * that still starts with `input`.
    */
   consumeBufferedReflection(): {
     observations: string;
     compressionLevel: number;
+    input: string;
   } | null {
-    if (this.bufferedReflection === null) return null;
-
-    const result = {
-      observations: this.bufferedReflection,
-      compressionLevel: this.bufferedReflectionCompressionLevel,
-    };
-
+    const result = this.bufferedReflection;
     this.bufferedReflection = null;
-    this.bufferedReflectionCompressionLevel = 0;
-
     return result;
   }
 

@@ -134,6 +134,24 @@ export function validateCompression(
 }
 
 // ---------------------------------------------------------------------------
+// Applying a reflection
+// ---------------------------------------------------------------------------
+
+/**
+ * The log after a reflection lands, or null when it no longer applies.
+ *
+ * A reflection condenses the log as it was when the reflector started
+ * (`input`). The log is append-only between reflections, so whatever was
+ * appended since is a suffix the reflection never saw: it is kept after the
+ * reflected text. A log that no longer starts with `input` was replaced in
+ * the meantime (another reflection, a restore), and the result is stale.
+ */
+export function applyReflection(current: string, input: string, reflected: string): string | null {
+  if (!current.startsWith(input)) return null;
+  return reflected + current.slice(input.length);
+}
+
+// ---------------------------------------------------------------------------
 // Threshold Computation
 // ---------------------------------------------------------------------------
 

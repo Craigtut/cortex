@@ -35,7 +35,7 @@ import {
   OBSERVATION_RECALL_INSTRUCTIONS,
 } from './constants.js';
 import { runObserver } from './observer.js';
-import { runReflector, computeEffectiveReflectionThreshold } from './reflector.js';
+import { runReflector, computeEffectiveReflectionThreshold, applyReflection } from './reflector.js';
 import { BufferingCoordinator } from './buffering.js';
 import { estimateTokens } from '../../token-estimator.js';
 
@@ -805,28 +805,29 @@ export class ObservationalMemoryEngine {
     if (reflectionAction === 'sync') {
       const previousObservations = this.observations;
 
-      // Check for a ready buffered reflection first
-      if (this.buffering.hasBufferedReflection()) {
-        const buffered = this.buffering.consumeBufferedReflection();
-        if (buffered) {
-          this.observations = buffered.observations;
-          this.observationTokenCount = estimateTokens(this.observations);
-          this.generationCount++;
+      // Check for a ready buffered reflection first. It condensed the log as
+      // it was when the reflector launched; what was appended since stays.
+      const buffered = this.buffering.consumeBufferedReflection();
+      const rebased = buffered
+        ? applyReflection(this.observations, buffered.input, buffered.observations)
+        : null;
+      if (buffered && rebased !== null) {
+        this.observations = rebased;
+        this.observationTokenCount = estimateTokens(this.observations);
+        this.generationCount++;
 
-          // Suppressed for an abandoned pass (see applyInTransformContext
-          // Step 4): the swap-in above keeps the engine coherent, but the
-          // event must not report it as landed work.
-          if (!isStale?.()) {
-            this.fireReflectionEvent({
-              previousObservations,
-              newObservations: this.observations,
-              generationCount: this.generationCount,
-              compressionLevel: buffered.compressionLevel,
-              timestamp: new Date(),
-            });
-          }
-          return;
+        // Suppressed for an abandoned pass: the swap-in above keeps the
+        // engine coherent, but the event must not report it as landed work.
+        if (!isStale?.()) {
+          this.fireReflectionEvent({
+            previousObservations,
+            newObservations: this.observations,
+            generationCount: this.generationCount,
+            compressionLevel: buffered.compressionLevel,
+            timestamp: new Date(),
+          });
         }
+        return;
       }
 
       // No buffered reflection ready. Under the non-blocking posture the
@@ -846,11 +847,12 @@ export class ObservationalMemoryEngine {
 
       // Run synchronously. A failed reflection keeps the current log: it is
       // larger than ideal, which costs tokens, not memory.
+      const input = this.observations;
       let output: ReflectorOutput;
       try {
         output = await runReflector(
           this.completeFn,
-          this.observations,
+          input,
           this.buildReflectorConfig(effectiveThreshold),
         );
       } catch (err) {
@@ -858,8 +860,10 @@ export class ObservationalMemoryEngine {
         this.logger?.warn(`In-band reflector failed; keeping the current observations: ${message}`);
         return;
       }
+      const reflected = applyReflection(this.observations, input, output.observations);
+      if (reflected === null) return;
 
-      this.observations = output.observations;
+      this.observations = reflected;
       this.observationTokenCount = estimateTokens(this.observations);
       this.generationCount++;
 

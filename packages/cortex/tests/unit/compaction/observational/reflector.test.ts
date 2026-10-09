@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  applyReflection,
   buildReflectorPrompt,
   buildReflectorMessages,
   parseReflectorOutput,
@@ -288,5 +289,19 @@ describe('runReflector', () => {
 
     const callArgs = mockComplete.mock.calls[0]![0];
     expect(callArgs.systemPrompt).toContain('Keep user names');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: applyReflection
+// ---------------------------------------------------------------------------
+
+describe('applyReflection', () => {
+  it('keeps what was appended after the reflected input', () => {
+    expect(applyReflection('OLD LOG\n\nMORE', 'OLD LOG', 'R')).toBe('R\n\nMORE');
+  });
+
+  it('discards a reflection of a log that was since replaced', () => {
+    expect(applyReflection('NEW LOG', 'OLD LOG', 'R')).toBeNull();
   });
 });
